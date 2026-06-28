@@ -1030,5 +1030,52 @@ CREATE TABLE `ai_model_call_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI模型调用审计表';
 
 -- =============================================
+-- 生产领料模块（二次开发新增）
+-- 来源：document/wms_v1.docx 痛点2（生产领料耗时久，错领漏领）
+-- =============================================
+
+-- 领料单主表
+CREATE TABLE IF NOT EXISTS `biz_pick_list` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `pick_no` VARCHAR(30) NOT NULL COMMENT '领料单号',
+    `pick_type` VARCHAR(16) NOT NULL COMMENT '领料类型: PICK-领料, SUPPLY-补料, RETURN-退料',
+    `source_sales_id` BIGINT DEFAULT NULL COMMENT '关联销售单ID(可选)',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待发料, 2-已发料, 3-已完成, 4-已驳回',
+    `applicant_id` BIGINT NOT NULL COMMENT '申请人ID',
+    `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '发料人ID(仓储管理员)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '发料人姓名(冗余字段)',
+    `operation_time` DATETIME DEFAULT NULL COMMENT '发料时间',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '确认收货时间',
+    `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_pick_no` (`pick_no`),
+    KEY `idx_pick_status` (`status`),
+    KEY `idx_pick_applicant` (`applicant_id`),
+    KEY `idx_pick_source_sales` (`source_sales_id`),
+    KEY `idx_pick_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产领料单主表';
+
+-- 领料单明细表（多商品）
+CREATE TABLE IF NOT EXISTS `biz_pick_list_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `pick_list_id` BIGINT NOT NULL COMMENT '领料单主表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '数量',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_pld_pick_list_id` (`pick_list_id`),
+    KEY `idx_pld_goods_id` (`goods_id`),
+    KEY `idx_pld_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产领料单明细表';
+
+-- =============================================
 -- 脚本执行完成
 -- =============================================

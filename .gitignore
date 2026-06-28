@@ -1,11 +1,16 @@
-# ===== Project build outputs =====
+# ===== 后端编译产物 =====
 back/target/
-front/dist/
 
-# ===== Dependency directories =====
+# ===== 前端构建产物与依赖 =====
+front/dist/
 front/node_modules/
 
-# ===== Environment / secrets =====
+# ===== 运行时产物（文件上传、本地存储）=====
+uploads/
+back/uploads/
+*/uploads/
+
+# ===== 环境变量 / 密钥 =====
 .env
 .env.*
 *.env
@@ -15,37 +20,32 @@ front/node_modules/
 *.pem
 back/assistant-llm.env
 
-
-
-
-
-# Frontend local env files
+# 前端本地环境文件
 front/.env
 front/.env.*
 !front/.env.example
 
-# ===== Docs =====
-/*.md
-!/README.md
+# ===== 临时文档目录 =====
 doxc/
 
-# ===== IDE / OS =====
+# ===== IDE / 编辑器 =====
 .idea/
 .vscode/
 *.iml
+*.classpath
+*.project
+.settings/
+
+# ===== 操作系统 =====
 Thumbs.db
 .DS_Store
 
-# ===== Logs =====
+# ===== 日志 =====
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-tmpclaude-b90e-cwd
-twelve-auth.postman_collection.json
-
-front.pen
-new.pen
-develop-doxc
-.vscode/launch.json
+# ===== 临时/调试文件 =====
+*.tmp
+*.bak
