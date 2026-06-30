@@ -223,6 +223,37 @@ public class MessageService {
         );
     }
 
+    /**
+     * 销售下单后通知仓储管理员有待确认出库的销售单。
+     */
+    public void sendSalesPendingConfirmToWarehouseAdmins(String salesNo, String customerName, String applicantName) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String customer = StringUtils.hasText(customerName) ? customerName : "未填写";
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "销售员";
+        sendToDeptAdmins(
+                warehouseDeptId,
+                "待确认销售出库",
+                String.format(
+                        Locale.ROOT,
+                        "销售单 %s 已由 %s 下单（客户：%s），请尽快确认出库。",
+                        salesNo, applicant, customer
+                )
+        );
+    }
+
+    private Long resolveDeptIdByCode(String deptCode) {
+        if (!StringUtils.hasText(deptCode)) {
+            return null;
+        }
+        LambdaQueryWrapper<SysDept> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysDept::getDeptCode, deptCode).last("LIMIT 1");
+        SysDept dept = sysDeptMapper.selectOne(wrapper);
+        return dept == null ? null : dept.getId();
+    }
+
     private void sendToDeptAdmins(Long deptId, String title, String content) {
         if (deptId == null || !StringUtils.hasText(title) || !StringUtils.hasText(content)) {
             return;

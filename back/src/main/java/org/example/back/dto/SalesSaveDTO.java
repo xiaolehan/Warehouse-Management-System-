@@ -23,5 +23,15 @@ public class SalesSaveDTO {
 
     private LocalDateTime operationTime;
 
+    /**
+     * 客户公司名（对齐 wms_v1 下单文档，可选）
+     */
+    private String customerName;
+
+    /**
+     * 合同编号（对齐 wms_v1 下单文档，可选）
+     */
+    private String contractNo;
+
     private String remark;
 }

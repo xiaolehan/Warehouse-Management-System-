@@ -16,7 +16,7 @@
 - `document/wms系统改造参考参考资料.md`（§5.3 生产领料模块）
 - `projectmd/生产领料模块开发任务清单.md`（可执行任务拆解）
 
-**当前状态：** ✅ 阶段 1 生产领料模块完成（后端 B1–B9 + 前端 F1–F5 + 验收全部通过）
+**当前状态：** ✅ 阶段 1 + 阶段 2 完成（生产领料 + 销售下单协同）
 
 ---
 
@@ -45,8 +45,33 @@
 #### 验收
 - [x] 模块级验收标准（见任务清单 §5）全部通过
 
-### 阶段 2：销售下单协同（待启动）
-- 销售单增加"待仓库确认"状态，仓库确认后才扣库存
+### 阶段 2：销售下单协同（✅ 完成）
+
+**决策（Q1–Q3 已确认）：**
+- D11 图表只统计已确认出库（biz_status=1 AND confirm_status=2）
+- D12 本期新增 customer_name（公司名）、contract_no（合同编号）字段，对齐 wms_v1 下单文档
+- D13 销售建单后推送站内消息给仓储管理员
+- D14 新增 confirm_status 字段（1待仓库确认/2已确认出库），不动 biz_status 语义；存量数据默认 2
+
+#### 后端
+- [x] S1 biz_sales 加列：confirm_status/confirm_time/confirmer_id/confirmer_name/customer_name/contract_no（db.sql + ALTER 本地库）
+- [x] S2 BizSales entity 加 6 字段
+- [x] S3 SalesSaveDTO 加 customerName/contractNo
+- [x] S4 SalesVO 加 confirmStatus/confirmStatusText/confirmTime/confirmerName/customerName/contractNo
+- [x] S5 SalesService.create()：confirm_status=1，不扣库存，发消息给仓储
+- [x] S6 SalesService.confirm()：仓储确认，扣库存，confirm_status→2
+- [x] S7 SalesService.delete()/voidDocument()：按 confirm_status 决定是否回补库存
+- [x] S8 SalesService.returnableOptions() 加 confirm_status=2 过滤；SalesReturnService.ensureSourceSalesNormal 加 confirm_status=2
+- [x] S9 SalesController 加 PUT /{id}/confirm（仓储）
+- [x] S10 BizSalesMapper 图表 15 处 SQL 加 AND confirm_status=2
+- [x] S11 MessageService 加 sendSalesPendingConfirmToWarehouseAdmins()
+- [x] S12 编译与 E2E 验证（全通过）
+
+#### 前端
+- [x] F1 api/business.js 加 confirmSalesAPI
+- [x] F2 SalesView.vue：加客户名/合同编号表单字段 + 确认状态列 + 仓储确认按钮
+- [x] F3 路由 sales deptCodes 加 warehouse + 仓储菜单加"销售出库确认"入口
+- [x] F4 联调验证（build + Vite 代理 E2E 通过）
 
 ### 阶段 3：缺货识别与采购触发（待启动）
 - 仓库统计物料识别缺货，生成采购申请单流转给采购
@@ -81,9 +106,24 @@ Q1–Q5 已全部确认，结论见决策记录 D6–D10。无阻塞项。
 
 ## 📊 总体进度
 
-- 完成度：阶段 1 编码 100%（后端 + 前端 + 联调验收通过）
-- 当前阶段：阶段 1 完成，阶段 2 待启动
+- 完成度：阶段 1 + 阶段 2 编码 100%（后端 + 前端 + 联调验收通过）
+- 当前阶段：阶段 2 完成，阶段 3 待启动
 - 阻塞项：无
+
+## 🧪 验收结果（阶段 2 销售下单协同）
+
+| 测试项 | 结果 |
+|---|---|
+| 建单 confirm_status=1 不扣库存 | ✅ 库存不变(500) |
+| 仓储确认出库扣库存 | ✅ 状态→2，库存 495 |
+| 重复确认被防抖拦截 | ✅ 400 |
+| sales_admin 确认待确认单被拒 | ✅ 400 权限拦截，未扣库存 |
+| 待确认单不能退货 | ✅ 400 "尚未确认出库" |
+| 已确认单退货回补库存 | ✅ 495→497 |
+| 图表只统计已确认出库 | ✅ 15 处 SQL 加 confirm_status=2 |
+| 建单推送仓储站内消息 | ✅ sendSalesPendingConfirmToWarehouseAdmins |
+| 前端 build + Vite 代理 E2E | ✅ VO 返回 confirmStatusText |
+| 测试数据已清理 | ✅ 库存恢复 500 |
 
 ## 🧪 验收结果（阶段 1）
 

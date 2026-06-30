@@ -12,16 +12,16 @@ import java.util.List;
  * 销售记录 Mapper 接口,数据库操作接口
  */
 public interface BizSalesMapper extends BaseMapper<BizSales> {
-	@Select("SELECT MIN(operation_time) FROM biz_sales WHERE is_deleted = 0")
+	@Select("SELECT MIN(operation_time) FROM biz_sales WHERE is_deleted = 0 AND confirm_status = 2")
 	LocalDateTime minOperationTime();
 
-	@Select("SELECT MAX(operation_time) FROM biz_sales WHERE is_deleted = 0")
+	@Select("SELECT MAX(operation_time) FROM biz_sales WHERE is_deleted = 0 AND confirm_status = 2")
 	LocalDateTime maxOperationTime();
 
-	@Select("SELECT MIN(operation_time) FROM biz_sales WHERE is_deleted = 0 AND biz_status = 1")
+	@Select("SELECT MIN(operation_time) FROM biz_sales WHERE is_deleted = 0 AND biz_status = 1 AND confirm_status = 2")
 	LocalDateTime minValidOperationTime();
 
-	@Select("SELECT MAX(operation_time) FROM biz_sales WHERE is_deleted = 0 AND biz_status = 1")
+	@Select("SELECT MAX(operation_time) FROM biz_sales WHERE is_deleted = 0 AND biz_status = 1 AND confirm_status = 2")
 	LocalDateTime maxValidOperationTime();
 
 	@Select("""
@@ -29,6 +29,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			SELECT COALESCE(SUM(total_price), 0)
 			FROM biz_sales
 			WHERE is_deleted = 0
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			</script>
@@ -41,6 +42,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			SELECT COALESCE(SUM(quantity), 0)
 			FROM biz_sales
 			WHERE is_deleted = 0
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			</script>
@@ -54,6 +56,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales
 			WHERE is_deleted = 0
 			  AND biz_status = 1
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			</script>
@@ -67,6 +70,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales
 			WHERE is_deleted = 0
 			  AND biz_status = 1
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			</script>
@@ -80,6 +84,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales s
 			WHERE s.is_deleted = 0
 			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			</script>
@@ -92,6 +97,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			SELECT goods_name AS name, SUM(quantity) AS quantity
 			FROM biz_sales
 			WHERE is_deleted = 0
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			GROUP BY goods_id, goods_name
@@ -109,6 +115,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales s
 			LEFT JOIN base_goods bg ON s.goods_id = bg.id
 			WHERE s.is_deleted = 0
+			  AND s.confirm_status = 2
 			  AND (bg.is_deleted = 0 OR bg.id IS NULL)
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
@@ -125,6 +132,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 				   SUM(total_price) AS amount
 			FROM biz_sales
 			WHERE is_deleted = 0
+			  AND confirm_status = 2
 			  AND operation_time <![CDATA[>=]]> #{startTime}
 			  AND operation_time <![CDATA[<]]> #{endTime}
 			GROUP BY DATE(operation_time)
@@ -142,6 +150,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			LEFT JOIN base_goods bg ON s.goods_id = bg.id
 			WHERE s.is_deleted = 0
 			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			GROUP BY COALESCE(NULLIF(TRIM(bg.brand), ''), '未标注品牌')
@@ -157,6 +166,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales s
 			WHERE s.is_deleted = 0
 			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			GROUP BY DATE(s.operation_time)
@@ -173,6 +183,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales s
 			WHERE s.is_deleted = 0
 			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			GROUP BY DATE(s.operation_time)

@@ -68,7 +68,7 @@ const router = createRouter({
           path: "business/sales",
           name: "BusinessSales",
           component: () => import("../views/business/SalesView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales'] }
+          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-return",

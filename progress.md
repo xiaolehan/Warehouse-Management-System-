@@ -92,3 +92,41 @@
 - 验证通过：`back/target`、`front/dist`、`front/node_modules`、`front/.vite`、`back/uploads` 均被 `git check-ignore` 命中；新增源码未被忽略；0 个编译产物被 git 跟踪
 - **修复 db.sql 回退问题**：发现 db.sql 中领料建表 DDL 被外部编辑回退（与 CodeGenerator 同样情况），grep 计数为 0；已重新追加 `biz_pick_list` + `biz_pick_list_detail` DDL（47 行），git diff 确认落盘
 - 注意：`application.properties` 含本地开发密码（wms_user/wms_pass）被原仓库跟踪，非本次 gitignore 范围；如需保护建议改环境变量注入
+
+### 阶段 2 销售下单协同实现（2026-06-30，完成）
+
+**决策（Q1–Q3）：** D11 图表只统计已确认出库；D12 本期新增 customer_name/contract_no；D13 建单推送仓储站内消息；D14 新增 confirm_status(1待确认/2已出库)，不动 biz_status，存量默认 2。
+
+**后端（S1–S12）：**
+- S1 biz_sales 加 6 列（db.sql + ALTER 本地库执行）
+- S2–S4 Entity/DTO/VO 加字段；VO 含 confirmStatusText
+- S5 create()：confirm_status=1，**不扣库存**，调 MessageService 发消息给仓储
+- S6 confirm()：仓储确认，扣库存，confirm_status→2，记 confirm_time/confirmer
+- S7 delete()/voidDocument()：按 confirm_status 决定回补（仅已出库才回补，红冲也仅已出库才生成）
+- S8 returnableOptions 加 confirm_status=2；SalesReturnService.ensureSourceSalesNormal 加"尚未确认出库禁止退货"
+- S9 SalesController 加 PUT /{id}/confirm（@RequireAdmin + @AuditLog + 防抖）
+- S10 BizSalesMapper 图表 15 处 SQL 加 AND confirm_status=2（Python 脚本批量替换，单表/别名/单行 min-max 全覆盖）
+- S11 MessageService 加 sendSalesPendingConfirmToWarehouseAdmins + resolveDeptIdByCode
+- S12 编译通过，E2E 全通过
+
+**前端（F1–F4）：**
+- F1 confirmSalesAPI
+- F2 SalesView：表单加客户名/合同编号、表格加确认状态列(tag)、操作列加"确认出库"按钮(仅待确认+仓储)、handleConfirm
+- F3 路由 sales deptCodes 加 warehouse；仓储菜单加"销售出库确认"入口
+- F4 build 通过 + Vite 代理 E2E 通过
+
+**坑点：**
+- E2E 中途后端进程挂掉（WSL/进程问题，非代码），重启 mvnw 恢复
+- `@RequireAdmin` 只校验 admin 角色，部门隔离靠 service 层 requireSalesVoidExecutionAccess（sales_admin 确认时抛"需提交仓储审批"），符合现有作废审批设计
+
+**下一步：** 阶段 3（缺货识别与采购触发）或阶段 4（盘点/余料/追溯）。
+
+### 阶段 2 权限 Bug 修复（2026-06-30）
+
+**现象：** sales_admin 建待确认销售单后，warehouse_admin 登录进"销售出库确认"页面无法操作，提示"只有销售管理人员有权限"。
+
+**根因：** 前端路由 sales deptCodes 已加 warehouse，但后端 `SalesService.requireSalesModuleAccess()` 只允许 sales 部门，而 `page()`(列表) 和 `getById()`(详情) 都调用了它 → warehouse_admin 读列表时被 403 拦截。
+
+**修复：** 新增 `requireSalesReadAccess()`（sales + warehouse），`page()`/`getById()` 改用它；写操作（create/delete/returnableOptions）仍限 sales。confirm() 已走 `requireSalesVoidExecutionAccess()`（仓储通过），无需改。
+
+**验证：** warehouse_admin 查列表 200、查详情 200、确认出库成功（惠普打印机 状态→2，确认人=仓储管理员）。

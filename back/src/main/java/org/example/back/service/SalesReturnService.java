@@ -220,6 +220,9 @@ public class SalesReturnService {
         if (sourceSales.getBizStatus() == null || sourceSales.getBizStatus() != 1) {
             throw BusinessException.validateFail("来源销售单非正常状态，禁止退货");
         }
+        if (sourceSales.getConfirmStatus() == null || sourceSales.getConfirmStatus() != SalesService.CONFIRM_SHIPPED) {
+            throw BusinessException.validateFail("来源销售单尚未确认出库，禁止退货");
+        }
     }
 
     private void validateReturnableQuantity(BizSales sourceSales, Integer returnQty) {

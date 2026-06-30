@@ -21,6 +21,7 @@ export const getReturnableSalesOptionsAPI = (params) => request.get('/business/s
 export const createSalesAPI = (data) => request.post('/business/sales', data)
 export const deleteSalesAPI = (id) => request.delete(`/business/sales/${id}`)
 export const voidSalesAPI = (id, data) => request.put(`/business/sales/${id}/void`, data)
+export const confirmSalesAPI = (id) => request.put(`/business/sales/${id}/confirm`)
 
 export const getSalesReturnPageAPI = (params) => request.get('/business/sales-returns/page', { params })
 export const getSalesReturnDetailAPI = (id) => request.get(`/business/sales-returns/${id}`)

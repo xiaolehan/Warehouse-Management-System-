@@ -44,6 +44,21 @@ public class SalesVO {
 
     private String voidReason;
 
+    /**
+     * 仓库确认状态: 1-待仓库确认, 2-已确认出库
+     */
+    private Integer confirmStatus;
+
+    private String confirmStatusText;
+
+    private LocalDateTime confirmTime;
+
+    private String confirmerName;
+
+    private String customerName;
+
+    private String contractNo;
+
     private LocalDateTime createTime;
 
     private Integer isDeleted;
