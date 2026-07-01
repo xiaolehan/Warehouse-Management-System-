@@ -1084,5 +1084,49 @@ CREATE TABLE IF NOT EXISTS `biz_pick_list_detail` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产领料单明细表';
 
 -- =============================================
+-- 3.5 采购申请单 (缺货识别与采购触发)
+-- =============================================
+DROP TABLE IF EXISTS `biz_purchase_request_detail`;
+DROP TABLE IF EXISTS `biz_purchase_request`;
+CREATE TABLE IF NOT EXISTS `biz_purchase_request` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `request_no` VARCHAR(30) NOT NULL COMMENT '采购申请单号(PR开头)',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回',
+    `applicant_id` BIGINT NOT NULL COMMENT '申请人ID(仓储管理员)',
+    `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '采购处理人ID(采购管理员)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '采购处理人姓名(冗余字段)',
+    `operation_time` DATETIME DEFAULT NULL COMMENT '认领(转采购中)时间',
+    `receive_time` DATETIME DEFAULT NULL COMMENT '入库完成时间',
+    `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_request_no` (`request_no`),
+    KEY `idx_pr_status` (`status`),
+    KEY `idx_pr_applicant` (`applicant_id`),
+    KEY `idx_pr_operator` (`operator_id`),
+    KEY `idx_pr_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单主表';
+
+CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `request_id` BIGINT NOT NULL COMMENT '采购申请单主表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '申请采购数量',
+    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(入库时填写)',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_prd_request_id` (`request_id`),
+    KEY `idx_prd_goods_id` (`goods_id`),
+    KEY `idx_prd_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
+
+-- =============================================
 -- 脚本执行完成
 -- =============================================

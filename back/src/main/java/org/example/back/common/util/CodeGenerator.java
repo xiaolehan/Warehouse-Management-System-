@@ -49,6 +49,10 @@ public final class CodeGenerator {
         return "PICK" + timestampSuffix();
     }
 
+    public static String purchaseRequestNo() {
+        return "PR" + timestampSuffix();
+    }
+
     private static String timestampSuffix() {
         return DateUtil.format(new Date(), "yyMMddHHmmss") + RandomUtil.randomNumbers(3);
     }

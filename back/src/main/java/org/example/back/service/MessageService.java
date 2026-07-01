@@ -244,6 +244,26 @@ public class MessageService {
         );
     }
 
+    /**
+     * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
+     */
+    public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName) {
+        Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
+        if (purchaseDeptId == null) {
+            return;
+        }
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "仓储管理员";
+        sendToDeptAdmins(
+                purchaseDeptId,
+                "待处理采购申请",
+                String.format(
+                        Locale.ROOT,
+                        "采购申请单 %s 已由 %s 提交，请尽快认领处理。",
+                        requestNo, applicant
+                )
+        );
+    }
+
     private Long resolveDeptIdByCode(String deptCode) {
         if (!StringUtils.hasText(deptCode)) {
             return null;

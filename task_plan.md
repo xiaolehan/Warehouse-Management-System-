@@ -1,7 +1,7 @@
 # 任务规划 (Task Plan)
 
 > 本文件用于记录阶段、进度与决策。会话中断后可据此恢复上下文。
-> 最后更新：2026-06-28
+> 最后更新：2026-07-01
 
 ---
 
@@ -16,7 +16,7 @@
 - `document/wms系统改造参考参考资料.md`（§5.3 生产领料模块）
 - `projectmd/生产领料模块开发任务清单.md`（可执行任务拆解）
 
-**当前状态：** ✅ 阶段 1 + 阶段 2 完成（生产领料 + 销售下单协同）
+**当前状态：** ✅ 阶段 1 + 2 + 3 完成（生产领料 + 销售下单协同 + 缺货识别与采购触发）
 
 ---
 
@@ -73,8 +73,38 @@
 - [x] F3 路由 sales deptCodes 加 warehouse + 仓储菜单加"销售出库确认"入口
 - [x] F4 联调验证（build + Vite 代理 E2E 通过）
 
-### 阶段 3：缺货识别与采购触发（待启动）
-- 仓库统计物料识别缺货，生成采购申请单流转给采购
+### 阶段 3：缺货识别与采购触发（✅ 完成 — 链路：识别→申请→采购入库）
+
+**链路：** 仓储识别缺货（stock ≤ warning_stock）→ 生成采购申请单（主从表）→ 推送采购 admin → 采购 admin 处理/转入库（复用 `biz_purchase`）→ 入库后回写申请单状态。
+
+**复用资产：** `biz_purchase`(入库加库存) / `base_goods.warning_stock`(缺货阈值) / `purchase` 部门 / PickList 主从表+状态机范式 / `MessageService.sendToDeptAdmins`。
+
+#### 后端
+- [x] P1 数据库建表 `biz_purchase_request` + `biz_purchase_request_detail`（db.sql 追加 + 本地库执行）
+- [x] P2 Entity `BizPurchaseRequest.java` + `BizPurchaseRequestDetail.java`
+- [x] P3 Mapper `BizPurchaseRequestMapper` + `BizPurchaseRequestDetailMapper`
+- [x] P4 DTO（Save 多明细 @Valid 嵌套 / Detail / Query / Reject / Receive）
+- [x] P5 VO `PurchaseRequestVO` + `PurchaseRequestDetailVO`（含 statusText）
+- [x] P6 CodeGenerator.purchaseRequestNo() = `PR`+时间戳+3随机
+- [x] P7 Service：page/getById/shortageGoods/create/process/receive(转 biz_purchase)/reject/delete
+- [x] P8 Controller `/business/purchase-requests/*`，@RequireAdmin + @AuditLog + @PreventDuplicateSubmit
+- [x] P9 缺货识别查询 `GET /business/purchase-requests/shortage-goods`
+- [x] P10 编译与启动验证（E2E 全部通过）
+
+#### 前端
+- [x] F1 API 封装 `purchaseRequest.js`（page/detail/shortageGoods/create/process/receive/reject/delete）
+- [x] F2 `PurchaseRequestView.vue`：缺货勾选建单 + 列表 + 详情 + 转入库/驳回对话框
+- [x] F3 路由与菜单：仓储菜单加"采购申请"，采购菜单加"采购申请处理"
+- [x] F4 权限指令（v-permission：建单限仓储 admin，认领/入库/驳回限采购 admin）
+- [x] F5 联调验证（build 通过 + Vite 代理 E2E 通过）
+
+#### 验收
+- [x] 缺货识别准确（stock ≤ warning_stock，返回胖乐炒菜机 stock=5/warning=10）
+- [x] 仓储建单后推送采购 admin 站内消息（sendPurchaseRequestToPurchaseAdmins）
+- [x] 采购认领 → 转入库 → biz_purchase 生成(PUR260701225350744) + 库存 5→15(+10) + 申请单状态回写已入库(status=3)
+- [x] 非采购 admin 建单被拒（sales_admin → 403 "仅仓储管理员可识别缺货并创建采购申请单"）
+- [x] 重复入库被防抖拦截（400 "请勿重复提交入库请求"）
+- [x] 测试数据清理，库存恢复 5
 
 ### 阶段 4：库存治理与追溯（待启动）
 - 盘点 / 余料 / 成品追溯
@@ -95,20 +125,53 @@
 | D8 | 关联销售单为可选（Q3） | 灵活度优先，source_sales_id 可空 | 2026-06-28 |
 | D9 | 退料需仓储确认，统一走 待发料→已发料→已完成（Q4） | 管控更严，防乱退料；发料动作即入库 | 2026-06-28 |
 | D10 | 本期不做领料单打印（Q5） | 预留，优先核心流程 | 2026-06-28 |
+| D11 | 图表只统计已确认出库（biz_status=1 AND confirm_status=2） | 排除待确认单干扰统计 | 2026-06-30 |
+| D12 | 销售单加 customer_name/contract_no 字段 | 对齐 wms_v1 下单文档 | 2026-06-30 |
+| D13 | 销售建单后推送站内消息给仓储管理员 | 协同触发，复用 MessageService | 2026-06-30 |
+| D14 | 新增 confirm_status（1待确认/2已出库），不动 biz_status，存量默认 2 | 语义清晰，存量兼容 | 2026-06-30 |
+| D15 | 缺货识别采用手动勾选（仓储 admin 查看 stock ≤ warning_stock 商品，勾选生成申请单） | 可控低噪音，自动触发留待后续增量 | 2026-07-01 |
+| D16 | 采购申请单采用主从表（多商品明细），对齐 PickList 范式 | 一次缺货常涉及多物料，参照 D7 先例 | 2026-07-01 |
+| D17 | 采购入库复用 PurchaseService.create()，逐明细转 biz_purchase | 库存变更唯一入口，可追溯 | 2026-07-01 |
+| D18 | 状态机 待采购(1)→采购中(2)→已入库(3)/已驳回(4)；驳回即终态 | 简单清晰，重新申请需新建单 | 2026-07-01 |
+| D19 | 保留"采购中"中间态（采购 admin 认领→采购中，到货→转入库） | 区分已接单未到货与已入库，便于跟踪 | 2026-07-01 |
+| D20 | 缺货阈值复用 base_goods.warning_stock，不新增 safe_stock 列 | 已有索引 + HomeService 已用，避免冗余 | 2026-07-01 |
 
 ---
 
 ## ⚠️ 待确认问题
 
-Q1–Q5 已全部确认，结论见决策记录 D6–D10。无阻塞项。
+### 阶段 1（已确认）
+Q1–Q5 已全部确认，结论见决策记录 D6–D10。
+
+### 阶段 2（已确认）
+Q1–Q3 已全部确认，结论见决策记录 D11–D14。
+
+### 阶段 3（已确认 2026-07-01）
+
+Q1–Q6 已全部确认，结论见决策记录 D15–D20。无阻塞项。
 
 ---
 
 ## 📊 总体进度
 
-- 完成度：阶段 1 + 阶段 2 编码 100%（后端 + 前端 + 联调验收通过）
-- 当前阶段：阶段 2 完成，阶段 3 待启动
+- 完成度：阶段 1 + 2 + 3 编码 100%（后端 + 前端 + 联调验收通过）
+- 当前阶段：阶段 3 完成，阶段 4 待启动
 - 阻塞项：无
+
+## 🧪 验收结果（阶段 3 缺货识别与采购触发）
+
+| 测试项 | 结果 |
+|---|---|
+| 缺货识别（stock ≤ warning_stock） | ✅ 返回胖乐炒菜机 stock=5/warning=10 |
+| 仓储建单 + 推送采购 admin 消息 | ✅ PR260701225350315 创建，sendPurchaseRequestToPurchaseAdmins |
+| 采购认领（待采购→采购中） | ✅ status=1→2，认领人=采购管理员 |
+| 转入库复用 biz_purchase 加库存 | ✅ PUR260701225350744 生成，库存 5→15(+10) |
+| 状态回写已入库 | ✅ status=3，receiveTime 已记，明细 unitPrice=5.50 回写 |
+| 非采购 admin 建单被拒 | ✅ sales_admin → 403 |
+| 重复入库防抖拦截 | ✅ 400 "请勿重复提交入库请求" |
+| 前端 build | ✅ PurchaseRequestView.js 12.58kB 无错误 |
+| Vite 代理 E2E | ✅ 5173/api 代理 8080，login+shortage-goods 200 |
+| 测试数据已清理 | ✅ 库存恢复 5，申请单/明细/进货单清空 |
 
 ## 🧪 验收结果（阶段 2 销售下单协同）
 
