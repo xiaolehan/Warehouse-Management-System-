@@ -40,10 +40,27 @@
         <el-table-column prop="refundAmount" label="退货金额(元)" width="120" />
         <el-table-column prop="returnDate" label="退货日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="确认状态" width="120">
+          <template #default="scope">
+            <el-tag :type="scope.row.confirmStatus === 2 ? 'success' : 'warning'" size="small">
+              {{ scope.row.confirmStatusText || (scope.row.confirmStatus === 2 ? '已确认入库' : '待仓库确认') }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
+              <el-button
+                v-if="scope.row.confirmStatus === 1 && !isBizDocumentDeleted(scope.row)"
+                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                size="small"
+                type="success"
+                link
+                @click="handleConfirm(scope.row)"
+              >
+                确认入库
+              </el-button>
               <el-button
                 v-if="showDeleteAction(scope.row)"
                 v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
@@ -160,6 +177,7 @@ import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, Docume
 import { createApprovalOrderAPI } from '@/api/system'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import {
+  confirmSalesReturnAPI,
   createSalesReturnAPI,
   deleteSalesReturnAPI,
   getReturnableSalesOptionsAPI,
@@ -220,6 +238,8 @@ const resolveBizDate = (row) => {
 const canDelete = (row) => {
   if (isBizDocumentDeleted(row)) return false
   if (row?.bizStatus !== 1) return false
+  // 仅待仓库确认（未入库）的退货单可直接删除；已确认入库的需走作废流程
+  if (row?.confirmStatus !== 1) return false
   return toDateOnly(resolveBizDate(row)) === localToday()
 }
 
@@ -366,6 +386,22 @@ const handleDelete = (row) => {
   })
 }
 
+const handleConfirm = (row) => {
+  ElMessageBox.confirm('确认入库将把退货数量加回库存，确认继续吗？', '确认入库', { type: 'warning' }).then(async () => {
+    const res = await confirmSalesReturnAPI(row.id)
+    if (res.code !== 200) {
+      throw new Error(res.msg || '确认失败')
+    }
+    ElMessage.success('已确认入库')
+    await loadSourceSalesOptions()
+    loadList()
+  }).catch((error) => {
+    if (error?.message) {
+      ElMessage.error(error.message)
+    }
+  })
+}
+
 const handleVoid = async (row, createRedFlush) => {
   try {
     const title = createRedFlush ? '作废并红冲' : '作废单据'
@@ -427,8 +463,13 @@ const submitForm = () => {
 }
 
 onMounted(async () => {
+  // 可退销售单选项仅销售 admin 需要（建退货单用）；仓储 admin 进页面只做确认入库，加载失败不阻断列表
   try {
     await loadSourceSalesOptions()
+  } catch (error) {
+    // 仓储无权限访问可退选项，静默忽略
+  }
+  try {
     await loadList()
   } catch (error) {
     ElMessage.error(error.message || '初始化失败')

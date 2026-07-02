@@ -5,6 +5,45 @@
 
 ---
 
+## 会话 3 — 2026-07-02
+
+### 巩固进度：登录巡检修复两个流程缺陷
+
+用户登录系统巡检发现两个不合理点，已修复并通过 E2E 验证：
+
+**问题 1：销售单删除后残留仓储待确认消息**
+- 现象：销售员建单后删除待确认销售单，仓储 admin 仍收到"待确认销售出库"消息，点进去却看不到单据（悬挂通知）。
+- 根因：`SalesService.create()` 发消息后，`delete()`/`voidDocument()`/`confirm()` 未清理关联消息，消息生命周期与单据脱节。
+- 修复：
+  - `sys_message` 加列 `biz_type`/`biz_id` + 索引 `idx_biz`（db.sql CREATE + 末尾 ALTER 7.1）
+  - `MessageService` 新增 `sendToDeptAdminsWithBiz(...)`（透传 biz 关联）+ `revokeUnreadByBiz(bizType, bizId)`（按单据软删未读待办）；`sendSalesPendingConfirmToWarehouseAdmins` 传入 `bizType="sales"`/`salesId`
+  - `SalesService.delete()`/`voidDocument()`/`confirm()` 三处调用 `revokeUnreadByBiz("sales", id)` 撤销悬挂消息
+- 验证（DB 直查）：删单/确认出库/作废后，对应 biz 消息 `is_deleted=1` ✅
+
+**问题 2：销售退货缺仓储确认入库环节**
+- 现象：销售员建退货单瞬间就 `increaseStock` 加库存，无仓储通知、无确认入库步骤，与阶段 2 销售单 `confirm_status` 范式不一致。
+- 修复（完全镜像 D11–D14 范式）：
+  - `biz_sales_return` 加列 `confirm_status`(默认2兼容)/`confirm_time`/`confirmer_id`/`confirmer_name` + 索引（db.sql CREATE + ALTER 7.2）
+  - `SalesReturnService.create()`：设 `confirm_status=PENDING`，**移除** `increaseStock`，改发 `sendSalesReturnPendingConfirmToWarehouseAdmins`
+  - 新增 `confirm(id)`：仓储 admin 权限 → `increaseStock` → CAS 更新 `confirm_status=RECEIVED` + 确认人/时间 → 撤销消息
+  - `delete()`：仅 PENDING 可删（不触碰库存），已确认入库走作废；`voidDocument()`：仅 RECEIVED 态 `decreaseStock` 回冲
+  - `SalesService.returnableOptions` + `SalesReturnService.validateReturnableQuantity`：仅统计 `confirm_status=2` 退货占可退额度
+  - `BizSalesReturnMapper` 6 处"有效退货"统计加 `AND confirm_status = 2`（图表对齐 D11）
+  - `SalesReturnController` 加 `PUT /{id}/confirm`（仓储 + AuditLog + 防抖）
+  - 前端：`confirmSalesReturnAPI` + `SalesReturnView.vue` 确认状态列/确认入库按钮/删除限制 + 路由 deptCodes 加 warehouse + 仓储菜单加"销售退货入库确认"
+- 验证（E2E）：建退货单库存不变(98→98) ✅ / 仓储确认入库 +3(98→101) ✅ / sales 确认被拒 403 ✅ / 重复确认 400 防抖 ✅ / 确认后消息消除 ✅ / 库存完全恢复 ✅ / `npm run build` 通过 ✅
+
+**说明**：加 biz 字段之前发的存量消息（biz_type=NULL）无法按 biz 撤销，属迁移固有限制；新发消息均带 biz 关联，可正确撤销。测试残留消息已清理。
+
+### 修复：仓储 admin 进销售退货页无法操作（onMounted 阻断）
+
+- 现象：销售建退货单后，仓储 admin 进"销售退货入库确认"页面看不到列表/无法确认入库。
+- 根因：`SalesReturnView.vue` 的 `onMounted` 先 `await loadSourceSalesOptions()`（调 `/business/sales/options/returnable`，后端 `requireSalesModuleAccess` 仅销售 admin），仓储 403 抛错后 `loadList()` 被跳过，页面空 + "初始化失败"报错。仓储本不需要可退销售单选项（那是建退货单用的）。
+- 修复：`onMounted` 拆成两个 try——`loadSourceSalesOptions` 失败静默忽略（仓储无权限属预期），`loadList` 独立 try 不被阻断。
+- 验证：仓储列表 code=200 total=7 ✅ / 确认入库 id=10 → confirmStatus=2 已确认入库 confirmer=仓储管理员 ✅ / `npm run build` 通过 ✅。测试数据已清理。
+
+---
+
 ## 会话 2 — 2026-07-01
 
 ### 阶段 3 规划启动（缺货识别与采购触发）

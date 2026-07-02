@@ -69,6 +69,17 @@ public class BizSalesReturn {
 
     private String voidReason;
 
+    /**
+     * 仓库确认状态: 1-待仓库确认, 2-已确认入库
+     */
+    private Integer confirmStatus;
+
+    private LocalDateTime confirmTime;
+
+    private Long confirmerId;
+
+    private String confirmerName;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

@@ -125,13 +125,16 @@ CREATE TABLE `sys_message` (
     `content` TEXT NOT NULL COMMENT '消息正文',
     `is_read` TINYINT NOT NULL DEFAULT 0 COMMENT '是否已读: 0-未读, 1-已读',
     `read_time` DATETIME DEFAULT NULL COMMENT '已读时间',
+    `biz_type` VARCHAR(30) DEFAULT NULL COMMENT '关联业务类型: sales/sales_return 等(用于按单据撤销待办)',
+    `biz_id` BIGINT DEFAULT NULL COMMENT '关联业务单据ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
     PRIMARY KEY (`id`),
     KEY `idx_recipient_user_read` (`recipient_user_id`, `is_read`, `create_time`),
     KEY `idx_recipient_dept` (`recipient_dept_id`),
-    KEY `idx_is_deleted` (`is_deleted`)
+    KEY `idx_is_deleted` (`is_deleted`),
+    KEY `idx_biz` (`biz_type`, `biz_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内消息表';
 
 DROP TABLE IF EXISTS `sys_error_log`;
@@ -408,6 +411,10 @@ CREATE TABLE `biz_sales_return` (
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
+    `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '仓库确认状态: 1-待仓库确认, 2-已确认入库',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认入库时间',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
@@ -418,6 +425,7 @@ CREATE TABLE `biz_sales_return` (
     KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`, `source_sales_id`),
     KEY `idx_cost_stat` (`operation_time`, `biz_status`, `is_deleted`, `cost_total_price`),
     KEY `idx_source_sales_id` (`source_sales_id`),
+    KEY `idx_return_confirm_status` (`confirm_status`),
     KEY `idx_source_sales_no` (`source_sales_no`),
     KEY `idx_biz_status` (`biz_status`),
     KEY `idx_source_id` (`source_id`),
@@ -1126,6 +1134,25 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     KEY `idx_prd_goods_id` (`goods_id`),
     KEY `idx_prd_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
+
+-- =============================================
+-- 七、增量迁移（已部署库升级用，全新库可忽略）
+-- =============================================
+
+-- 7.1 sys_message 增加业务关联字段（消息按单据撤销）
+ALTER TABLE `sys_message`
+    ADD COLUMN `biz_type` VARCHAR(30) DEFAULT NULL COMMENT '关联业务类型: sales/sales_return 等(用于按单据撤销待办)' AFTER `read_time`,
+    ADD COLUMN `biz_id` BIGINT DEFAULT NULL COMMENT '关联业务单据ID' AFTER `biz_type`,
+    ADD KEY `idx_biz` (`biz_type`, `biz_id`);
+
+-- 7.2 biz_sales_return 增加仓库确认入库字段（对齐 biz_sales confirm_status 范式）
+-- 存量数据默认 confirm_status=2（已确认入库），保持兼容
+ALTER TABLE `biz_sales_return`
+    ADD COLUMN `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '仓库确认状态: 1-待仓库确认, 2-已确认入库' AFTER `void_reason`,
+    ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认入库时间' AFTER `confirm_status`,
+    ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)' AFTER `confirm_time`,
+    ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)' AFTER `confirmer_id`,
+    ADD KEY `idx_return_confirm_status` (`confirm_status`);
 
 -- =============================================
 -- 脚本执行完成

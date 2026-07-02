@@ -74,7 +74,7 @@ const router = createRouter({
           path: "business/sales-return",
           name: "BusinessSalesReturn",
           component: () => import("../views/business/SalesReturnView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales'] }
+          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-chart",

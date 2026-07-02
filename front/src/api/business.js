@@ -28,6 +28,7 @@ export const getSalesReturnDetailAPI = (id) => request.get(`/business/sales-retu
 export const createSalesReturnAPI = (data) => request.post('/business/sales-returns', data)
 export const deleteSalesReturnAPI = (id) => request.delete(`/business/sales-returns/${id}`)
 export const voidSalesReturnAPI = (id, data) => request.put(`/business/sales-returns/${id}/void`, data)
+export const confirmSalesReturnAPI = (id) => request.put(`/business/sales-returns/${id}/confirm`)
 
 export const getChartOverviewAPI = (params) => request.get('/business/charts/overview', { params })
 export const getChartTop5API = (params) => request.get('/business/charts/top5', { params })

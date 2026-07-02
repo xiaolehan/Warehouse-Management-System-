@@ -50,6 +50,14 @@ public class SalesReturnVO {
 
     private String voidReason;
 
+    private Integer confirmStatus;
+
+    private String confirmStatusText;
+
+    private LocalDateTime confirmTime;
+
+    private String confirmerName;
+
     private LocalDateTime createTime;
 
     private Integer isDeleted;

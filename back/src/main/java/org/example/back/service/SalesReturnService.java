@@ -36,6 +36,9 @@ import java.util.Map;
 @Service
 public class SalesReturnService {
 
+    public static final int CONFIRM_PENDING = 1;
+    public static final int CONFIRM_RECEIVED = 2;
+
     @Autowired
     private BizSalesReturnMapper bizSalesReturnMapper;
 
@@ -57,12 +60,23 @@ public class SalesReturnService {
     @Autowired
     private AuthzService authzService;
 
+    @Autowired
+    private MessageService messageService;
+
     private void requireSalesReturnModuleAccess() {
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门管理员可访问销售退货模块");
     }
 
+    /**
+     * 销售退货读取权限：销售部门管理员可完整管理，仓储部门管理员可查看以便确认入库。
+     */
+    private void requireSalesReturnReadAccess() {
+        authzService.requireAnyDeptAdminOrSuperAdmin(
+                "仅销售/仓储部门管理员可访问销售退货模块", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+    }
+
     public PageResult<SalesReturnVO> page(SalesReturnQueryDTO queryDTO) {
-        requireSalesReturnModuleAccess();
+        requireSalesReturnReadAccess();
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
 
@@ -81,7 +95,7 @@ public class SalesReturnService {
     }
 
     public SalesReturnVO getById(Long id) {
-        requireSalesReturnModuleAccess();
+        requireSalesReturnReadAccess();
         BizSalesReturn entity = requireEntity(id);
         return toVO(entity, resolveLatestApproval(entity.getId()));
     }
@@ -120,9 +134,46 @@ public class SalesReturnService {
         entity.setOperationTime(operationTime);
         entity.setRemark(dto.getRemark());
         entity.setBizStatus(1);
+        entity.setConfirmStatus(CONFIRM_PENDING);
 
         bizSalesReturnMapper.insert(entity);
-        increaseStock(goods.getId(), dto.getQuantity());
+
+        // 销售退货建单后不立即加库存，待仓库管理员确认入库时再加；同时通知仓储管理员有待确认单据
+        messageService.sendSalesReturnPendingConfirmToWarehouseAdmins(
+                entity.getReturnNo(), loginUser.getRealName(), entity.getId());
+    }
+
+    /**
+     * 仓储管理员确认销售退货入库：增加库存，状态由待确认转为已确认入库。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void confirm(Long id) {
+        requireWarehouseAdminOrSuperAdmin("仅仓储管理员可确认销售退货入库");
+        BizSalesReturn entity = requireEntity(id);
+        ensureNormalStatus(entity.getBizStatus(), "客退单");
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("客退单已确认入库，禁止重复确认");
+        }
+
+        increaseStock(entity.getGoodsId(), entity.getQuantity());
+
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LocalDateTime now = LocalDateTime.now();
+        LambdaUpdateWrapper<BizSalesReturn> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizSalesReturn::getId, entity.getId())
+                .eq(BizSalesReturn::getConfirmStatus, CONFIRM_PENDING)
+                .set(BizSalesReturn::getConfirmStatus, CONFIRM_RECEIVED)
+                .set(BizSalesReturn::getConfirmTime, now)
+                .set(BizSalesReturn::getConfirmerId, loginUser.getId())
+                .set(BizSalesReturn::getConfirmerName, loginUser.getRealName());
+        int rows = bizSalesReturnMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            // 库存已增加但状态更新失败时由事务回滚保护
+            throw BusinessException.validateFail("客退单已被处理，禁止重复确认");
+        }
+
+        // 仓储已确认入库，撤销该单未读待确认消息
+        messageService.revokeUnreadByBiz("sales_return", id);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -131,7 +182,12 @@ public class SalesReturnService {
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");
         validateDeleteWindow(entity.getOperationTime(), "客退单");
-        decreaseStock(entity.getGoodsId(), entity.getQuantity(), "当前库存不足，无法删除该客退单");
+        // 仅待仓库确认（未入库）的退货单可直接删除；已确认入库的需走作废流程回冲库存
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("已确认入库的客退单不可删除，请走作废流程");
+        }
+        // 撤销该单未读待确认消息
+        messageService.revokeUnreadByBiz("sales_return", id);
         bizSalesReturnMapper.deleteById(id);
     }
 
@@ -155,7 +211,14 @@ public class SalesReturnService {
             throw BusinessException.validateFail("客退单已被处理，禁止重复作废");
         }
 
-        decreaseStock(entity.getGoodsId(), entity.getQuantity(), "当前库存不足，无法作废该客退单");
+        // 作废后撤销该单未读待确认消息
+        messageService.revokeUnreadByBiz("sales_return", id);
+
+        // 仅已确认入库（已加库存）的客退单作废时需回冲库存；待确认单据尚未入库，不触碰库存
+        boolean received = entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_RECEIVED;
+        if (received) {
+            decreaseStock(entity.getGoodsId(), entity.getQuantity(), "当前库存不足，无法作废该客退单");
+        }
 
         if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
             LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
@@ -190,6 +253,13 @@ public class SalesReturnService {
             throw BusinessException.validateFail("历史销售退货单作废/红冲需提交仓储审批");
         }
         throw BusinessException.forbidden("仅销售部门管理员可发起销售退货作废申请，且需由仓储部门审批");
+    }
+
+    private void requireWarehouseAdminOrSuperAdmin(String message) {
+        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
+            return;
+        }
+        throw BusinessException.forbidden(message);
     }
     
     private BizSalesReturn requireEntity(Long id) {
@@ -228,7 +298,8 @@ public class SalesReturnService {
     private void validateReturnableQuantity(BizSales sourceSales, Integer returnQty) {
         LambdaQueryWrapper<BizSalesReturn> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizSalesReturn::getSourceSalesId, sourceSales.getId())
-                .eq(BizSalesReturn::getBizStatus, 1);
+                .eq(BizSalesReturn::getBizStatus, 1)
+                .eq(BizSalesReturn::getConfirmStatus, CONFIRM_RECEIVED);
         List<BizSalesReturn> linkedReturns = bizSalesReturnMapper.selectList(wrapper);
         int returnedQty = linkedReturns.stream().map(BizSalesReturn::getQuantity).reduce(0, Integer::sum);
         int availableQty = sourceSales.getQuantity() - returnedQty;
@@ -362,9 +433,20 @@ public class SalesReturnService {
         vo.setSourceId(entity.getSourceId());
         vo.setVoidTime(entity.getVoidTime());
         vo.setVoidReason(entity.getVoidReason());
+        vo.setConfirmStatus(entity.getConfirmStatus());
+        vo.setConfirmStatusText(confirmStatusText(entity.getConfirmStatus()));
         vo.setApprovalStatus(approvalOrder == null ? null : approvalOrder.getStatus());
         vo.setApprovalRequestAction(approvalOrder == null ? null : approvalOrder.getRequestAction());
         return vo;
+    }
+
+    private String confirmStatusText(Integer confirmStatus) {
+        if (confirmStatus == null) return null;
+        return switch (confirmStatus) {
+            case CONFIRM_PENDING -> "待仓库确认";
+            case CONFIRM_RECEIVED -> "已确认入库";
+            default -> String.valueOf(confirmStatus);
+        };
     }
 
     private record CostSnapshot(BigDecimal unitPrice, String source) {

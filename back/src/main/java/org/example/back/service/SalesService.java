@@ -118,7 +118,8 @@ public class SalesService {
         List<Long> salesIds = salesList.stream().map(BizSales::getId).toList();
         LambdaQueryWrapper<BizSalesReturn> returnWrapper = new LambdaQueryWrapper<>();
         returnWrapper.in(BizSalesReturn::getSourceSalesId, salesIds)
-                .eq(BizSalesReturn::getBizStatus, 1);
+                .eq(BizSalesReturn::getBizStatus, 1)
+                .eq(BizSalesReturn::getConfirmStatus, SalesReturnService.CONFIRM_RECEIVED);
         List<BizSalesReturn> linkedReturns = bizSalesReturnMapper.selectList(returnWrapper);
 
         Map<Long, Integer> returnedMap = new HashMap<>();
@@ -185,7 +186,7 @@ public class SalesService {
 
         // 销售下单后不立即扣库存，待仓库管理员确认出库时再扣减；同时通知仓储管理员有待确认单据
         messageService.sendSalesPendingConfirmToWarehouseAdmins(
-                entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName());
+                entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName(), entity.getId());
     }
 
     /**
@@ -216,6 +217,9 @@ public class SalesService {
             // 库存已扣减但状态更新失败时由事务回滚保护
             throw BusinessException.validateFail("销售单已被处理，禁止重复确认");
         }
+
+        // 仓储已确认出库，撤销该单未读待确认消息
+        messageService.revokeUnreadByBiz("sales", id);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -228,6 +232,8 @@ public class SalesService {
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
             increaseStock(entity.getGoodsId(), entity.getQuantity());
         }
+        // 撤销该单未读待确认消息（待确认单被删除后，仓储侧不再有悬挂通知）
+        messageService.revokeUnreadByBiz("sales", id);
         bizSalesMapper.deleteById(id);
     }
 
@@ -249,6 +255,9 @@ public class SalesService {
         if (rows != 1) {
             throw BusinessException.validateFail("销售单已被处理，禁止重复作废");
         }
+
+        // 作废后撤销该单未读待确认消息（单据已失效，仓储侧不再需要处理）
+        messageService.revokeUnreadByBiz("sales", id);
 
         // 仅已确认出库（已扣库存）的销售单作废时需回补库存；待确认单据尚未扣库存，不回补
         boolean shipped = entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED;

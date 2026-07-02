@@ -59,6 +59,7 @@
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>商品资料管理</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
+          <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货入库确认</span></el-menu-item>
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>作废审批</span></el-menu-item>

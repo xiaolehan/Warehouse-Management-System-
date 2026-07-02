@@ -54,4 +54,13 @@ public class SalesReturnController {
         salesReturnService.voidDocument(id, dto);
         return Result.success();
     }
+
+    @PutMapping("/{id}/confirm")
+    @AuditLog(module = "销售退货管理", action = "确认入库", targetType = "销售退货单")
+    @RequireAdmin("仅仓储管理员可确认销售退货入库")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认请求")
+    public Result<Void> confirm(@PathVariable Long id) {
+        salesReturnService.confirm(id);
+        return Result.success();
+    }
 }
