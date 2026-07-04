@@ -37,6 +37,18 @@
 - 修复（纯前端）：`PurchaseRequestView.vue` 加「新建采购申请」按钮 + 手动建单对话框（下拉选任意在售商品 `getGoodsOptionsAPI`、可增删多行、填数量、备注），提交复用 `createPurchaseRequestAPI`（payload `{remark, details:[{goodsId,quantity}]}`）。保留原「缺货识别建单」作为快捷方式。含重复商品/未选/数量校验。
 - E2E（warehouse_admin）：对非缺货商品（三星24英寸显示器，缺货列表为空）手动建单 200 → PR260704... status=1 待采购 明细 ×7 → 撤销清理 200。`npm run build` 通过。无后端/DB 改动。
 
+### 运维教训归档 → CLAUDE.md（2026-07-04）
+
+本轮 push/merge/分支清理过程踩了多个运维坑，已全部写入项目根 `CLAUDE.md`（Claude Code 每次会话自动加载），要点：
+1. **跨 commit 切分支/merge 前先停 dev 服务器**：否则 Vite 模块图变陈旧（页面"功能消失"）、Spring devtools 出现 `ClassCastException`（双 RestartClassLoader）。本轮因 `git checkout main`(a4b2367)→`ff-merge`(8e63913) 文件抖动，Vite 服务旧 bundle（用户报"功能没了"），重启 Vite 后恢复；后端 ClassCastException 重启后消失。
+2. **`pkill -f` 自杀陷阱**：`pkill -f "spring-boot:run"` 会匹配并杀死包含该字符串的当前 shell（exit 144）。改用 `pkill -f 'spring-boot[:]run'`（字符类）或 `fuser -k 端口/tcp`。另：`pgrep|head && echo` 不可靠（判的是 head 退出码）。
+3. **非交互 shell 推送需预配认证**：无 credential helper 时 `git push` 报 `could not read Username`。优先用 VS Code 源代码管理面板推送；临时 PAT 用一次性 URL + sed redact + 用完 rm + 提醒撤销。
+4. **fine-grained PAT 须显式给写权限**：默认只读 → `git ls-remote` 成功但 `git push` 403 `Permission denied`。需 Contents=Read and Write（或 classic PAT 勾 repo）。
+5. **glm-5.2 bash 分类器临时不可用**：写/网络 bash（push/pkill/mysql/CronCreate）全被拦，只读仍可用；写操作等恢复或让用户用 VS Code/网页完成（本轮即用户用 GitHub PR + VS Code 完成合并）。
+6. **PR 合并后同步本地 main + 删分支**：`git fetch --prune` → `checkout main` → `merge --ff-only origin/main` → `branch -d` → `push origin --delete`。
+
+本轮最终结果：PR #1 合并（merge commit `8e63913`），本地/远程 feature 分支已删，PAT 清理（/tmp/gh_token 删除、origin URL 还原、git config 无 token），后端重启健康（production 端点 200），Vite 重启恢复全部功能。
+
 ### 下一步
 - 待用户检查三项改动；若生产入库需多商品明细（主从表）或成本必填，可再迭代。
 - 阶段 4（盘点/余料/成品追溯）仍未启动。
