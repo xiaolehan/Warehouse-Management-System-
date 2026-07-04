@@ -40,6 +40,7 @@ public class PurchaseRequestService {
     public static final int STATUS_PURCHASING = 2;  // 采购中
     public static final int STATUS_RECEIVED = 3;    // 已入库
     public static final int STATUS_REJECTED = 4;    // 已驳回
+    public static final int STATUS_AWAITING_CONFIRM = 5;  // 待入库确认
 
     @Autowired
     private BizPurchaseRequestMapper bizPurchaseRequestMapper;
@@ -147,7 +148,7 @@ public class PurchaseRequestService {
             sortNo++;
         }
 
-        messageService.sendPurchaseRequestToPurchaseAdmins(entity.getRequestNo(), loginUser.getRealName());
+        messageService.sendPurchaseRequestToPurchaseAdmins(entity.getRequestNo(), loginUser.getRealName(), entity.getId());
     }
 
     // ============================== 采购认领（转采购中） ==============================
@@ -172,42 +173,35 @@ public class PurchaseRequestService {
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单已被处理，禁止重复认领");
         }
+        messageService.revokeUnreadByBiz("purchase_request", id);
     }
 
-    // ============================== 采购入库（转 biz_purchase） ==============================
+    // ============================== 采购到货（提交入库申请，不加库存） ==============================
 
     @Transactional(rollbackFor = Exception.class)
-    public void receive(Long id, PurchaseRequestReceiveDTO dto) {
+    public void arrive(Long id, PurchaseRequestReceiveDTO dto) {
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PURCHASING) {
-            throw BusinessException.validateFail("仅采购中状态可入库");
+            throw BusinessException.validateFail("仅采购中状态可提交到货");
         }
 
         List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
         if (details.isEmpty()) {
-            throw BusinessException.validateFail("采购申请明细为空，无法入库");
+            throw BusinessException.validateFail("采购申请明细为空，无法到货");
         }
-
         Map<Long, BizPurchaseRequestDetail> detailMap = details.stream()
                 .collect(Collectors.toMap(BizPurchaseRequestDetail::getId, Function.identity()));
 
-        // 校验入库项与明细一致，并逐条转 biz_purchase（复用 PurchaseService.create 加库存）
+        // 逐条校验并回写明细的到货数量+采购单价（不加库存，待仓储确认）
         for (PurchaseRequestReceiveDTO.ReceiveItemDTO item : dto.getItems()) {
             BizPurchaseRequestDetail detail = detailMap.get(item.getDetailId());
             if (detail == null) {
-                throw BusinessException.validateFail("入库明细ID不匹配：" + item.getDetailId());
+                throw BusinessException.validateFail("到货明细ID不匹配：" + item.getDetailId());
             }
-            PurchaseSaveDTO purchaseDto = new PurchaseSaveDTO();
-            purchaseDto.setGoodsId(detail.getGoodsId());
-            purchaseDto.setQuantity(item.getQuantity());
-            purchaseDto.setUnitPrice(item.getUnitPrice());
-            purchaseDto.setRemark("采购申请单 " + entity.getRequestNo() + " 转入库");
-            purchaseService.create(purchaseDto);
-
-            // 回写明细单价（便于追溯）
             LambdaUpdateWrapper<BizPurchaseRequestDetail> detailUpdate = new LambdaUpdateWrapper<>();
             detailUpdate.eq(BizPurchaseRequestDetail::getId, detail.getId())
+                    .set(BizPurchaseRequestDetail::getArriveQuantity, item.getQuantity())
                     .set(BizPurchaseRequestDetail::getUnitPrice, item.getUnitPrice());
             bizPurchaseRequestDetailMapper.update(null, detailUpdate);
         }
@@ -215,12 +209,103 @@ public class PurchaseRequestService {
         LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(BizPurchaseRequest::getId, entity.getId())
                 .eq(BizPurchaseRequest::getStatus, STATUS_PURCHASING)
-                .set(BizPurchaseRequest::getStatus, STATUS_RECEIVED)
-                .set(BizPurchaseRequest::getReceiveTime, LocalDateTime.now());
+                .set(BizPurchaseRequest::getStatus, STATUS_AWAITING_CONFIRM)
+                .set(BizPurchaseRequest::getArriveTime, LocalDateTime.now());
         int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
         }
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        messageService.sendPurchaseRequestArrivedToWarehouseAdmins(entity.getRequestNo(), loginUser.getRealName(), entity.getId());
+    }
+
+    // ============================== 仓储确认入库（加库存） ==============================
+
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmReceive(Long id) {
+        requireWarehouseConfirmAccess();
+        BizPurchaseRequest entity = requireEntity(id);
+        if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
+            throw BusinessException.validateFail("仅待入库确认状态可确认入库");
+        }
+
+        List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
+        if (details.isEmpty()) {
+            throw BusinessException.validateFail("采购申请明细为空，无法入库");
+        }
+
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        // 逐条转 biz_purchase 加库存（用明细到货数量+采购单价）
+        for (BizPurchaseRequestDetail detail : details) {
+            Integer qty = detail.getArriveQuantity() != null ? detail.getArriveQuantity() : detail.getQuantity();
+            if (qty == null || qty <= 0) {
+                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]到货数量无效");
+            }
+            if (detail.getUnitPrice() == null) {
+                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少采购单价");
+            }
+            PurchaseSaveDTO purchaseDto = new PurchaseSaveDTO();
+            purchaseDto.setGoodsId(detail.getGoodsId());
+            purchaseDto.setQuantity(qty);
+            purchaseDto.setUnitPrice(detail.getUnitPrice());
+            purchaseDto.setRemark("采购申请单 " + entity.getRequestNo() + " 入库");
+            purchaseService.createInternal(purchaseDto, loginUser.getId(), loginUser.getRealName());
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizPurchaseRequest::getId, entity.getId())
+                .eq(BizPurchaseRequest::getStatus, STATUS_AWAITING_CONFIRM)
+                .set(BizPurchaseRequest::getStatus, STATUS_RECEIVED)
+                .set(BizPurchaseRequest::getConfirmerId, loginUser.getId())
+                .set(BizPurchaseRequest::getConfirmerName, loginUser.getRealName())
+                .set(BizPurchaseRequest::getConfirmTime, now)
+                .set(BizPurchaseRequest::getReceiveTime, now);
+        int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
+        }
+        messageService.revokeUnreadByBiz("purchase_request", id);
+    }
+
+    // ============================== 到货退回（撤回/驳回 → 采购中） ==============================
+
+    @Transactional(rollbackFor = Exception.class)
+    public void arriveCancel(Long id) {
+        requirePurchaseAccess();
+        BizPurchaseRequest entity = requireEntity(id);
+        if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
+            throw BusinessException.validateFail("仅待入库确认状态可撤回到货");
+        }
+        LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizPurchaseRequest::getId, entity.getId())
+                .eq(BizPurchaseRequest::getStatus, STATUS_AWAITING_CONFIRM)
+                .set(BizPurchaseRequest::getStatus, STATUS_PURCHASING)
+                .set(BizPurchaseRequest::getArriveTime, null);
+        int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
+        }
+        messageService.revokeUnreadByBiz("purchase_request", id);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void arriveReject(Long id) {
+        requireWarehouseConfirmAccess();
+        BizPurchaseRequest entity = requireEntity(id);
+        if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
+            throw BusinessException.validateFail("仅待入库确认状态可驳回入库");
+        }
+        LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizPurchaseRequest::getId, entity.getId())
+                .eq(BizPurchaseRequest::getStatus, STATUS_AWAITING_CONFIRM)
+                .set(BizPurchaseRequest::getStatus, STATUS_PURCHASING)
+                .set(BizPurchaseRequest::getArriveTime, null);
+        int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
+        }
+        messageService.revokeUnreadByBiz("purchase_request", id);
     }
 
     // ============================== 驳回 ==============================
@@ -242,6 +327,7 @@ public class PurchaseRequestService {
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单已被处理，禁止重复驳回");
         }
+        messageService.revokeUnreadByBiz("purchase_request", id);
     }
 
     // ============================== 撤销申请 ==============================
@@ -257,6 +343,7 @@ public class PurchaseRequestService {
         if (entity.getStatus() != STATUS_PENDING) {
             throw BusinessException.validateFail("仅待采购状态可撤销");
         }
+        messageService.revokeUnreadByBiz("purchase_request", id);
         bizPurchaseRequestMapper.deleteById(id);
         LambdaQueryWrapper<BizPurchaseRequestDetail> detailWrapper = new LambdaQueryWrapper<>();
         detailWrapper.eq(BizPurchaseRequestDetail::getRequestId, id);
@@ -281,6 +368,11 @@ public class PurchaseRequestService {
     private void requirePurchaseAccess() {
         authzService.requireDeptAdminOrSuperAdmin(
                 AuthzService.DEPT_PURCHASE, "仅采购管理员可处理/入库/驳回采购申请单");
+    }
+
+    private void requireWarehouseConfirmAccess() {
+        authzService.requireDeptAdminOrSuperAdmin(
+                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认采购入库");
     }
 
     private BizPurchaseRequest requireEntity(Long id) {
@@ -324,7 +416,11 @@ public class PurchaseRequestService {
         vo.setOperatorId(entity.getOperatorId());
         vo.setOperatorName(entity.getOperatorName());
         vo.setOperationTime(entity.getOperationTime());
+        vo.setArriveTime(entity.getArriveTime());
         vo.setReceiveTime(entity.getReceiveTime());
+        vo.setConfirmerId(entity.getConfirmerId());
+        vo.setConfirmerName(entity.getConfirmerName());
+        vo.setConfirmTime(entity.getConfirmTime());
         vo.setRejectReason(entity.getRejectReason());
         vo.setRemark(entity.getRemark());
         vo.setCreateTime(entity.getCreateTime());
@@ -340,6 +436,7 @@ public class PurchaseRequestService {
         vo.setGoodsId(detail.getGoodsId());
         vo.setGoodsName(detail.getGoodsName());
         vo.setQuantity(detail.getQuantity());
+        vo.setArriveQuantity(detail.getArriveQuantity());
         vo.setUnitPrice(detail.getUnitPrice());
         vo.setSortNo(detail.getSortNo());
         return vo;
@@ -354,6 +451,7 @@ public class PurchaseRequestService {
             case STATUS_PURCHASING -> "采购中";
             case STATUS_RECEIVED -> "已入库";
             case STATUS_REJECTED -> "已驳回";
+            case STATUS_AWAITING_CONFIRM -> "待入库确认";
             default -> String.valueOf(status);
         };
     }

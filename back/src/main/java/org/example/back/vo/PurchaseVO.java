@@ -42,6 +42,16 @@ public class PurchaseVO {
 
     private Integer bizStatus;
 
+    private Integer confirmStatus;
+
+    private String confirmStatusText;
+
+    private LocalDateTime arriveTime;
+
+    private String confirmerName;
+
+    private LocalDateTime confirmTime;
+
     private Long sourceId;
 
     private LocalDateTime voidTime;

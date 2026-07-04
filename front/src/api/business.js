@@ -8,6 +8,8 @@ export const getReturnablePurchaseOptionsAPI = (params) => request.get('/busines
 export const createPurchaseAPI = (data) => request.post('/business/purchases', data)
 export const deletePurchaseAPI = (id) => request.delete(`/business/purchases/${id}`)
 export const voidPurchaseAPI = (id, data) => request.put(`/business/purchases/${id}/void`, data)
+export const arrivePurchaseAPI = (id) => request.put(`/business/purchases/${id}/arrive`)
+export const confirmReceivePurchaseAPI = (id) => request.put(`/business/purchases/${id}/confirm-receive`)
 
 export const getProductionPageAPI = (params) => request.get('/business/production/page', { params })
 export const getProductionDetailAPI = (id) => request.get(`/business/production/${id}`)
@@ -20,6 +22,8 @@ export const getPurchaseReturnDetailAPI = (id) => request.get(`/business/purchas
 export const createPurchaseReturnAPI = (data) => request.post('/business/purchase-returns', data)
 export const deletePurchaseReturnAPI = (id) => request.delete(`/business/purchase-returns/${id}`)
 export const voidPurchaseReturnAPI = (id, data) => request.put(`/business/purchase-returns/${id}/void`, data)
+export const confirmOutPurchaseReturnAPI = (id) => request.put(`/business/purchase-returns/${id}/confirm-out`)
+export const completePurchaseReturnAPI = (id) => request.put(`/business/purchase-returns/${id}/complete`)
 
 export const getSalesPageAPI = (params) => request.get('/business/sales/page', { params })
 export const getSalesDetailAPI = (id) => request.get(`/business/sales/${id}`)

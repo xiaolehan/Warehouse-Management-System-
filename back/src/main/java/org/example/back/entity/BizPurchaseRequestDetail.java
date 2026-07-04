@@ -25,6 +25,11 @@ public class BizPurchaseRequestDetail {
     private Integer quantity;
 
     /**
+     * 到货数量(采购到货提交时填写，确认入库按此数量加库存)
+     */
+    private Integer arriveQuantity;
+
+    /**
      * 采购单价(入库时填写)
      */
     private BigDecimal unitPrice;

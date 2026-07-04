@@ -48,6 +48,18 @@ public class PurchaseReturnVO {
 
     private Integer bizStatus;
 
+    private Integer confirmStatus;
+
+    private String confirmStatusText;
+
+    private String confirmerName;
+
+    private LocalDateTime confirmTime;
+
+    private String completerName;
+
+    private LocalDateTime completeTime;
+
     private Long sourceId;
 
     private LocalDateTime voidTime;

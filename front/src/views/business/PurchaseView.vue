@@ -39,12 +39,25 @@
         <el-table-column prop="quantity" label="进货数量" width="100" />
         <el-table-column prop="totalAmount" label="总金额(元)" width="120" />
         <el-table-column prop="purchaseDate" label="进货日期" width="180" />
+        <el-table-column label="入库状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="confirmStatusTagType(row.confirmStatus)">{{ row.confirmStatusText }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
+              <el-button
+                v-if="scope.row.confirmStatus === 1"
+                v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
+                size="small" type="success" link @click="handleArrive(scope.row)">到货确认</el-button>
+              <el-button
+                v-if="scope.row.confirmStatus === 2"
+                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                size="small" type="success" link @click="handleConfirmReceive(scope.row)">确认入库</el-button>
               <el-button
                 v-if="showDeleteAction(scope.row)"
                 v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
@@ -149,7 +162,9 @@ import {
   deletePurchaseAPI,
   getGoodsOptionsAPI,
   getPurchaseDetailAPI,
-  getPurchasePageAPI
+  getPurchasePageAPI,
+  arrivePurchaseAPI,
+  confirmReceivePurchaseAPI
 } from '@/api/business'
 
 const searchForm = reactive({
@@ -300,6 +315,30 @@ const handleSizeChange = (val) => {
 const handleCurrentChange = (val) => {
   currentPage.value = val
   loadList()
+}
+
+const confirmStatusTagType = (status) => ({
+  1: 'warning', 2: 'warning', 3: 'success'
+}[status] || 'info')
+
+const handleArrive = (row) => {
+  ElMessageBox.confirm('确认到货？将通知仓储管理员确认入库。', '到货确认', { type: 'warning' })
+    .then(async () => {
+      const res = await arrivePurchaseAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '到货确认失败')
+      ElMessage.success('已确认到货，待仓储确认入库')
+      loadList()
+    }).catch(() => {})
+}
+
+const handleConfirmReceive = (row) => {
+  ElMessageBox.confirm('确认入库后将增加库存，不可撤销。是否继续？', '确认入库', { type: 'warning' })
+    .then(async () => {
+      const res = await confirmReceivePurchaseAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '确认入库失败')
+      ElMessage.success('已确认入库，库存已增加')
+      loadList()
+    }).catch(() => {})
 }
 
 const handleAdd = () => {

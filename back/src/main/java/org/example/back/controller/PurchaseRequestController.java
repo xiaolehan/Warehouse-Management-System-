@@ -62,12 +62,39 @@ public class PurchaseRequestController {
         return Result.success();
     }
 
-    @PutMapping("/{id}/receive")
-    @RequireAdmin("仅采购管理员可入库采购申请单")
-    @AuditLog(module = "采购申请", action = "入库", targetType = "采购申请单")
-    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交入库请求")
-    public Result<Void> receive(@PathVariable Long id, @Valid @RequestBody PurchaseRequestReceiveDTO dto) {
-        purchaseRequestService.receive(id, dto);
+    @PutMapping("/{id}/arrive")
+    @RequireAdmin("仅采购管理员可提交采购到货")
+    @AuditLog(module = "采购申请", action = "到货", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交到货请求")
+    public Result<Void> arrive(@PathVariable Long id, @Valid @RequestBody PurchaseRequestReceiveDTO dto) {
+        purchaseRequestService.arrive(id, dto);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/confirm-receive")
+    @RequireAdmin("仅仓储管理员可确认采购入库")
+    @AuditLog(module = "采购申请", action = "确认入库", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认入库请求")
+    public Result<Void> confirmReceive(@PathVariable Long id) {
+        purchaseRequestService.confirmReceive(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/arrive-cancel")
+    @RequireAdmin("仅采购管理员可撤回到货")
+    @AuditLog(module = "采购申请", action = "撤回到货", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1200, message = "撤回请求过于频繁，请稍后再试")
+    public Result<Void> arriveCancel(@PathVariable Long id) {
+        purchaseRequestService.arriveCancel(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/arrive-reject")
+    @RequireAdmin("仅仓储管理员可驳回入库")
+    @AuditLog(module = "采购申请", action = "驳回入库", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1200, message = "驳回请求过于频繁，请稍后再试")
+    public Result<Void> arriveReject(@PathVariable Long id) {
+        purchaseRequestService.arriveReject(id);
         return Result.success();
     }
 

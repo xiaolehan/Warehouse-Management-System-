@@ -42,6 +42,31 @@ public class BizPurchase {
     private Integer bizStatus;
 
     /**
+     * 入库确认: 1-待到货, 2-待入库确认, 3-已入库
+     */
+    private Integer confirmStatus;
+
+    /**
+     * 采购到货确认时间
+     */
+    private LocalDateTime arriveTime;
+
+    /**
+     * 入库确认人ID(仓储)
+     */
+    private Long confirmerId;
+
+    /**
+     * 入库确认人姓名
+     */
+    private String confirmerName;
+
+    /**
+     * 仓储确认入库时间
+     */
+    private LocalDateTime confirmTime;
+
+    /**
      * 红冲来源单ID
      */
     private Long sourceId;

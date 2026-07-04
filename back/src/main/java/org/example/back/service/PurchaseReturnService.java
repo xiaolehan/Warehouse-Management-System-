@@ -40,6 +40,10 @@ import java.util.stream.Collectors;
 @Service
 public class PurchaseReturnService {
 
+    public static final int CONFIRM_PENDING = 1;    // 待出库确认
+    public static final int CONFIRM_AWAITING = 2;   // 待退货确认(已出库)
+    public static final int CONFIRM_COMPLETED = 3;  // 已退货
+
     @Autowired
     private BizPurchaseReturnMapper bizPurchaseReturnMapper;
 
@@ -61,12 +65,23 @@ public class PurchaseReturnService {
     @Autowired
     private AuthzService authzService;
 
+    @Autowired
+    private MessageService messageService;
+
     private void requirePurchaseReturnModuleAccess() {
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购部门管理员可访问进货退货模块");
     }
 
+    /**
+     * 读权限：采购 + 仓储 均可查看退货单（仓储需查看待确认出库的单据）。
+     */
+    private void requirePurchaseReturnReadAccess() {
+        authzService.requireAnyDeptAdminOrSuperAdmin(
+                "仅采购/仓储部门管理员可访问商品退货模块", AuthzService.DEPT_PURCHASE, AuthzService.DEPT_WAREHOUSE);
+    }
+
     public PageResult<PurchaseReturnVO> page(PurchaseReturnQueryDTO queryDTO) {
-        requirePurchaseReturnModuleAccess();
+        requirePurchaseReturnReadAccess();
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
         // 构建查询条件
@@ -98,7 +113,7 @@ public class PurchaseReturnService {
     }
 
     public PurchaseReturnVO getById(Long id) {
-        requirePurchaseReturnModuleAccess();
+        requirePurchaseReturnReadAccess();
         BizPurchaseReturn entity = requireEntity(id);
         BaseGoods goods = baseGoodsMapper.selectById(entity.getGoodsId());
         BaseSupplier supplier = goods == null ? null : baseSupplierMapper.selectById(goods.getSupplierId());
@@ -134,9 +149,62 @@ public class PurchaseReturnService {
         entity.setOperationTime(operationTime);
         entity.setRemark(dto.getRemark());
         entity.setBizStatus(1);
+        entity.setConfirmStatus(CONFIRM_PENDING);
 
         bizPurchaseReturnMapper.insert(entity);
-        decreaseStock(goods.getId(), dto.getQuantity(), "库存不足，无法执行商品退货");
+        // 不减库存，待仓储确认出库 + 采购确认退货成功
+        messageService.sendPurchaseReturnPendingConfirmToWarehouseAdmins(entity.getReturnNo(), loginUser.getRealName(), entity.getId());
+    }
+
+    // ============================== 仓储确认出库（减库存） ==============================
+
+    @Transactional(rollbackFor = Exception.class)
+    public void confirmOut(Long id) {
+        requireWarehouseAccess();
+        BizPurchaseReturn entity = requireEntity(id);
+        if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("仅待出库确认状态可确认出库");
+        }
+        decreaseStock(entity.getGoodsId(), entity.getQuantity(), "库存不足，无法确认退货出库");
+
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LocalDateTime now = LocalDateTime.now();
+        LambdaUpdateWrapper<BizPurchaseReturn> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizPurchaseReturn::getId, entity.getId())
+                .eq(BizPurchaseReturn::getConfirmStatus, CONFIRM_PENDING)
+                .set(BizPurchaseReturn::getConfirmStatus, CONFIRM_AWAITING)
+                .set(BizPurchaseReturn::getConfirmerId, loginUser.getId())
+                .set(BizPurchaseReturn::getConfirmerName, loginUser.getRealName())
+                .set(BizPurchaseReturn::getConfirmTime, now);
+        int rows = bizPurchaseReturnMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            throw BusinessException.validateFail("退货单状态已变更，请刷新后重试");
+        }
+        messageService.revokeUnreadByBiz("purchase_return", id);
+    }
+
+    // ============================== 采购确认退货成功（终态） ==============================
+
+    @Transactional(rollbackFor = Exception.class)
+    public void complete(Long id) {
+        requirePurchaseReturnModuleAccess();
+        BizPurchaseReturn entity = requireEntity(id);
+        if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_AWAITING) {
+            throw BusinessException.validateFail("仅待退货确认状态可确认退货成功");
+        }
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LocalDateTime now = LocalDateTime.now();
+        LambdaUpdateWrapper<BizPurchaseReturn> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizPurchaseReturn::getId, entity.getId())
+                .eq(BizPurchaseReturn::getConfirmStatus, CONFIRM_AWAITING)
+                .set(BizPurchaseReturn::getConfirmStatus, CONFIRM_COMPLETED)
+                .set(BizPurchaseReturn::getCompleterId, loginUser.getId())
+                .set(BizPurchaseReturn::getCompleterName, loginUser.getRealName())
+                .set(BizPurchaseReturn::getCompleteTime, now);
+        int rows = bizPurchaseReturnMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            throw BusinessException.validateFail("退货单状态已变更，请刷新后重试");
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -145,7 +213,11 @@ public class PurchaseReturnService {
         BizPurchaseReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "进货退货单");
         validateDeleteWindow(entity.getOperationTime(), "进货退货单");
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // 仅待出库确认(未减库存)可删，不触碰库存；已出库走作废流程
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("已出库的退货单不可删除，请走作废流程");
+        }
+        messageService.revokeUnreadByBiz("purchase_return", id);
         bizPurchaseReturnMapper.deleteById(id);
     }
 
@@ -168,9 +240,14 @@ public class PurchaseReturnService {
             throw BusinessException.validateFail("进货退货单已被处理，禁止重复作废");
         }
 
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // 仅已出库(confirm_status>=2)作废需回补库存；未出库不触碰库存
+        boolean outConfirmed = entity.getConfirmStatus() != null && entity.getConfirmStatus() >= CONFIRM_AWAITING;
+        if (outConfirmed) {
+            increaseStock(entity.getGoodsId(), entity.getQuantity());
+        }
+        messageService.revokeUnreadByBiz("purchase_return", id);
         // 如果前端请求中包含 createRedFlush 标志且为 true，则创建对应的红冲单
-        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
+        if (outConfirmed && dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
             LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
             BizPurchaseReturn redFlushDoc = new BizPurchaseReturn();
             redFlushDoc.setReturnNo(CodeGenerator.purchaseReturnNo());
@@ -200,6 +277,20 @@ public class PurchaseReturnService {
             throw BusinessException.validateFail("历史进货退货单作废/红冲需提交仓储审批");
         }
         throw BusinessException.forbidden("仅采购部门管理员可发起进货退货作废申请，且需由仓储部门审批");
+    }
+
+    private void requireWarehouseAccess() {
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认退货出库");
+    }
+
+    private String confirmStatusText(Integer confirmStatus) {
+        if (confirmStatus == null) return null;
+        return switch (confirmStatus) {
+            case CONFIRM_PENDING -> "待出库确认";
+            case CONFIRM_AWAITING -> "待退货确认";
+            case CONFIRM_COMPLETED -> "已退货";
+            default -> String.valueOf(confirmStatus);
+        };
     }
 
     private BizPurchaseReturn requireEntity(Long id) {
@@ -235,7 +326,8 @@ public class PurchaseReturnService {
     private void validateReturnableQuantity(BizPurchase sourcePurchase, Integer returnQty) {
         LambdaQueryWrapper<BizPurchaseReturn> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizPurchaseReturn::getSourcePurchaseId, sourcePurchase.getId())
-                .eq(BizPurchaseReturn::getBizStatus, 1);
+                .eq(BizPurchaseReturn::getBizStatus, 1)
+                .ge(BizPurchaseReturn::getConfirmStatus, CONFIRM_AWAITING);
         List<BizPurchaseReturn> linkedReturns = bizPurchaseReturnMapper.selectList(wrapper);
         int returnedQty = linkedReturns.stream().map(BizPurchaseReturn::getQuantity).reduce(0, Integer::sum);
         int availableQty = sourcePurchase.getQuantity() - returnedQty;
@@ -362,6 +454,12 @@ public class PurchaseReturnService {
         vo.setOperator(entity.getOperatorName());
         vo.setReason(entity.getRemark());
         vo.setBizStatus(entity.getBizStatus());
+        vo.setConfirmStatus(entity.getConfirmStatus());
+        vo.setConfirmStatusText(confirmStatusText(entity.getConfirmStatus()));
+        vo.setConfirmerName(entity.getConfirmerName());
+        vo.setConfirmTime(entity.getConfirmTime());
+        vo.setCompleterName(entity.getCompleterName());
+        vo.setCompleteTime(entity.getCompleteTime());
         vo.setSourceId(entity.getSourceId());
         vo.setVoidTime(entity.getVoidTime());
         vo.setVoidReason(entity.getVoidReason());

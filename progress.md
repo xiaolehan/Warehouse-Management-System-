@@ -5,6 +5,98 @@
 
 ---
 
+## 会话 7 — 2026-07-04
+
+### 阶段 3.7：商品进货/商品退货增加确认环节
+
+**需求**：(1)商品进货建单直接入库不合理，应到货确认+仓储确认入库；(2)"进货退货"改名"商品退货"，退货应通知仓储确认出库+采购确认退货成功。
+
+**方案**（对齐 D14/D22 范式，bizStatus 不动，新增 confirm_status）：
+- 商品进货三步：建单(1,不加库存)→采购到货确认(2,推仓储)→仓储确认入库(3,加库存)
+- 商品退货三步·减库存在仓储确认：建单(1,通知,不减库存)→仓储确认出库(2,减库存)→采购确认退货成功(3,终态)
+- delete/void 按确认状态决定动库存；returnableOptions/validateReturnableQuantity 加确认状态过滤；latestValidUnitPrice 加 confirm_status=3
+
+**改动**：
+- DB：biz_purchase 加 confirm_status/arrive_time/confirmer_id/name/confirm_time；biz_purchase_return 加 confirm_status/confirmer/confirm_time/completer/complete_time（ALTER 7.5/7.6，存量默认 3）
+- 后端：Entity/VO 加字段；PurchaseService create 不加库存+arrive+confirmReceive+delete/void 按状态+returnableOptions 过滤+createInternal 设 3（采购申请入库兼容）；PurchaseReturnService create 不减库存+confirmOut+complete+delete/void 按状态+validateReturnableQuantity 过滤；MessageService 两个新通知；Controller 4 个新端点；BizPurchaseMapper.latestValidUnitPrice 加 confirm_status=3
+- 前端：api 4 接口；两个 View 状态列+操作按钮+处理函数；路由 deptCodes 加 warehouse；采购菜单"进货退货"→"商品退货"；仓储菜单加"进货入库确认"+"商品退货出库确认"
+
+**验证（E2E 全通过）**：
+- 商品进货：建单(1,库存不变)→到货(2,推仓储消息)→仓储确认入库(3,库存+5,confirmer=仓储管理员,消息撤) ✅
+- 商品退货：建单(1,通知,库存不变)→仓储确认出库(2,库存-3)→采购确认退货成功(3,终态) ✅
+- 权限：purchase confirm-receive 403 / warehouse arrive 403 ✅
+- 测试数据清理，库存恢复 103 ✅
+
+**补丁（同会话）：仓储进"进货入库确认"/"商品退货出库确认"页面 403**
+- 现象：仓储点"进货入库确认"/"商品退货出库确认"，列表加载 403"仅采购部门管理员可访问进货模块"。
+- 根因：`PurchaseService.page()/getById()` 与 `PurchaseReturnService.page()/getById()` 用 `requirePurchaseModuleAccess`（仅采购），仓储读权限被拒。阶段 3.7 改 confirmReceive/confirmOut 为仓储权限，但漏改 page/getById 读权限。
+- 修复：新增 `requirePurchaseReadAccess`/`requirePurchaseReturnReadAccess`（采购+仓储均可读，对齐 SalesReturnService.requireSalesReturnReadAccess），page/getById 改用之。
+- 验证（E2E 补测仓储 page/getById）：仓储加载进货列表 code=200 total=21、查看详情 code=200、加载退货列表 code=200 total=5、确认入库/出库/退货成功、权限负测 403 ✅
+- 教训：E2E 不能只测 API 直调（confirm-receive 仓储 token 成功就以为没问题），必须测**仓储实际进页面加载列表（page）+ 查看详情（getById）**的读权限。读权限与写权限常分开，改一处易漏另一处；权限改写后所有涉及该角色的读接口都要覆盖。
+
+**补丁2（同会话）：仓储进"商品退货出库确认"页面 onMounted 弹"仅采购管理员可访问进货模块"**
+- 现象：仓储点"商品退货出库确认"，onMounted 弹错 + 列表空（loadList 未执行）。
+- 根因：PurchaseReturnView onMounted 把 `loadSourcePurchaseOptions`（returnableOptions 仅采购权限）与 `loadList` 放同一 try，前者 403 抛错导致后者不执行 + catch 弹 msg。与 SalesReturnView 会话 3 同类问题。
+- 修复：onMounted 拆 try，`loadSourcePurchaseOptions` 失败静默（仓储只做确认出库，不需建退货单的来源选项），`loadList` 独立 try。对齐 SalesReturnView 修复模式。
+- 验证：仓储调 returnableOptions 403（前端静默）+ purchase-returns/page 200（列表加载 total=5）+ getById 200 + confirm-out 成功；PurchaseView loadGoodsOptions 仓储 200（无此问题）✅
+- 教训：新增角色访问页面时，检查 onMounted 调用的**所有**接口权限；仅该角色需要的才加载，非需要的（如 returnableOptions 这类"建单辅助接口"）静默忽略。E2E 测角色进页面要覆盖 onMounted 全链路，不仅测列表 page。
+
+---
+
+## 会话 6 — 2026-07-04
+
+### 阶段 3.6：采购入库增加仓储确认环节
+
+**需求**：采购管理员认领采购申请后直接转入库不合理，应先确认到货再向仓储提出入库申请，仓储确认后才入库。
+
+**方案**（对齐 D22 销售退货确认入库范式）：新增状态 5 待入库确认，拆原 receive 为 arrive（采购到货，2→5，不加库存，推仓储）+ confirmReceive（仓储确认，5→3，加库存）；到货后采购可撤回（arriveCancel）/仓储可驳回（arriveReject），均 5→2 回采购中循环纠错。
+
+**改动**：
+- DB：biz_purchase_request 加 arrive_time/confirmer_id/confirmer_name/confirm_time + status 加 5；明细加 arrive_quantity（到货数量，区别于申请数量）。db.sql CREATE + ALTER 7.3/7.4 + 本地执行。
+- 后端：Entity/VO 加字段；PurchaseRequestService 拆 arrive/confirmReceive + 加 arriveCancel/arriveReject + requireWarehouseConfirmAccess；PurchaseService 拆 createInternal（无权限校验，operator 传入）供 confirmReceive 复用，保留 biz_purchase 追溯；MessageService 加 sendPurchaseRequestArrivedToWarehouseAdmins；Controller 删 receive 加 4 端点（arrive/confirm-receive/arrive-cancel/arrive-reject）。
+- 前端：api 4 接口；PurchaseRequestView 状态加 5、操作列（到货提交/撤回/确认入库/驳回入库）、对话框改"采购到货提交"、详情加到货时间/确认人/入库时间；复用仓储"采购申请"菜单页。
+
+**踩坑**：
+1. confirmReceive 首版 loginUser 声明在 for 循环后（前向引用）：javac 增量编译跳过未报错，但 IDE JDT 编译生成带 `Unresolved compilation problems` 标记的 class 覆盖 target，运行时 500。修复：loginUser 移到循环前 + `mvnw clean compile` 强制全编译。教训：局部变量必须先声明再使用；改代码后用 clean compile 更稳，避免增量跳过 + JDT 错误 class 残留。
+2. 旧后端进程占 8080 致新后端启动失败（fuser -k 8080 未杀净残留 java 245677）：用 `kill -9 <pid>` 强制清理。教训：重启后确认 8080 pid 已释放且为新 pid。
+3. 到货数量可能 ≠ 申请数量：明细加 arrive_quantity 存到货数量（不覆盖申请数量），保留追溯。
+
+**验证（E2E 全通过）**：
+- 主流程：建单→认领→到货(status5,库存不变,推仓储消息)→仓储确认入库(status3,库存+5,confirmer=仓储管理员,消息撤) ✅
+- 退回：到货→采购撤回(5→2)→重新到货(5)→仓储驳回(5→2)，库存全程不变 ✅
+- 权限：purchase 调 confirm-receive 403 / warehouse 调 arrive 403 ✅
+- 测试数据清理，库存恢复 103，采购申请单/明细/消息/biz_purchase 全清 ✅
+
+---
+
+## 会话 5 — 2026-07-04
+
+### 修复：采购申请消息悬挂（仓储撤销后采购仍见通知却查无单据）
+
+**现象**：仓储管理员提交采购申请后，采购管理员只在右上角看到消息提示，"采购申请处理"页面却查不到单据。
+
+**根因**：采购申请链路漏接 D21 消息生命周期绑定（与销售单范式不一致）：
+- `MessageService.sendPurchaseRequestToPurchaseAdmins` 调 `sendToDeptAdmins`（不绑 biz），销售单则调 `sendToDeptAdminsWithBiz("sales", salesId)`。
+- `PurchaseRequestService.create()` 调用时未传 `entity.getId()`。
+- `delete()/process()/receive()/reject()` 均未调 `revokeUnreadByBiz`。
+- DB 实证：会话 4 测试残留单 id=2（`is_deleted=1`）+ 悬挂消息 id=23（`biz_type=NULL, is_read=0`）；采购 page 因 `@TableLogic` 过滤返回空，但消息未撤 → "有通知无单据"。
+
+**修复**（对齐 D21 范式）：
+- `sendPurchaseRequestToPurchaseAdmins(requestNo, applicantName, requestId)` 改调 `sendToDeptAdminsWithBiz(..., "purchase_request", requestId)`。
+- `create()` 传 `entity.getId()`。
+- `delete()/process()/receive()/reject()` 四处在状态变更成功（`rows==1`）后调 `messageService.revokeUnreadByBiz("purchase_request", id)` 撤未读消息。
+
+**验证（E2E 全通过）**：
+- 建单后消息绑 biz（`biz_type=purchase_request, biz_id=3, is_read=0`）✅
+- 采购 page `total=1`（能看到仓储提交的单）✅
+- 仓储撤销后消息 `is_deleted=1`（已撤）✅
+- 采购 page `total=0`（不再悬挂）✅
+- 测试数据无库存变动（建单/撤销均不动库存）
+
+**遗留**：DB 物理清理（删除测试单 id=2/3 + 消息 id=23/24）因 glm-5.2 bash 分类器临时宕机被拦；其中 id=3 单与 id=24 消息已是 `is_deleted=1` 软删状态，不影响功能；唯一可见残留为历史悬挂消息 id=23（purchase_admin 右上角红点，点开或"全部已读"即消），待分类器恢复后执行 `DELETE` 物理清理。
+
+---
+
 ## 会话 4 — 2026-07-04
 
 ### 三项功能完善（生产入库 / 商品重复添加释疑 / 退货确认误提示修复）

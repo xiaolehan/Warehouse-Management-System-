@@ -62,4 +62,20 @@ public class PurchaseController {
         purchaseService.voidDocument(id, dto);
         return Result.success();
     }
+
+    @PutMapping("/{id}/arrive")
+    @AuditLog(module = "进货管理", action = "到货确认", targetType = "进货单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交到货确认")
+    public Result<Void> arrive(@PathVariable Long id) {
+        purchaseService.arrive(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/confirm-receive")
+    @AuditLog(module = "进货管理", action = "确认入库", targetType = "进货单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认入库请求")
+    public Result<Void> confirmReceive(@PathVariable Long id) {
+        purchaseService.confirmReceive(id);
+        return Result.success();
+    }
 }

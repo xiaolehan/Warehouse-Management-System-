@@ -286,6 +286,11 @@ CREATE TABLE `biz_purchase` (
     `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
     `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
+    `confirm_status` TINYINT NOT NULL DEFAULT 3 COMMENT '入库确认: 1-待到货, 2-待入库确认, 3-已入库',
+    `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货确认时间',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '入库确认人ID(仓储)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '入库确认人姓名',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认入库时间',
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
@@ -298,6 +303,7 @@ CREATE TABLE `biz_purchase` (
     KEY `idx_goods_time` (`goods_id`, `operation_time`),
     KEY `idx_goods_status_time` (`goods_id`, `biz_status`, `is_deleted`, `operation_time`, `id`),
     KEY `idx_biz_status` (`biz_status`),
+    KEY `idx_purchase_confirm_status` (`confirm_status`),
     KEY `idx_source_id` (`source_id`),
     KEY `idx_operator_id` (`operator_id`),
     KEY `idx_operation_time` (`operation_time`),
@@ -322,6 +328,13 @@ CREATE TABLE `biz_purchase_return` (
     `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
     `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
+    `confirm_status` TINYINT NOT NULL DEFAULT 3 COMMENT '退货确认: 1-待出库确认, 2-待退货确认, 3-已退货',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '出库确认人ID(仓储)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '出库确认人姓名',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认出库时间',
+    `completer_id` BIGINT DEFAULT NULL COMMENT '退货完成确认人ID(采购)',
+    `completer_name` VARCHAR(50) DEFAULT NULL COMMENT '退货完成确认人姓名',
+    `complete_time` DATETIME DEFAULT NULL COMMENT '采购确认退货成功时间',
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
@@ -336,6 +349,7 @@ CREATE TABLE `biz_purchase_return` (
     KEY `idx_goods_time` (`goods_id`, `operation_time`),
     KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`),
     KEY `idx_biz_status` (`biz_status`),
+    KEY `idx_return_confirm_status` (`confirm_status`),
     KEY `idx_source_id` (`source_id`),
     KEY `idx_operator_id` (`operator_id`),
     KEY `idx_operation_time` (`operation_time`),
@@ -1099,13 +1113,17 @@ DROP TABLE IF EXISTS `biz_purchase_request`;
 CREATE TABLE IF NOT EXISTS `biz_purchase_request` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `request_no` VARCHAR(30) NOT NULL COMMENT '采购申请单号(PR开头)',
-    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认',
     `applicant_id` BIGINT NOT NULL COMMENT '申请人ID(仓储管理员)',
     `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '采购处理人ID(采购管理员)',
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '采购处理人姓名(冗余字段)',
     `operation_time` DATETIME DEFAULT NULL COMMENT '认领(转采购中)时间',
+    `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货提交时间',
     `receive_time` DATETIME DEFAULT NULL COMMENT '入库完成时间',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '入库确认人ID(仓储管理员)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '入库确认人姓名',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认入库时间',
     `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -1125,7 +1143,8 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     `goods_id` BIGINT NOT NULL COMMENT '商品ID',
     `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
     `quantity` INT NOT NULL COMMENT '申请采购数量',
-    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(入库时填写)',
+    `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(采购到货提交时填写,确认入库按此数量加库存)',
+    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(到货时填写)',
     `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
@@ -1181,6 +1200,41 @@ ALTER TABLE `biz_sales_return`
     ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认入库时间' AFTER `confirm_status`,
     ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)' AFTER `confirm_time`,
     ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)' AFTER `confirmer_id`,
+    ADD KEY `idx_return_confirm_status` (`confirm_status`);
+
+-- 7.3 biz_purchase_request 增加采购到货+仓储确认入库字段（采购入库改为仓储确认范式）
+ALTER TABLE `biz_purchase_request`
+    ADD COLUMN `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货提交时间' AFTER `operation_time`,
+    ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '入库确认人ID(仓储管理员)' AFTER `receive_time`,
+    ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '入库确认人姓名' AFTER `confirmer_id`,
+    ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认入库时间' AFTER `confirmer_name`;
+ALTER TABLE `biz_purchase_request`
+    MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认';
+
+-- 7.4 biz_purchase_request_detail 增加到货数量字段
+ALTER TABLE `biz_purchase_request_detail`
+    ADD COLUMN `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(采购到货提交时填写,确认入库按此数量加库存)' AFTER `quantity`;
+
+-- 7.5 biz_purchase 增加入库确认字段（采购进货改为到货确认+仓储确认入库范式）
+-- 存量数据默认 confirm_status=3（已入库），保持兼容
+ALTER TABLE `biz_purchase`
+    ADD COLUMN `confirm_status` TINYINT NOT NULL DEFAULT 3 COMMENT '入库确认: 1-待到货, 2-待入库确认, 3-已入库' AFTER `biz_status`,
+    ADD COLUMN `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货确认时间' AFTER `operation_time`,
+    ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '入库确认人ID(仓储)' AFTER `arrive_time`,
+    ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '入库确认人姓名' AFTER `confirmer_id`,
+    ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认入库时间' AFTER `confirmer_name`,
+    ADD KEY `idx_purchase_confirm_status` (`confirm_status`);
+
+-- 7.6 biz_purchase_return 增加退货确认字段（商品退货改为仓储确认出库+采购确认退货成功范式）
+-- 存量数据默认 confirm_status=3（已退货），保持兼容
+ALTER TABLE `biz_purchase_return`
+    ADD COLUMN `confirm_status` TINYINT NOT NULL DEFAULT 3 COMMENT '退货确认: 1-待出库确认, 2-待退货确认, 3-已退货' AFTER `biz_status`,
+    ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '出库确认人ID(仓储)' AFTER `operation_time`,
+    ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '出库确认人姓名' AFTER `confirmer_id`,
+    ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认出库时间' AFTER `confirmer_name`,
+    ADD COLUMN `completer_id` BIGINT DEFAULT NULL COMMENT '退货完成确认人ID(采购)' AFTER `confirm_time`,
+    ADD COLUMN `completer_name` VARCHAR(50) DEFAULT NULL COMMENT '退货完成确认人姓名' AFTER `completer_id`,
+    ADD COLUMN `complete_time` DATETIME DEFAULT NULL COMMENT '采购确认退货成功时间' AFTER `completer_name`,
     ADD KEY `idx_return_confirm_status` (`confirm_status`);
 
 -- =============================================

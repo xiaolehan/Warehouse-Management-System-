@@ -39,12 +39,25 @@
         <el-table-column prop="returnQuantity" label="退货数量" width="100" />
         <el-table-column prop="returnAmount" label="退货金额(元)" width="120" />
         <el-table-column prop="returnDate" label="退货日期" width="180" />
+        <el-table-column label="退货状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="confirmStatusTagType(row.confirmStatus)">{{ row.confirmStatusText }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column prop="reason" label="退货原因" show-overflow-tooltip />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
+              <el-button
+                v-if="scope.row.confirmStatus === 1"
+                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                size="small" type="success" link @click="handleConfirmOut(scope.row)">确认出库</el-button>
+              <el-button
+                v-if="scope.row.confirmStatus === 2"
+                v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
+                size="small" type="success" link @click="handleComplete(scope.row)">确认退货成功</el-button>
               <el-button
                 v-if="showDeleteAction(scope.row)"
                 v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
@@ -160,7 +173,9 @@ import {
   deletePurchaseReturnAPI,
   getPurchaseReturnDetailAPI,
   getPurchaseReturnPageAPI,
-  getReturnablePurchaseOptionsAPI
+  getReturnablePurchaseOptionsAPI,
+  confirmOutPurchaseReturnAPI,
+  completePurchaseReturnAPI
 } from '@/api/business'
 
 const searchForm = reactive({ keywords: '', dateRange: [] })
@@ -304,6 +319,30 @@ const handleCurrentChange = (val) => {
   currentPage.value = val
   loadList()
 }
+const confirmStatusTagType = (status) => ({
+  1: 'warning', 2: 'warning', 3: 'success'
+}[status] || 'info')
+
+const handleConfirmOut = (row) => {
+  ElMessageBox.confirm('确认出库后将减少库存，不可撤销。是否继续？', '确认出库', { type: 'warning' })
+    .then(async () => {
+      const res = await confirmOutPurchaseReturnAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '确认出库失败')
+      ElMessage.success('已确认出库，库存已减少')
+      loadList()
+    }).catch(() => {})
+}
+
+const handleComplete = (row) => {
+  ElMessageBox.confirm('确认退货成功？将完成该退货单。', '确认退货成功', { type: 'warning' })
+    .then(async () => {
+      const res = await completePurchaseReturnAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '确认退货成功失败')
+      ElMessage.success('已确认退货成功')
+      loadList()
+    }).catch(() => {})
+}
+
 // 新增退货单
 const handleAdd = () => {
   dialogType.value = 'add'
@@ -418,8 +457,13 @@ const submitForm = () => {
 }
 
 onMounted(async () => {
+  // 可退进货单选项仅采购 admin 需要（建退货单用）；仓储 admin 进页面只做确认出库，加载失败不阻断列表
   try {
     await loadSourcePurchaseOptions()
+  } catch (error) {
+    // 仓储无权限访问可退选项，静默忽略
+  }
+  try {
     await loadList()
   } catch (error) {
     ElMessage.error(error.message || '初始化失败')

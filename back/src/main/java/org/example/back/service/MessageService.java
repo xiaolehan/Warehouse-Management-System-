@@ -285,20 +285,88 @@ public class MessageService {
     /**
      * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
      */
-    public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName) {
+    public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName, Long requestId) {
         Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
         if (purchaseDeptId == null) {
             return;
         }
         String applicant = StringUtils.hasText(applicantName) ? applicantName : "仓储管理员";
-        sendToDeptAdmins(
+        sendToDeptAdminsWithBiz(
                 purchaseDeptId,
                 "待处理采购申请",
                 String.format(
                         Locale.ROOT,
                         "采购申请单 %s 已由 %s 提交，请尽快认领处理。",
                         requestNo, applicant
-                )
+                ),
+                "purchase_request",
+                requestId
+        );
+    }
+
+    /**
+     * 采购到货后通知仓储管理员有待确认的采购入库。
+     */
+    public void sendPurchaseRequestArrivedToWarehouseAdmins(String requestNo, String operatorName, Long requestId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String operator = StringUtils.hasText(operatorName) ? operatorName : "采购管理员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认采购入库",
+                String.format(
+                        Locale.ROOT,
+                        "采购申请单 %s 已由 %s 到货，请尽快确认入库。",
+                        requestNo, operator
+                ),
+                "purchase_request",
+                requestId
+        );
+    }
+
+    /**
+     * 采购到货后通知仓储管理员有待确认的进货入库。
+     */
+    public void sendPurchaseArrivedToWarehouseAdmins(String purchaseNo, String operatorName, Long purchaseId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String operator = StringUtils.hasText(operatorName) ? operatorName : "采购管理员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认进货入库",
+                String.format(
+                        Locale.ROOT,
+                        "进货单 %s 已由 %s 到货，请尽快确认入库。",
+                        purchaseNo, operator
+                ),
+                "purchase",
+                purchaseId
+        );
+    }
+
+    /**
+     * 采购发起商品退货后通知仓储管理员有待确认的退货出库。
+     */
+    public void sendPurchaseReturnPendingConfirmToWarehouseAdmins(String returnNo, String operatorName, Long returnId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String operator = StringUtils.hasText(operatorName) ? operatorName : "采购管理员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认商品退货出库",
+                String.format(
+                        Locale.ROOT,
+                        "商品退货单 %s 已由 %s 发起，请尽快确认出库。",
+                        returnNo, operator
+                ),
+                "purchase_return",
+                returnId
         );
     }
 

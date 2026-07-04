@@ -18,7 +18,7 @@ public class BizPurchaseRequest {
     private String requestNo;
 
     /**
-     * 状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回
+     * 状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认
      */
     private Integer status;
 
@@ -32,7 +32,27 @@ public class BizPurchaseRequest {
 
     private LocalDateTime operationTime;
 
+    /**
+     * 采购到货提交时间（采购管理员提交入库申请时）
+     */
+    private LocalDateTime arriveTime;
+
     private LocalDateTime receiveTime;
+
+    /**
+     * 入库确认人ID（仓储管理员）
+     */
+    private Long confirmerId;
+
+    /**
+     * 入库确认人姓名
+     */
+    private String confirmerName;
+
+    /**
+     * 仓储确认入库时间
+     */
+    private LocalDateTime confirmTime;
 
     private String rejectReason;
 

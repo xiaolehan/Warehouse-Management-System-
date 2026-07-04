@@ -46,6 +46,41 @@ public class BizPurchaseReturn {
     private Integer bizStatus;
 
     /**
+     * 退货确认: 1-待出库确认, 2-待退货确认, 3-已退货
+     */
+    private Integer confirmStatus;
+
+    /**
+     * 出库确认人ID(仓储)
+     */
+    private Long confirmerId;
+
+    /**
+     * 出库确认人姓名
+     */
+    private String confirmerName;
+
+    /**
+     * 仓储确认出库时间
+     */
+    private LocalDateTime confirmTime;
+
+    /**
+     * 退货完成确认人ID(采购)
+     */
+    private Long completerId;
+
+    /**
+     * 退货完成确认人姓名
+     */
+    private String completerName;
+
+    /**
+     * 采购确认退货成功时间
+     */
+    private LocalDateTime completeTime;
+
+    /**
      * 红冲来源单ID
      */
     private Long sourceId;

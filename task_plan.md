@@ -1,7 +1,7 @@
 # 任务规划 (Task Plan)
 
 > 本文件用于记录阶段、进度与决策。会话中断后可据此恢复上下文。
-> 最后更新：2026-07-01
+> 最后更新：2026-07-04
 
 ---
 
@@ -16,7 +16,7 @@
 - `document/wms系统改造参考参考资料.md`（§5.3 生产领料模块）
 - `projectmd/生产领料模块开发任务清单.md`（可执行任务拆解）
 
-**当前状态：** ✅ 阶段 1 + 2 + 3 完成（生产领料 + 销售下单协同 + 缺货识别与采购触发）
+**当前状态：** ✅ 阶段 1 + 2 + 3 + 3.5 + 3.6 + 3.7 完成（生产领料 + 销售下单协同 + 缺货识别与采购触发 + 增量完善 + 采购入库仓储确认 + 进货/退货确认）
 
 ---
 
@@ -106,6 +106,107 @@
 - [x] 重复入库被防抖拦截（400 "请勿重复提交入库请求"）
 - [x] 测试数据清理，库存恢复 5
 
+### 阶段 3.5：增量功能完善（✅ 完成 — 2026-07-04 会话 4）
+
+用户巡检/反馈驱动的增量完善：新增「生产入库」模块 + 采购申请手动建单 + 销售退货确认误提示修复 + 商品重复添加释疑 + 运维教训归档。
+
+#### 生产入库（新模块，仓储管理员自产零件入库）
+- 范式对齐进货（`biz_purchase`/`PurchaseService`），但归属仓储部门、无供应商、生产单价可选、作废为仓储直接作废（不走跨部门审批）。
+
+##### 后端
+- [x] P1 数据库建表 `biz_production`（unit_price/total_price 可空，db.sql 追加 + 本地执行）
+- [x] P2 Entity `BizProduction.java`
+- [x] P3 Mapper `BizProductionMapper`
+- [x] P4 DTO `ProductionSaveDTO` + `ProductionQueryDTO`
+- [x] P5 VO `ProductionVO`
+- [x] P6 CodeGenerator.productionNo() = `PRO`+时间戳+3随机
+- [x] P7 ProductionService（page/getById/create/delete/voidDocument，含 increaseStock/decreaseStock 私有助手）
+- [x] P8 ProductionController `/business/production/*`（@PreventDuplicateSubmit+@AuditLog+@RequireAdmin）
+- [x] P9 编译与启动验证（E2E 全通过）
+
+##### 前端
+- [x] F1 API 封装（api/business.js 加 5 接口）
+- [x] F2 `ProductionView.vue`（列表/新增/查看/当天删除/历史作废+红冲，生产单价可选）
+- [x] F3 路由 `business/production`（deptCodes warehouse）+ 仓储菜单加「生产入库」（Download 图标，置于商品资料管理与生产领料之间）
+
+#### 采购申请手动建单（纯前端增强，后端无改动）
+- [x] F4 `PurchaseRequestView.vue` 加「新建采购申请」按钮 + 手动建单对话框（下拉选任意在售商品 getGoodsOptionsAPI、可增删多行、填数量/备注，提交复用 createPurchaseRequestAPI）；保留原「缺货识别建单」为快捷方式；含重复商品/未选/数量校验
+
+#### 销售退货确认误提示修复（纯前端 bugfix）
+- [x] F5 `SalesReturnView.vue` handleConfirm 删除多余的 `await loadSourceSalesOptions()`（该调用对仓储确认入库无意义，403 经 .catch 弹 ElMessage.error 误报「仅销售部门管理员可访问销售模块」），确认后仅 loadList()
+
+#### 商品资料管理重复添加释疑（无代码改动）
+- [x] 调研结论：`GoodsService.create()` 走 checkGoodsNameUnique（goods_name 精确去重，utf8mb4_unicode_ci 大小写不敏感），重名抛 400「商品名称已存在」——主数据唯一性，正确。补货走入库交易（进货/采购申请/生产入库），不在商品资料管理重复添加。
+
+#### 文档
+- [x] D 运维教训归档至 `CLAUDE.md`（6 条：跨 commit 切分支/merge 前停 dev、pkill -f 自杀陷阱、非交互 push 认证、fine-grained PAT 写权限、glm-5.2 bash 分类器宕机、PR 合并后同步 main+清分支）
+
+#### 验收
+- 生产入库建单（带单价 200 / 不带单价 200 unitPrice=null）/ 库存 103→111(+8) / sales_admin 建单 403「仅仓储管理员可访问生产入库模块」/ 当天删除回冲库存恢复 103 ✅
+- 采购申请手动建单：对非缺货商品（三星24英寸显示器）建单 200 → PR260704... status=1 明细×7 → 撤销清理 200 ✅（无后端/DB 改动）
+- 销售退货确认入库不再误弹 403 ✅
+- 前端 build ✅ / Vite 代理 E2E ✅
+- 测试数据已清理 ✅
+
+### 阶段 3.6：采购入库增加仓储确认环节（✅ 完成 — 2026-07-04 会话 6）
+
+采购认领后不再直接转入库，改为：采购到货提交（不加库存，推仓储）→ 仓储确认入库（加库存）。对齐 D22 销售退货确认入库范式。
+
+**状态机（新）：** 1待采购 → 2采购中(认领) → 5待入库确认(到货,不加库存) → 3已入库(仓储确认,加库存)；5→2 可由采购撤回到货或仓储驳回入库；1→4 采购驳回。
+
+#### 后端
+- [x] DB：biz_purchase_request 加 arrive_time/confirmer_id/confirmer_name/confirm_time + status 注释加 5；明细加 arrive_quantity（db.sql CREATE + ALTER 7.3/7.4 + 本地执行）
+- [x] Entity/VO 加字段（BizPurchaseRequest + BizPurchaseRequestDetail + VO）
+- [x] PurchaseRequestService：拆 receive 为 arrive(2→5 不加库存,推仓储) + confirmReceive(5→3 加库存)；加 arriveCancel/arriveReject(5→2)；requireWarehouseConfirmAccess
+- [x] PurchaseService 拆 createInternal(无权限校验) 供 confirmReceive 复用（operator=仓储确认人），保留 D17 biz_purchase 追溯
+- [x] MessageService 加 sendPurchaseRequestArrivedToWarehouseAdmins（绑 biz）
+- [x] Controller：删 receive，加 arrive/confirm-receive/arrive-cancel/arrive-reject
+
+#### 前端
+- [x] api：arrive + confirmReceive + arriveCancel + arriveReject
+- [x] PurchaseRequestView：状态加 5；操作列（到货提交/撤回到货/确认入库/驳回入库）；对话框改"采购到货提交"；详情加到货时间/入库确认人/入库时间
+- [x] 路由/菜单复用（仓储"采购申请"页，不新增菜单）
+
+#### 验收（E2E 全通过）
+- 主流程：建单→认领→到货(status5,库存不变,推仓储)→确认入库(status3,库存+5,confirmer=仓储管理员,消息撤) ✅
+- 退回：到货→采购撤回(5→2)→重新到货(5)→仓储驳回(5→2)，库存不变 ✅
+- 权限：purchase confirm-receive 403 / warehouse arrive 403 ✅
+- 测试数据清理，库存恢复 ✅
+
+#### 踩坑
+- confirmReceive 首版 loginUser 声明在 for 循环后导致前向引用（javac 增量跳过未报错，IDE JDT 编译生成带错误标记的 class，运行时 `Unresolved compilation problem: loginUser cannot be resolved`）。修复：loginUser 移到循环前 + `mvnw clean compile` 强制全编译。
+- 旧后端进程占 8080 致新后端启动失败（fuser -k 未杀净），需 `kill -9 <pid>` 强制清理。
+- 采购到货数量可能 ≠ 申请数量，明细加 arrive_quantity 字段存到货数量（不覆盖申请数量，保留追溯）。
+
+### 阶段 3.7：商品进货/商品退货增加确认环节（✅ 完成 — 2026-07-04 会话 7）
+
+商品进货建单不再直接入库，商品退货建单不再直接减库存，均改为仓储确认范式。+"进货退货"改名"商品退货"。
+
+**状态机（confirm_status，bizStatus 不动）：**
+- 商品进货：1待到货 → 2待入库确认(到货) → 3已入库(仓储确认加库存)
+- 商品退货：1待出库确认(建单通知) → 2待退货确认(仓储确认出库减库存) → 3已退货(采购确认退货成功)
+
+#### 后端
+- [x] DB：biz_purchase 加 confirm_status/arrive_time/confirmer_id/name/confirm_time；biz_purchase_return 加 confirm_status/confirmer_id/name/confirm_time/completer_id/name/complete_time（db.sql CREATE + ALTER 7.5/7.6 + 本地执行；存量默认 3）
+- [x] Entity/VO 加字段
+- [x] PurchaseService：create 不加库存设 1；arrive(1→2 推仓储)；confirmReceive(2→3 加库存)；delete 仅 1 可删；void 按 confirm_status；returnableOptions 加 confirm_status=3 过滤；createInternal 设 3（采购申请入库兼容）
+- [x] PurchaseReturnService：create 不减库存设 1 推仓储；confirmOut(1→2 减库存)；complete(2→3 终态)；delete 仅 1 可删；void 按 confirm_status；validateReturnableQuantity 加 confirm_status>=2 过滤
+- [x] MessageService 加 sendPurchaseArrivedToWarehouseAdmins + sendPurchaseReturnPendingConfirmToWarehouseAdmins
+- [x] Controller 加 arrive/confirm-receive + confirm-out/complete
+- [x] BizPurchaseMapper.latestValidUnitPrice 加 confirm_status=3 过滤
+
+#### 前端
+- [x] api 加 arrive/confirmReceive/confirmOut/complete
+- [x] PurchaseView/PurchaseReturnView 加状态列+操作按钮+处理函数
+- [x] 路由 purchase/purchase-return deptCodes 加 warehouse
+- [x] 采购菜单"进货退货"→"商品退货"；仓储菜单加"进货入库确认"+"商品退货出库确认"
+
+#### 验收（E2E 全通过）
+- 商品进货：建单(1,库存不变)→到货(2,推仓储)→仓储确认入库(3,库存+5,confirmer,消息撤) ✅
+- 商品退货：建单(1,通知,库存不变)→仓储确认出库(2,库存-3)→采购确认退货成功(3) ✅
+- 权限：purchase confirm-receive 403 / warehouse arrive 403 ✅
+- 测试数据清理，库存恢复 ✅
+
 ### 阶段 4：库存治理与追溯（待启动）
 - 盘点 / 余料 / 成品追溯
 
@@ -137,6 +238,12 @@
 | D20 | 缺货阈值复用 base_goods.warning_stock，不新增 safe_stock 列 | 已有索引 + HomeService 已用，避免冗余 | 2026-07-01 |
 | D21 | sys_message 加 biz_type/biz_id，单据删除/作废/确认时按 biz 撤销未读待办 | 消息生命周期与单据绑定，消除"有通知无单据"悬挂引用 | 2026-07-02 |
 | D22 | 销售退货对齐 confirm_status 范式（建单不入库，仓储确认才入库） | 与 D14 销售单范式一致，仓储枢纽角色统一管控库存变更 | 2026-07-02 |
+| D23 | 生产入库模块：归属仓储部门、无供应商、生产单价可选、作废为仓储直接作废（不走跨部门审批） | 范式对齐进货但贴合自产场景；仓储枢纽角色统一管控 | 2026-07-04 |
+| D24 | 采购申请手动建单为纯前端增强（后端 create 本就支持任意在售商品，限制仅前端缺货入口） | 后端无冗余改动，前端补手动入口即解锁任意商品申请 | 2026-07-04 |
+| D25 | 采购申请消息补绑 biz_type/biz_id（"purchase_request"+单据id），并在 delete/process/receive/reject 撤未读消息（对齐 D21 范式） | 修复仓储撤销/终态后采购侧消息悬挂（有通知无单据）；采购申请链路此前漏接 D21 | 2026-07-04 |
+| D26 | 采购入库改为仓储确认范式：新增 5 待入库确认态，采购到货提交不加库存推仓储，仓储确认才加库存；到货可由采购撤回/仓储驳回回到采购中 | 对齐 D22 销售退货确认入库范式，库存变更统一仓储枢纽管控 | 2026-07-04 |
+| D27 | 商品进货改为到货确认+仓储确认入库范式：confirm_status 1待到货→2待入库确认→3已入库，建单不加库存，仓储确认才加 | 对齐 D14/D22 仓储枢纽确认范式，库存变更统一仓储管控 | 2026-07-04 |
+| D28 | 商品退货改为仓储确认出库+采购确认退货成功范式：confirm_status 1待出库确认→2待退货确认(减库存)→3已退货，建单不减库存；"进货退货"改名"商品退货" | 对齐出库范式账实一致；改名贴合语义 | 2026-07-04 |
 
 ---
 
@@ -156,8 +263,8 @@ Q1–Q6 已全部确认，结论见决策记录 D15–D20。无阻塞项。
 
 ## 📊 总体进度
 
-- 完成度：阶段 1 + 2 + 3 编码 100%（后端 + 前端 + 联调验收通过）
-- 当前阶段：阶段 3 完成，阶段 4 待启动
+- 完成度：阶段 1 + 2 + 3 + 3.5 + 3.6 + 3.7 编码 100%（后端 + 前端 + 联调验收通过）
+- 当前阶段：阶段 3.7 完成，阶段 4 待启动
 - 阻塞项：无
 
 ## 🧪 验收结果（阶段 3 缺货识别与采购触发）

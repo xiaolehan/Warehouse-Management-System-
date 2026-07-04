@@ -56,13 +56,13 @@ const router = createRouter({
           path: "business/purchase",
           name: "BusinessPurchase",
           component: () => import("../views/business/PurchaseView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['purchase'] }
+          meta: { roles: ['admin'], deptCodes: ['purchase', 'warehouse'] }
         },
         {
           path: "business/purchase-return",
           name: "BusinessPurchaseReturn",
           component: () => import("../views/business/PurchaseReturnView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['purchase'] }
+          meta: { roles: ['admin'], deptCodes: ['purchase', 'warehouse'] }
         },
         {
           path: "business/sales",

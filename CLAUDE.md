@@ -65,12 +65,14 @@ mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 
 ## 验证习惯（改动后必做）
 
-- **后端**：`./mvnw compile`（编译）→ 重启 → curl E2E（登录→建单→列表→权限负测→清理）。库存类操作测试数据用完即清理、恢复原库存。
+- **后端**：`./mvnw compile`（编译）→ 重启 → curl E2E（登录→建单→列表→权限负测→清理）。库存类操作测试数据用完即清理、恢复原库存。改代码后若遇运行时 `Unresolved compilation problem`（javac 增量跳过 + IDE JDT 编译生成带错误标记的 class 残留 target），用 `./mvnw clean compile` 强制全编译。重启后确认 8080 为新 pid（`fuser -k 8080/tcp` 有时未杀净残留 java，需 `kill -9 <pid>` 强制清理再启动）。
 - **前端**：`npm run build`（捕获编译错误）→ Vite 代理 E2E（或 dev HMR 手测）。
 - **跨 commit git 操作后**：重启 dev 服务器 + 浏览器硬刷新（Ctrl+Shift+R）+ 重新登录（后端重启会使旧 session token 失效）。
+- **权限改写后 E2E 必须覆盖目标角色实际进页面场景**：不仅测该角色直调操作 API（如 confirm-receive），必须测其加载列表（page）、查看详情（getById）等读接口。读权限（`requireXxxReadAccess`）与写权限（`requireXxxModuleAccess`）常分开，改一处易漏另一处——曾因 `page()` 仍用仅采购权限，导致仓储进"进货入库确认"页 403。
 
 ## 关键约束
 
 - 客户需求唯一来源：`document/wms_v1.docx`（不考虑上一轮其他文档）。
 - 商品资料管理 = 主数据（每种商品一条，名称唯一）；补库存走入库交易（进货/采购申请/生产入库），**不在商品资料管理重复添加**。
 - 库存变更的唯一入口是各业务 Service 的 `increaseStock`/`decreaseStock`，每个业务模块各有一份私有助手（非公共 StockService）。
+- 站内消息生命周期绑定（D21 范式）：业务单据发消息必须带 `biz_type`/`biz_id`（用 `sendToDeptAdminsWithBiz`，**不要**用无 biz 的 `sendToDeptAdmins`），并在单据撤销/作废/终态时调 `MessageService.revokeUnreadByBiz(bizType, bizId)` 撤未读消息，避免"有通知无单据"悬挂。新增业务模块发消息务必接全（销售单 D21、销售退货 D22、采购申请 D25 均已接，新模块照此）。

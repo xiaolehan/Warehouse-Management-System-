@@ -17,6 +17,7 @@ public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 						WHERE p.goods_id = #{goodsId}
 							AND p.is_deleted = 0
 							AND p.biz_status = 1
+							AND p.confirm_status = 3
 							AND p.operation_time <![CDATA[<=]]> #{bizTime}
 						ORDER BY p.operation_time DESC, p.id DESC
 						LIMIT 1

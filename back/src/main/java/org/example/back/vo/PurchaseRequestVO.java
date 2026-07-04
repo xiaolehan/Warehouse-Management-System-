@@ -13,7 +13,7 @@ public class PurchaseRequestVO {
     private String requestNo;
 
     /**
-     * 状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回
+     * 状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认
      */
     private Integer status;
 
@@ -32,7 +32,15 @@ public class PurchaseRequestVO {
 
     private LocalDateTime operationTime;
 
+    private LocalDateTime arriveTime;
+
     private LocalDateTime receiveTime;
+
+    private Long confirmerId;
+
+    private String confirmerName;
+
+    private LocalDateTime confirmTime;
 
     private String rejectReason;
 

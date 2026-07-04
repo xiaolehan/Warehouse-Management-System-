@@ -17,6 +17,8 @@ public class PurchaseRequestDetailVO {
 
     private Integer quantity;
 
+    private Integer arriveQuantity;
+
     private BigDecimal unitPrice;
 
     private Integer sortNo;

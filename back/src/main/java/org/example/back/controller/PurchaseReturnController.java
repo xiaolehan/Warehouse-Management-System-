@@ -54,4 +54,20 @@ public class PurchaseReturnController {
         purchaseReturnService.voidDocument(id, dto);
         return Result.success();
     }
+
+    @PutMapping("/{id}/confirm-out")
+    @AuditLog(module = "进货退货管理", action = "确认出库", targetType = "进货退货单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认出库请求")
+    public Result<Void> confirmOut(@PathVariable Long id) {
+        purchaseReturnService.confirmOut(id);
+        return Result.success();
+    }
+
+    @PutMapping("/{id}/complete")
+    @AuditLog(module = "进货退货管理", action = "确认退货成功", targetType = "进货退货单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认退货成功请求")
+    public Result<Void> complete(@PathVariable Long id) {
+        purchaseReturnService.complete(id);
+        return Result.success();
+    }
 }
