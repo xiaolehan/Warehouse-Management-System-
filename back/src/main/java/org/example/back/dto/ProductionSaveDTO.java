@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-public class SalesSaveDTO {
+public class ProductionSaveDTO {
 
     @NotNull(message = "商品不能为空")
     private Long goodsId;
@@ -18,20 +18,13 @@ public class SalesSaveDTO {
     @Min(value = 1, message = "数量必须大于0")
     private Integer quantity;
 
+    /**
+     * 生产单价（可选，自产零件成本可能未知）
+     */
     @DecimalMin(value = "0.01", message = "单价必须大于0")
     private BigDecimal unitPrice;
 
     private LocalDateTime operationTime;
-
-    /**
-     * 客户公司名（对齐 wms_v1 下单文档，可选）
-     */
-    private String customerName;
-
-    /**
-     * 合同编号（对齐 wms_v1 下单文档，可选）
-     */
-    private String contractNo;
 
     private String remark;
 }

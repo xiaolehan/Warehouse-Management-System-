@@ -43,6 +43,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						FROM biz_sales_return
 						WHERE is_deleted = 0
 							AND biz_status = 1
+							AND confirm_status = 2
 							AND operation_time <![CDATA[>=]]> #{startTime}
 							AND operation_time <![CDATA[<]]> #{endTime}
 						</script>
@@ -56,6 +57,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						FROM biz_sales_return
 						WHERE is_deleted = 0
 							AND biz_status = 1
+							AND confirm_status = 2
 							AND operation_time <![CDATA[>=]]> #{startTime}
 							AND operation_time <![CDATA[<]]> #{endTime}
 						</script>
@@ -69,6 +71,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						FROM biz_sales_return r
 						WHERE r.is_deleted = 0
 							AND r.biz_status = 1
+							AND r.confirm_status = 2
 							AND r.operation_time <![CDATA[>=]]> #{startTime}
 							AND r.operation_time <![CDATA[<]]> #{endTime}
 						</script>
@@ -84,6 +87,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						LEFT JOIN base_goods bg ON r.goods_id = bg.id
 						WHERE r.is_deleted = 0
 							AND r.biz_status = 1
+							AND r.confirm_status = 2
 							AND r.operation_time <![CDATA[>=]]> #{startTime}
 							AND r.operation_time <![CDATA[<]]> #{endTime}
 						GROUP BY COALESCE(NULLIF(TRIM(bg.brand), ''), '未标注品牌')
@@ -99,6 +103,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						FROM biz_sales_return r
 						WHERE r.is_deleted = 0
 							AND r.biz_status = 1
+							AND r.confirm_status = 2
 							AND r.operation_time <![CDATA[>=]]> #{startTime}
 							AND r.operation_time <![CDATA[<]]> #{endTime}
 						GROUP BY DATE(r.operation_time)
@@ -115,6 +120,7 @@ public interface BizSalesReturnMapper extends BaseMapper<BizSalesReturn> {
 						FROM biz_sales_return r
 						WHERE r.is_deleted = 0
 							AND r.biz_status = 1
+							AND r.confirm_status = 2
 							AND r.operation_time <![CDATA[>=]]> #{startTime}
 							AND r.operation_time <![CDATA[<]]> #{endTime}
 						GROUP BY DATE(r.operation_time)

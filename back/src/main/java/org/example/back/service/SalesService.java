@@ -38,6 +38,9 @@ import java.util.Map;
 @Service
 public class SalesService {
 
+    public static final int CONFIRM_PENDING = 1;
+    public static final int CONFIRM_SHIPPED = 2;
+
     @Autowired
     private BizSalesMapper bizSalesMapper;
 
@@ -59,12 +62,23 @@ public class SalesService {
     @Autowired
     private AuthzService authzService;
 
+    @Autowired
+    private MessageService messageService;
+
     private void requireSalesModuleAccess() {
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门管理员可访问销售模块");
     }
 
+    /**
+     * 销售单读取权限：销售部门管理员可完整管理，仓储部门管理员可查看以便确认出库。
+     */
+    private void requireSalesReadAccess() {
+        authzService.requireAnyDeptAdminOrSuperAdmin(
+                "仅销售/仓储部门管理员可访问销售模块", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+    }
+
     public PageResult<SalesVO> page(SalesQueryDTO queryDTO) {
-        requireSalesModuleAccess();
+        requireSalesReadAccess();
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
 
@@ -83,7 +97,7 @@ public class SalesService {
     }
 
     public SalesVO getById(Long id) {
-        requireSalesModuleAccess();
+        requireSalesReadAccess();
         BizSales entity = requireEntity(id);
         return toVO(entity, resolveLatestApproval(entity.getId()));
     }
@@ -92,6 +106,7 @@ public class SalesService {
         requireSalesModuleAccess();
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizSales::getBizStatus, 1)
+                .eq(BizSales::getConfirmStatus, CONFIRM_SHIPPED)
                 .eq(goodsId != null, BizSales::getGoodsId, goodsId)
                 .orderByDesc(BizSales::getOperationTime)
                 .orderByDesc(BizSales::getId);
@@ -103,7 +118,8 @@ public class SalesService {
         List<Long> salesIds = salesList.stream().map(BizSales::getId).toList();
         LambdaQueryWrapper<BizSalesReturn> returnWrapper = new LambdaQueryWrapper<>();
         returnWrapper.in(BizSalesReturn::getSourceSalesId, salesIds)
-                .eq(BizSalesReturn::getBizStatus, 1);
+                .eq(BizSalesReturn::getBizStatus, 1)
+                .eq(BizSalesReturn::getConfirmStatus, SalesReturnService.CONFIRM_RECEIVED);
         List<BizSalesReturn> linkedReturns = bizSalesReturnMapper.selectList(returnWrapper);
 
         Map<Long, Integer> returnedMap = new HashMap<>();
@@ -162,9 +178,48 @@ public class SalesService {
         entity.setOperationTime(operationTime);
         entity.setRemark(dto.getRemark());
         entity.setBizStatus(1);
+        entity.setConfirmStatus(CONFIRM_PENDING);
+        entity.setCustomerName(dto.getCustomerName());
+        entity.setContractNo(dto.getContractNo());
 
         bizSalesMapper.insert(entity);
-        decreaseStock(goods.getId(), dto.getQuantity(), "库存不足，销售出库失败");
+
+        // 销售下单后不立即扣库存，待仓库管理员确认出库时再扣减；同时通知仓储管理员有待确认单据
+        messageService.sendSalesPendingConfirmToWarehouseAdmins(
+                entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName(), entity.getId());
+    }
+
+    /**
+     * 仓储管理员确认销售单出库：扣减库存，状态由待确认转为已确认出库。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void confirm(Long id) {
+        requireSalesVoidExecutionAccess();
+        BizSales entity = requireEntity(id);
+        ensureNormalStatus(entity.getBizStatus(), "销售单");
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("销售单已确认出库，禁止重复确认");
+        }
+
+        decreaseStock(entity.getGoodsId(), entity.getQuantity(), "库存不足，确认出库失败");
+
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LocalDateTime now = LocalDateTime.now();
+        LambdaUpdateWrapper<BizSales> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(BizSales::getId, entity.getId())
+                .eq(BizSales::getConfirmStatus, CONFIRM_PENDING)
+                .set(BizSales::getConfirmStatus, CONFIRM_SHIPPED)
+                .set(BizSales::getConfirmTime, now)
+                .set(BizSales::getConfirmerId, loginUser.getId())
+                .set(BizSales::getConfirmerName, loginUser.getRealName());
+        int rows = bizSalesMapper.update(null, updateWrapper);
+        if (rows != 1) {
+            // 库存已扣减但状态更新失败时由事务回滚保护
+            throw BusinessException.validateFail("销售单已被处理，禁止重复确认");
+        }
+
+        // 仓储已确认出库，撤销该单未读待确认消息
+        messageService.revokeUnreadByBiz("sales", id);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -173,7 +228,12 @@ public class SalesService {
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
         validateDeleteWindow(entity.getOperationTime(), "销售单");
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // 仅已确认出库（已扣库存）的销售单删除时需回补库存；待确认单据尚未扣库存，直接删除
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
+            increaseStock(entity.getGoodsId(), entity.getQuantity());
+        }
+        // 撤销该单未读待确认消息（待确认单被删除后，仓储侧不再有悬挂通知）
+        messageService.revokeUnreadByBiz("sales", id);
         bizSalesMapper.deleteById(id);
     }
 
@@ -196,9 +256,16 @@ public class SalesService {
             throw BusinessException.validateFail("销售单已被处理，禁止重复作废");
         }
 
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // 作废后撤销该单未读待确认消息（单据已失效，仓储侧不再需要处理）
+        messageService.revokeUnreadByBiz("sales", id);
 
-        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
+        // 仅已确认出库（已扣库存）的销售单作废时需回补库存；待确认单据尚未扣库存，不回补
+        boolean shipped = entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED;
+        if (shipped) {
+            increaseStock(entity.getGoodsId(), entity.getQuantity());
+        }
+
+        if (shipped && dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
             LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
             BizSales redFlushDoc = new BizSales();
             redFlushDoc.setSalesNo(CodeGenerator.salesNo());
@@ -215,6 +282,7 @@ public class SalesService {
             redFlushDoc.setOperationTime(now);
             redFlushDoc.setRemark("红冲来源:" + entity.getSalesNo());
             redFlushDoc.setBizStatus(3);
+            redFlushDoc.setConfirmStatus(CONFIRM_SHIPPED);
             redFlushDoc.setSourceId(entity.getId());
             redFlushDoc.setVoidReason(reason);
             bizSalesMapper.insert(redFlushDoc);
@@ -277,6 +345,15 @@ public class SalesService {
             return "手工作废";
         }
         return reason.trim();
+    }
+
+    private String confirmStatusText(Integer confirmStatus) {
+        if (confirmStatus == null) return null;
+        return switch (confirmStatus) {
+            case CONFIRM_PENDING -> "待仓库确认";
+            case CONFIRM_SHIPPED -> "已确认出库";
+            default -> String.valueOf(confirmStatus);
+        };
     }
 
     private void validateQuantity(Integer quantity) {
@@ -360,6 +437,8 @@ public class SalesService {
         vo.setSourceId(entity.getSourceId());
         vo.setVoidTime(entity.getVoidTime());
         vo.setVoidReason(entity.getVoidReason());
+        vo.setConfirmStatus(entity.getConfirmStatus());
+        vo.setConfirmStatusText(confirmStatusText(entity.getConfirmStatus()));
         vo.setApprovalStatus(approvalOrder == null ? null : approvalOrder.getStatus());
         vo.setApprovalRequestAction(approvalOrder == null ? null : approvalOrder.getRequestAction());
         return vo;

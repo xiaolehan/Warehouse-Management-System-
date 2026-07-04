@@ -1,18 +1,18 @@
 <template>
-  <div class="sales-container">
+  <div class="production-container">
     <el-card>
       <div class="search-box">
         <div class="top-right-help">
           <span class="help-label">作废/红冲:</span>
-          <el-tooltip content="当天单据可直接删除；历史单据的作废/红冲会提交给仓储管理员审批，通过后才执行。" placement="left">
+          <el-tooltip content="当天单据可直接删除；历史单据作废将直接冲减库存并标记作废（可选生成红冲记录）。" placement="left">
             <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="销售单号">
-            <el-input v-model="searchForm.keywords" placeholder="请输入销售单号" clearable></el-input>
+          <el-form-item label="入库单号">
+            <el-input v-model="searchForm.keywords" placeholder="请输入生产入库单号" clearable></el-input>
           </el-form-item>
-          <el-form-item label="销售日期">
+          <el-form-item label="入库日期">
             <el-date-picker
               v-model="searchForm.dateRange"
               type="daterange"
@@ -25,45 +25,32 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin'], deptCodes: ['sales'] }" type="success" :icon="Plus" @click="handleAdd">新建销售单</el-button>
+            <el-button v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" type="success" :icon="Plus" @click="handleAdd">新增生产入库</el-button>
           </el-form-item>
         </el-form>
       </div>
 
       <el-table :data="tableData" border style="width: 100%" v-loading="loading">
         <el-table-column type="index" label="序号" width="60" align="center" />
-        <el-table-column prop="salesNo" label="销售单号" width="150" />
-        <el-table-column prop="goodsName" label="出库商品" />
-        <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-        <el-table-column prop="quantity" label="销售数量" width="100" />
-        <el-table-column prop="salesPrice" label="销售均价(元)" width="120" />
-        <el-table-column prop="totalAmount" label="销售总额(元)" width="120" />
-        <el-table-column prop="salesDate" label="销售日期" width="180" />
-        <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column label="确认状态" width="120">
-          <template #default="scope">
-            <el-tag :type="scope.row.confirmStatus === 2 ? 'success' : 'warning'" size="small">
-              {{ scope.row.confirmStatusText || (scope.row.confirmStatus === 2 ? '已确认出库' : '待仓库确认') }}
-            </el-tag>
-          </template>
+        <el-table-column prop="orderNo" label="入库单号" width="150" />
+        <el-table-column prop="goodsName" label="商品名称" />
+        <el-table-column label="生产单价(元)" width="120">
+          <template #default="scope">{{ scope.row.unitPrice != null ? scope.row.unitPrice : '—' }}</template>
         </el-table-column>
+        <el-table-column prop="quantity" label="入库数量" width="100" />
+        <el-table-column label="总金额(元)" width="120">
+          <template #default="scope">{{ scope.row.totalAmount != null ? scope.row.totalAmount : '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="productionDate" label="入库日期" width="180" />
+        <el-table-column prop="operator" label="操作人" width="100" />
+        <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
               <el-button
-                v-if="scope.row.confirmStatus === 1 && !isBizDocumentDeleted(scope.row)"
-                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
-                size="small"
-                type="success"
-                link
-                @click="handleConfirm(scope.row)"
-              >
-                确认出库
-              </el-button>
-              <el-button
                 v-if="showDeleteAction(scope.row)"
-                v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
+                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
                 size="small"
                 type="danger"
                 link
@@ -72,26 +59,26 @@
                 删除
               </el-button>
               <template v-else-if="showVoidActions(scope.row)">
-              <el-button
-                v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
-                size="small"
-                type="warning"
-                link
-                :disabled="!canVoid(scope.row)"
-                @click="handleVoid(scope.row, false)"
-              >
-                仅作废
-              </el-button>
-              <el-button
-                v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
-                size="small"
-                type="danger"
-                link
-                :disabled="!canVoid(scope.row)"
-                @click="handleVoid(scope.row, true)"
-              >
-                作废并红冲
-              </el-button>
+                <el-button
+                  v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                  size="small"
+                  type="warning"
+                  link
+                  :disabled="!canVoid(scope.row)"
+                  @click="handleVoid(scope.row, false)"
+                >
+                  仅作废
+                </el-button>
+                <el-button
+                  v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                  size="small"
+                  type="danger"
+                  link
+                  :disabled="!canVoid(scope.row)"
+                  @click="handleVoid(scope.row, true)"
+                >
+                  作废并红冲
+                </el-button>
               </template>
               <span v-else :class="['action-disabled', stateTextClass(scope.row)]">{{ resolveState(scope.row)?.label || '不可操作' }}</span>
             </div>
@@ -99,60 +86,55 @@
         </el-table-column>
       </el-table>
 
+      <!-- 分页区域 -->
       <div class="pagination-box" style="margin-top: 20px; display: flex; justify-content: flex-end;">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          :total="total"
           layout="total, sizes, prev, pager, next, jumper"
+          :total="total"
           @size-change="handleSizeChange"
           @current-change="handleCurrentChange"
         />
       </div>
     </el-card>
 
-    <el-dialog :title="dialogType === 'view' ? '销售单详情' : '新增销售单'" v-model="dialogVisible" width="500px">
+    <el-dialog :title="dialogType === 'view' ? '查看生产入库信息' : '新增生产入库'" v-model="dialogVisible" width="500px">
       <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
-        <el-form-item label="客户公司名" prop="customerName">
-          <el-input v-model="dialogForm.customerName" placeholder="请输入客户公司名（可选）"></el-input>
-        </el-form-item>
-        <el-form-item label="合同编号" prop="contractNo">
-          <el-input v-model="dialogForm.contractNo" placeholder="请输入合同编号（可选）"></el-input>
-        </el-form-item>
-        <el-form-item label="出库商品" prop="goodsId">
+        <el-form-item label="商品名称" prop="goodsId">
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
             <el-option v-for="item in goodsOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="备注" prop="remark">
-          <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
-        </el-form-item>
-        <el-form-item label="出库数量" prop="quantity">
+        <el-form-item label="入库数量" prop="quantity">
           <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="销售单价" prop="unitPrice">
-          <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
+        <el-form-item label="生产单价" prop="price">
+          <el-input-number v-model="dialogForm.price" :min="0" :precision="2" :step="0.1" placeholder="可选，不填则不记录成本" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="销售总额" prop="totalAmount">
+        <el-form-item label="总金额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
             <template #append>元</template>
           </el-input>
         </el-form-item>
-        <el-form-item label="出库日期" prop="salesDate">
+        <el-form-item label="入库日期" prop="productionDate">
           <el-date-picker
-            v-model="dialogForm.salesDate"
+            v-model="dialogForm.productionDate"
             type="datetime"
             value-format="YYYY-MM-DD HH:mm:ss"
-            placeholder="请选择出库时间"
+            placeholder="请选择入库时间"
             style="width: 100%"
           />
+        </el-form-item>
+        <el-form-item label="备注" prop="remark">
+          <el-input v-model="dialogForm.remark" type="textarea" placeholder="请输入备注"></el-input>
         </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
           <el-button :icon="Close" @click="dialogVisible = false">取消</el-button>
-          <el-button v-if="dialogType !== 'view'" type="primary" :icon="Check" @click="submitForm">确定新增</el-button>
+          <el-button v-if="dialogType !== 'view'" type="primary" :icon="Check" @click="submitForm">确定</el-button>
         </span>
       </template>
     </el-dialog>
@@ -162,19 +144,22 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
-import { createApprovalOrderAPI } from '@/api/system'
+import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Close, Check } from '@element-plus/icons-vue'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import {
-  createSalesAPI,
-  confirmSalesAPI,
-  deleteSalesAPI,
+  createProductionAPI,
+  deleteProductionAPI,
   getGoodsOptionsAPI,
-  getSalesDetailAPI,
-  getSalesPageAPI
+  getProductionDetailAPI,
+  getProductionPageAPI,
+  voidProductionAPI
 } from '@/api/business'
 
-const searchForm = reactive({ keywords: '', dateRange: [] })
+const searchForm = reactive({
+  keywords: '',
+  dateRange: []
+})
+
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -186,19 +171,25 @@ const tableData = ref([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')
 const dialogFormRef = ref(null)
-const dialogForm = reactive({ goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '' })
+const dialogForm = reactive({
+  goodsId: null,
+  quantity: 1,
+  price: null,
+  productionDate: '',
+  remark: ''
+})
 
 const totalAmountText = computed(() => {
   const qty = Number(dialogForm.quantity || 0)
-  const price = Number(dialogForm.unitPrice || 0)
+  const price = Number(dialogForm.price || 0)
+  if (!price) return '—'
   return (qty * price).toFixed(2)
 })
 
 const dialogRules = {
   goodsId: [{ required: true, message: '请选择商品', trigger: 'change' }],
-  quantity: [{ required: true, message: '请输入数量', trigger: 'blur' }],
-  unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }],
-  salesDate: [{ required: true, message: '请选择销售日期', trigger: 'change' }]
+  quantity: [{ required: true, message: '请输入入库数量', trigger: 'blur' }],
+  productionDate: [{ required: true, message: '请选择入库日期', trigger: 'change' }]
 }
 
 const normalizeDateTime = (val) => {
@@ -220,7 +211,7 @@ const localToday = () => {
 }
 
 const resolveBizDate = (row) => {
-  return row?.salesDate || row?.operationTime || row?.createTime || ''
+  return row?.productionDate || row?.operationTime || row?.createTime || ''
 }
 
 const canDelete = (row) => {
@@ -270,22 +261,22 @@ const loadList = async () => {
     const params = {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      salesNo: searchForm.keywords || undefined,
+      productionNo: searchForm.keywords || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
-    const res = await getSalesPageAPI(params)
+    const res = await getProductionPageAPI(params)
     if (res.code !== 200) {
       throw new Error(res.msg || '查询失败')
     }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
-      salesDate: normalizeDateTime(item.salesDate || item.operationTime || item.createTime)
+      productionDate: normalizeDateTime(item.productionDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
   } catch (error) {
-    ElMessage.error(error.message || '加载销售数据失败')
+    ElMessage.error(error.message || '加载生产入库数据失败')
   } finally {
     loading.value = false
   }
@@ -317,13 +308,13 @@ const handleCurrentChange = (val) => {
 const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
-  Object.assign(dialogForm, { goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '' })
+  Object.assign(dialogForm, { goodsId: null, quantity: 1, price: null, productionDate: '', remark: '' })
   dialogVisible.value = true
 }
 
 const handleView = async (row) => {
   try {
-    const res = await getSalesDetailAPI(row.id)
+    const res = await getProductionDetailAPI(row.id)
     if (res.code !== 200) {
       throw new Error(res.msg || '查询详情失败')
     }
@@ -331,12 +322,10 @@ const handleView = async (row) => {
     dialogType.value = 'view'
     Object.assign(dialogForm, {
       goodsId: detail.goodsId ?? null,
-      remark: detail.remark || '',
       quantity: detail.quantity ?? 1,
-      unitPrice: detail.salesPrice ?? detail.unitPrice ?? 0,
-      salesDate: normalizeDateTime(detail.salesDate || detail.operationTime || detail.createTime),
-      customerName: detail.customerName || '',
-      contractNo: detail.contractNo || ''
+      price: detail.unitPrice ?? null,
+      productionDate: normalizeDateTime(detail.productionDate || detail.operationTime || detail.createTime),
+      remark: detail.remark || ''
     })
     dialogVisible.value = true
   } catch (error) {
@@ -345,28 +334,16 @@ const handleView = async (row) => {
 }
 
 const handleDelete = (row) => {
-  ElMessageBox.confirm('删除后该销售单库存将自动回补，确认继续吗？', '警告', { type: 'warning' }).then(async () => {
-    const res = await deleteSalesAPI(row.id)
+  ElMessageBox.confirm('确定要删除该生产入库记录吗？删除后关联库存将会变更！', '警告', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(async () => {
+    const res = await deleteProductionAPI(row.id)
     if (res.code !== 200) {
       throw new Error(res.msg || '删除失败')
     }
     ElMessage.success('删除成功')
-    row.__uiDeleted = true
-    row.isDeleted = 1
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
-}
-
-const handleConfirm = (row) => {
-  ElMessageBox.confirm('确认出库将从库存扣减该销售数量，确认继续吗？', '确认出库', { type: 'warning' }).then(async () => {
-    const res = await confirmSalesAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '确认失败')
-    }
-    ElMessage.success('已确认出库')
     loadList()
   }).catch((error) => {
     if (error?.message) {
@@ -386,17 +363,12 @@ const handleVoid = async (row, createRedFlush) => {
       inputValue: ''
     })
 
-    const res = await createApprovalOrderAPI({
-      bizType: 'sales',
-      bizId: row.id,
-      requestAction: createRedFlush ? 'void_red' : 'void',
-      reason: value || ''
-    })
+    const res = await voidProductionAPI(row.id, { reason: value || '', createRedFlush })
     if (res.code !== 200) {
       throw new Error(res.msg || '操作失败')
     }
 
-    ElMessage.success('作废并红冲审批已提交，等待仓储管理员处理')
+    ElMessage.success(createRedFlush ? '已作废并生成红冲记录' : '已作废')
     await loadList()
   } catch (error) {
     if (error?.message && error.message !== 'cancel') {
@@ -411,20 +383,19 @@ const submitForm = () => {
       return
     }
     try {
+      const rawPrice = Number(dialogForm.price || 0)
       const payload = {
         goodsId: dialogForm.goodsId,
         quantity: dialogForm.quantity,
-        unitPrice: Number(dialogForm.unitPrice),
-        operationTime: buildOperationTime(dialogForm.salesDate),
-        customerName: dialogForm.customerName || undefined,
-        contractNo: dialogForm.contractNo || undefined,
+        unitPrice: rawPrice > 0 ? rawPrice : undefined,
+        operationTime: buildOperationTime(dialogForm.productionDate),
         remark: dialogForm.remark || ''
       }
-      const res = await createSalesAPI(payload)
+      const res = await createProductionAPI(payload)
       if (res.code !== 200) {
         throw new Error(res.msg || '新增失败')
       }
-      ElMessage.success('销售完成')
+      ElMessage.success('新增成功')
       dialogVisible.value = false
       loadList()
     } catch (error) {

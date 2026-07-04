@@ -1,11 +1,23 @@
+# ===== 编译产物 =====
 target/
 
-# IDE files
+# ===== IDE / 编辑器 =====
 .idea/
 .vscode/
 *.iml
 
-# Eclipse/STS files
+# ===== Eclipse / STS =====
 .classpath
 .project
 .settings/
+
+# ===== 环境变量 / 密钥 =====
+*.env
+assistant-llm.env
+
+# ===== 日志 =====
+*.log
+
+# ===== 临时/调试文件 =====
+*.tmp
+*.bak

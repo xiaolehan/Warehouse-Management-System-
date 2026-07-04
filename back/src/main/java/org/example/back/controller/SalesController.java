@@ -62,4 +62,13 @@ public class SalesController {
         salesService.voidDocument(id, dto);
         return Result.success();
     }
+
+    @PutMapping("/{id}/confirm")
+    @AuditLog(module = "销售管理", action = "确认出库", targetType = "销售单")
+    @RequireAdmin("仅仓储管理员可确认出库")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认请求")
+    public Result<Void> confirm(@PathVariable Long id) {
+        salesService.confirm(id);
+        return Result.success();
+    }
 }

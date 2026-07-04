@@ -125,13 +125,16 @@ CREATE TABLE `sys_message` (
     `content` TEXT NOT NULL COMMENT '消息正文',
     `is_read` TINYINT NOT NULL DEFAULT 0 COMMENT '是否已读: 0-未读, 1-已读',
     `read_time` DATETIME DEFAULT NULL COMMENT '已读时间',
+    `biz_type` VARCHAR(30) DEFAULT NULL COMMENT '关联业务类型: sales/sales_return 等(用于按单据撤销待办)',
+    `biz_id` BIGINT DEFAULT NULL COMMENT '关联业务单据ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
     PRIMARY KEY (`id`),
     KEY `idx_recipient_user_read` (`recipient_user_id`, `is_read`, `create_time`),
     KEY `idx_recipient_dept` (`recipient_dept_id`),
-    KEY `idx_is_deleted` (`is_deleted`)
+    KEY `idx_is_deleted` (`is_deleted`),
+    KEY `idx_biz` (`biz_type`, `biz_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='站内消息表';
 
 DROP TABLE IF EXISTS `sys_error_log`;
@@ -361,6 +364,12 @@ CREATE TABLE `biz_sales` (
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
+    `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '仓库确认状态: 1-待仓库确认, 2-已确认出库',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认出库时间',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)',
+    `customer_name` VARCHAR(100) DEFAULT NULL COMMENT '客户公司名(对齐下单文档)',
+    `contract_no` VARCHAR(50) DEFAULT NULL COMMENT '合同编号(对齐下单文档)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
@@ -371,6 +380,7 @@ CREATE TABLE `biz_sales` (
     KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`),
     KEY `idx_cost_stat` (`operation_time`, `biz_status`, `is_deleted`, `cost_total_price`),
     KEY `idx_biz_status` (`biz_status`),
+    KEY `idx_confirm_status` (`confirm_status`),
     KEY `idx_source_id` (`source_id`),
     KEY `idx_operator_id` (`operator_id`),
     KEY `idx_operation_time` (`operation_time`),
@@ -401,6 +411,10 @@ CREATE TABLE `biz_sales_return` (
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
+    `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '仓库确认状态: 1-待仓库确认, 2-已确认入库',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认入库时间',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
@@ -411,6 +425,7 @@ CREATE TABLE `biz_sales_return` (
     KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`, `source_sales_id`),
     KEY `idx_cost_stat` (`operation_time`, `biz_status`, `is_deleted`, `cost_total_price`),
     KEY `idx_source_sales_id` (`source_sales_id`),
+    KEY `idx_return_confirm_status` (`confirm_status`),
     KEY `idx_source_sales_no` (`source_sales_no`),
     KEY `idx_biz_status` (`biz_status`),
     KEY `idx_source_id` (`source_id`),
@@ -1028,6 +1043,145 @@ CREATE TABLE `ai_model_call_log` (
     KEY `idx_message` (`assistant_message_id`),
     KEY `idx_model_status_created` (`model_code`, `result_status`, `created_at` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI模型调用审计表';
+
+-- =============================================
+-- 生产领料模块（二次开发新增）
+-- 来源：document/wms_v1.docx 痛点2（生产领料耗时久，错领漏领）
+-- =============================================
+
+-- 领料单主表
+CREATE TABLE IF NOT EXISTS `biz_pick_list` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `pick_no` VARCHAR(30) NOT NULL COMMENT '领料单号',
+    `pick_type` VARCHAR(16) NOT NULL COMMENT '领料类型: PICK-领料, SUPPLY-补料, RETURN-退料',
+    `source_sales_id` BIGINT DEFAULT NULL COMMENT '关联销售单ID(可选)',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待发料, 2-已发料, 3-已完成, 4-已驳回',
+    `applicant_id` BIGINT NOT NULL COMMENT '申请人ID',
+    `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '发料人ID(仓储管理员)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '发料人姓名(冗余字段)',
+    `operation_time` DATETIME DEFAULT NULL COMMENT '发料时间',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '确认收货时间',
+    `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_pick_no` (`pick_no`),
+    KEY `idx_pick_status` (`status`),
+    KEY `idx_pick_applicant` (`applicant_id`),
+    KEY `idx_pick_source_sales` (`source_sales_id`),
+    KEY `idx_pick_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产领料单主表';
+
+-- 领料单明细表（多商品）
+CREATE TABLE IF NOT EXISTS `biz_pick_list_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `pick_list_id` BIGINT NOT NULL COMMENT '领料单主表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '数量',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_pld_pick_list_id` (`pick_list_id`),
+    KEY `idx_pld_goods_id` (`goods_id`),
+    KEY `idx_pld_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产领料单明细表';
+
+-- =============================================
+-- 3.5 采购申请单 (缺货识别与采购触发)
+-- =============================================
+DROP TABLE IF EXISTS `biz_purchase_request_detail`;
+DROP TABLE IF EXISTS `biz_purchase_request`;
+CREATE TABLE IF NOT EXISTS `biz_purchase_request` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `request_no` VARCHAR(30) NOT NULL COMMENT '采购申请单号(PR开头)',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回',
+    `applicant_id` BIGINT NOT NULL COMMENT '申请人ID(仓储管理员)',
+    `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '采购处理人ID(采购管理员)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '采购处理人姓名(冗余字段)',
+    `operation_time` DATETIME DEFAULT NULL COMMENT '认领(转采购中)时间',
+    `receive_time` DATETIME DEFAULT NULL COMMENT '入库完成时间',
+    `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_request_no` (`request_no`),
+    KEY `idx_pr_status` (`status`),
+    KEY `idx_pr_applicant` (`applicant_id`),
+    KEY `idx_pr_operator` (`operator_id`),
+    KEY `idx_pr_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单主表';
+
+CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `request_id` BIGINT NOT NULL COMMENT '采购申请单主表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '申请采购数量',
+    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(入库时填写)',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_prd_request_id` (`request_id`),
+    KEY `idx_prd_goods_id` (`goods_id`),
+    KEY `idx_prd_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
+
+-- 3.2 生产入库表 (biz_production)  仓储管理员将自产零件存入仓库，库存增加
+CREATE TABLE IF NOT EXISTS `biz_production` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `production_no` VARCHAR(30) NOT NULL COMMENT '生产入库单号',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '入库数量',
+    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '生产单价(可选,自产零件成本可能未知)',
+    `total_price` DECIMAL(10,2) DEFAULT NULL COMMENT '总金额(单价为空时为空)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
+    `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
+    `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
+    `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
+    `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_production_no` (`production_no`),
+    KEY `idx_production_goods_id` (`goods_id`),
+    KEY `idx_production_status` (`biz_status`),
+    KEY `idx_production_source_id` (`source_id`),
+    KEY `idx_production_operator_id` (`operator_id`),
+    KEY `idx_production_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产入库表(自产零件入库,库存增加)';
+
+-- =============================================
+-- 七、增量迁移（已部署库升级用，全新库可忽略）
+-- =============================================
+
+-- 7.1 sys_message 增加业务关联字段（消息按单据撤销）
+ALTER TABLE `sys_message`
+    ADD COLUMN `biz_type` VARCHAR(30) DEFAULT NULL COMMENT '关联业务类型: sales/sales_return 等(用于按单据撤销待办)' AFTER `read_time`,
+    ADD COLUMN `biz_id` BIGINT DEFAULT NULL COMMENT '关联业务单据ID' AFTER `biz_type`,
+    ADD KEY `idx_biz` (`biz_type`, `biz_id`);
+
+-- 7.2 biz_sales_return 增加仓库确认入库字段（对齐 biz_sales confirm_status 范式）
+-- 存量数据默认 confirm_status=2（已确认入库），保持兼容
+ALTER TABLE `biz_sales_return`
+    ADD COLUMN `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '仓库确认状态: 1-待仓库确认, 2-已确认入库' AFTER `void_reason`,
+    ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '仓库确认入库时间' AFTER `confirm_status`,
+    ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(仓储管理员)' AFTER `confirm_time`,
+    ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)' AFTER `confirmer_id`,
+    ADD KEY `idx_return_confirm_status` (`confirm_status`);
 
 -- =============================================
 -- 脚本执行完成

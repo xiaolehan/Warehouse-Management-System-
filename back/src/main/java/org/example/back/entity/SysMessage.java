@@ -29,6 +29,16 @@ public class SysMessage {
 
     private LocalDateTime readTime;
 
+    /**
+     * 关联业务类型: sales/sales_return 等(用于按单据撤销待办)
+     */
+    private String bizType;
+
+    /**
+     * 关联业务单据ID
+     */
+    private Long bizId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

@@ -9,6 +9,12 @@ export const createPurchaseAPI = (data) => request.post('/business/purchases', d
 export const deletePurchaseAPI = (id) => request.delete(`/business/purchases/${id}`)
 export const voidPurchaseAPI = (id, data) => request.put(`/business/purchases/${id}/void`, data)
 
+export const getProductionPageAPI = (params) => request.get('/business/production/page', { params })
+export const getProductionDetailAPI = (id) => request.get(`/business/production/${id}`)
+export const createProductionAPI = (data) => request.post('/business/production', data)
+export const deleteProductionAPI = (id) => request.delete(`/business/production/${id}`)
+export const voidProductionAPI = (id, data) => request.put(`/business/production/${id}/void`, data)
+
 export const getPurchaseReturnPageAPI = (params) => request.get('/business/purchase-returns/page', { params })
 export const getPurchaseReturnDetailAPI = (id) => request.get(`/business/purchase-returns/${id}`)
 export const createPurchaseReturnAPI = (data) => request.post('/business/purchase-returns', data)
@@ -21,12 +27,14 @@ export const getReturnableSalesOptionsAPI = (params) => request.get('/business/s
 export const createSalesAPI = (data) => request.post('/business/sales', data)
 export const deleteSalesAPI = (id) => request.delete(`/business/sales/${id}`)
 export const voidSalesAPI = (id, data) => request.put(`/business/sales/${id}/void`, data)
+export const confirmSalesAPI = (id) => request.put(`/business/sales/${id}/confirm`)
 
 export const getSalesReturnPageAPI = (params) => request.get('/business/sales-returns/page', { params })
 export const getSalesReturnDetailAPI = (id) => request.get(`/business/sales-returns/${id}`)
 export const createSalesReturnAPI = (data) => request.post('/business/sales-returns', data)
 export const deleteSalesReturnAPI = (id) => request.delete(`/business/sales-returns/${id}`)
 export const voidSalesReturnAPI = (id, data) => request.put(`/business/sales-returns/${id}/void`, data)
+export const confirmSalesReturnAPI = (id) => request.put(`/business/sales-returns/${id}/confirm`)
 
 export const getChartOverviewAPI = (params) => request.get('/business/charts/overview', { params })
 export const getChartTop5API = (params) => request.get('/business/charts/top5', { params })

@@ -65,6 +65,27 @@ public class BizSales {
 
     private String voidReason;
 
+    /**
+     * 仓库确认状态: 1-待仓库确认, 2-已确认出库
+     */
+    private Integer confirmStatus;
+
+    private LocalDateTime confirmTime;
+
+    private Long confirmerId;
+
+    private String confirmerName;
+
+    /**
+     * 客户公司名(对齐下单文档)
+     */
+    private String customerName;
+
+    /**
+     * 合同编号(对齐下单文档)
+     */
+    private String contractNo;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

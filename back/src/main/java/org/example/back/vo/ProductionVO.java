@@ -6,11 +6,13 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-public class SalesVO {
+public class ProductionVO {
 
     private Long id;
 
-    private String salesNo;
+    private String productionNo;
+
+    private String orderNo;
 
     private Long goodsId;
 
@@ -20,7 +22,7 @@ public class SalesVO {
 
     private BigDecimal unitPrice;
 
-    private BigDecimal salesPrice;
+    private BigDecimal price;
 
     private BigDecimal totalPrice;
 
@@ -28,7 +30,7 @@ public class SalesVO {
 
     private LocalDateTime operationTime;
 
-    private LocalDateTime salesDate;
+    private LocalDateTime productionDate;
 
     private String operatorName;
 
@@ -44,26 +46,7 @@ public class SalesVO {
 
     private String voidReason;
 
-    /**
-     * 仓库确认状态: 1-待仓库确认, 2-已确认出库
-     */
-    private Integer confirmStatus;
-
-    private String confirmStatusText;
-
-    private LocalDateTime confirmTime;
-
-    private String confirmerName;
-
-    private String customerName;
-
-    private String contractNo;
-
     private LocalDateTime createTime;
 
     private Integer isDeleted;
-
-    private Integer approvalStatus;
-
-    private String approvalRequestAction;
 }

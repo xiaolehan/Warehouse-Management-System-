@@ -9,18 +9,17 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 生产入库单：仓储管理员将自己生产的零件存入仓库，库存增加。
+ */
 @Data
-@TableName("biz_sales_return")
-public class BizSalesReturn {
+@TableName("biz_production")
+public class BizProduction {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
-    private String returnNo;
-
-    private Long sourceSalesId;
-
-    private String sourceSalesNo;
+    private String productionNo;
 
     private Long goodsId;
 
@@ -28,23 +27,14 @@ public class BizSalesReturn {
 
     private Integer quantity;
 
+    /**
+     * 生产单价（可选，自产零件成本可能未知）
+     */
     private BigDecimal unitPrice;
 
     /**
-     * 成本单价快照
+     * 总金额（unitPrice 为空时为空）
      */
-    private BigDecimal costUnitPrice;
-
-    /**
-     * 成本总额快照
-     */
-    private BigDecimal costTotalPrice;
-
-    /**
-     * 成本来源: SOURCE_SALE/RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK
-     */
-    private String costSource;
-
     private BigDecimal totalPrice;
 
     private Long operatorId;
@@ -68,17 +58,6 @@ public class BizSalesReturn {
     private LocalDateTime voidTime;
 
     private String voidReason;
-
-    /**
-     * 仓库确认状态: 1-待仓库确认, 2-已确认入库
-     */
-    private Integer confirmStatus;
-
-    private LocalDateTime confirmTime;
-
-    private Long confirmerId;
-
-    private String confirmerName;
 
     private LocalDateTime createTime;
 

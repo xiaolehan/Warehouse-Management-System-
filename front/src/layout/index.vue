@@ -31,6 +31,7 @@
         <template v-else-if="isPurchaseAdmin">
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>商品进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>进货退货</span></el-menu-item>
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请处理</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-sub-menu index="/notification">
             <template #title><el-icon><Promotion /></el-icon><span class="menu-title-text">发布</span></template>
@@ -43,6 +44,7 @@
         <template v-else-if="isSalesAdmin">
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
+          <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-sub-menu index="/notification">
             <template #title><el-icon><Promotion /></el-icon><span class="menu-title-text">发布</span></template>
@@ -55,6 +57,11 @@
         <template v-else-if="isWarehouseAdmin">
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>商品资料管理</span></el-menu-item>
+          <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
+          <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
+          <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货入库确认</span></el-menu-item>
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>作废审批</span></el-menu-item>
           <el-sub-menu index="/notification">
@@ -134,7 +141,7 @@ import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
   ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
-  Fold, Expand
+  Fold, Expand, Box, List, Download
 } from '@element-plus/icons-vue'
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'layout-sidebar-collapsed'

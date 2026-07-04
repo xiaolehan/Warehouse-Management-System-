@@ -68,13 +68,13 @@ const router = createRouter({
           path: "business/sales",
           name: "BusinessSales",
           component: () => import("../views/business/SalesView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales'] }
+          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-return",
           name: "BusinessSalesReturn",
           component: () => import("../views/business/SalesReturnView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales'] }
+          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-chart",
@@ -87,6 +87,24 @@ const router = createRouter({
           name: "BusinessStockWarning",
           component: () => import("../views/business/StockWarningView.vue"),
           meta: { roles: ['admin'], deptCodes: ['warehouse', 'purchase', 'sales'] }
+        },
+        {
+          path: "business/pick-list",
+          name: "BusinessPickList",
+          component: () => import("../views/business/PickListView.vue"),
+          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
+        },
+        {
+          path: "business/purchase-request",
+          name: "BusinessPurchaseRequest",
+          component: () => import("../views/business/PurchaseRequestView.vue"),
+          meta: { roles: ['admin'], deptCodes: ['warehouse', 'purchase'] }
+        },
+        {
+          path: "business/production",
+          name: "BusinessProduction",
+          component: () => import("../views/business/ProductionView.vue"),
+          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
         },
         {
           path: "system/notice",

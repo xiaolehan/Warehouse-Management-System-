@@ -223,7 +223,100 @@ public class MessageService {
         );
     }
 
+    /**
+     * 销售下单后通知仓储管理员有待确认出库的销售单。
+     */
+    public void sendSalesPendingConfirmToWarehouseAdmins(String salesNo, String customerName, String applicantName, Long salesId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String customer = StringUtils.hasText(customerName) ? customerName : "未填写";
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "销售员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认销售出库",
+                String.format(
+                        Locale.ROOT,
+                        "销售单 %s 已由 %s 下单（客户：%s），请尽快确认出库。",
+                        salesNo, applicant, customer
+                ),
+                "sales",
+                salesId
+        );
+    }
+
+    /**
+     * 销售退货建单后通知仓储管理员有待确认入库的退货单。
+     */
+    public void sendSalesReturnPendingConfirmToWarehouseAdmins(String returnNo, String applicantName, Long returnId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "销售员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认销售退货入库",
+                String.format(
+                        Locale.ROOT,
+                        "销售退货单 %s 已由 %s 提交，请尽快确认入库。",
+                        returnNo, applicant
+                ),
+                "sales_return",
+                returnId
+        );
+    }
+
+    /**
+     * 按业务单据撤销未读待办消息（单据被删除/作废/已处理时调用，避免悬挂通知）。
+     */
+    public void revokeUnreadByBiz(String bizType, Long bizId) {
+        if (!StringUtils.hasText(bizType) || bizId == null) {
+            return;
+        }
+        LambdaQueryWrapper<SysMessage> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysMessage::getBizType, bizType)
+                .eq(SysMessage::getBizId, bizId)
+                .eq(SysMessage::getIsRead, MESSAGE_UNREAD);
+        sysMessageMapper.delete(wrapper);
+    }
+
+    /**
+     * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
+     */
+    public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName) {
+        Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
+        if (purchaseDeptId == null) {
+            return;
+        }
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "仓储管理员";
+        sendToDeptAdmins(
+                purchaseDeptId,
+                "待处理采购申请",
+                String.format(
+                        Locale.ROOT,
+                        "采购申请单 %s 已由 %s 提交，请尽快认领处理。",
+                        requestNo, applicant
+                )
+        );
+    }
+
+    private Long resolveDeptIdByCode(String deptCode) {
+        if (!StringUtils.hasText(deptCode)) {
+            return null;
+        }
+        LambdaQueryWrapper<SysDept> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysDept::getDeptCode, deptCode).last("LIMIT 1");
+        SysDept dept = sysDeptMapper.selectOne(wrapper);
+        return dept == null ? null : dept.getId();
+    }
+
     private void sendToDeptAdmins(Long deptId, String title, String content) {
+        sendToDeptAdminsWithBiz(deptId, title, content, null, null);
+    }
+
+    private void sendToDeptAdminsWithBiz(Long deptId, String title, String content, String bizType, Long bizId) {
         if (deptId == null || !StringUtils.hasText(title) || !StringUtils.hasText(content)) {
             return;
         }
@@ -242,6 +335,8 @@ public class MessageService {
             message.setTitle(title.trim());
             message.setContent(content.trim());
             message.setIsRead(MESSAGE_UNREAD);
+            message.setBizType(bizType);
+            message.setBizId(bizId);
             sysMessageMapper.insert(message);
         }
     }
