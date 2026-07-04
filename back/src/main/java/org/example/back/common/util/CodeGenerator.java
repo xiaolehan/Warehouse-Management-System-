@@ -53,6 +53,10 @@ public final class CodeGenerator {
         return "PR" + timestampSuffix();
     }
 
+    public static String productionNo() {
+        return "PRO" + timestampSuffix();
+    }
+
     private static String timestampSuffix() {
         return DateUtil.format(new Date(), "yyMMddHHmmss") + RandomUtil.randomNumbers(3);
     }

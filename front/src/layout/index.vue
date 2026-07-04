@@ -57,6 +57,7 @@
         <template v-else-if="isWarehouseAdmin">
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>商品资料管理</span></el-menu-item>
+          <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货入库确认</span></el-menu-item>
@@ -140,7 +141,7 @@ import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
   ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
-  Fold, Expand, Box, List
+  Fold, Expand, Box, List, Download
 } from '@element-plus/icons-vue'
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'layout-sidebar-collapsed'

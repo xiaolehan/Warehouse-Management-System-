@@ -24,7 +24,8 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
           <el-button @click="resetSearch">重置</el-button>
-          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleShortage">缺货识别建单</el-button>
+          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleManual">新建采购申请</el-button>
+          <el-button v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleShortage">缺货识别建单</el-button>
         </el-form-item>
       </el-form>
 
@@ -103,6 +104,41 @@
       </template>
     </el-dialog>
 
+    <!-- 手动建单对话框 -->
+    <el-dialog v-model="manualVisible" title="新建采购申请单" width="760px" :close-on-click-modal="false">
+      <el-alert title="可申请采购任意在售商品；提交后将通知采购管理员处理。" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-table :data="manualForm.details" border size="small">
+        <el-table-column label="序号" width="60" type="index" />
+        <el-table-column label="商品" min-width="220">
+          <template #default="{ row }">
+            <el-select v-model="row.goodsId" placeholder="请选择商品" filterable style="width: 100%">
+              <el-option v-for="g in goodsOptions" :key="g.id" :label="g.name" :value="g.id" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购数量" width="150">
+          <template #default="{ row }">
+            <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 130px" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ $index }">
+            <el-button link type="danger" @click="removeManualRow($index)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-button style="margin-top: 8px" :icon="Plus" @click="addManualRow">添加商品</el-button>
+      <el-form style="margin-top: 12px" label-width="60px">
+        <el-form-item label="备注">
+          <el-input v-model="manualForm.remark" placeholder="备注（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="manualVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" :disabled="!manualForm.details.length" @click="submitManual">提交申请单</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 详情对话框 -->
     <el-dialog v-model="viewVisible" title="采购申请单详情" width="680px">
       <el-descriptions :column="2" border v-if="viewData">
@@ -171,12 +207,14 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import {
   getPurchaseRequestPageAPI, getPurchaseRequestDetailAPI, getShortageGoodsAPI,
   createPurchaseRequestAPI, processPurchaseRequestAPI, receivePurchaseRequestAPI,
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
+import { getGoodsOptionsAPI } from '@/api/business'
 
 const userStore = useUserStore()
 
@@ -193,6 +231,10 @@ const submitting = ref(false)
 const shortageGoods = ref([])
 const addForm = reactive({ remark: '', details: [] })
 const selectedDetails = ref([])
+
+const manualVisible = ref(false)
+const goodsOptions = ref([])
+const manualForm = reactive({ remark: '', details: [] })
 
 const viewVisible = ref(false)
 const viewData = ref(null)
@@ -273,6 +315,49 @@ const submitAdd = async () => {
     if (res.code !== 200) throw new Error(res.msg || '创建失败')
     ElMessage.success('采购申请单已提交，已通知采购管理员')
     addVisible.value = false
+    loadList()
+  } catch (e) {
+    ElMessage.error(e.message || '创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// 手动建单（可申请任意在售商品，不限于缺货）
+const handleManual = async () => {
+  if (!goodsOptions.value.length) {
+    try {
+      const res = await getGoodsOptionsAPI()
+      if (res.code !== 200) throw new Error(res.msg || '加载商品失败')
+      goodsOptions.value = res.data || []
+    } catch (e) {
+      ElMessage.error(e.message || '加载商品失败')
+      return
+    }
+  }
+  manualForm.remark = ''
+  manualForm.details = [{ goodsId: null, quantity: 1 }]
+  manualVisible.value = true
+}
+const addManualRow = () => { manualForm.details.push({ goodsId: null, quantity: 1 }) }
+const removeManualRow = (index) => { manualForm.details.splice(index, 1) }
+const submitManual = async () => {
+  const details = manualForm.details
+  if (!details.length) return ElMessage.warning('请至少添加一个商品')
+  if (details.some(d => !d.goodsId)) return ElMessage.warning('请选择全部商品')
+  if (details.some(d => !d.quantity || d.quantity < 1)) return ElMessage.warning('采购数量必须大于0')
+  const ids = details.map(d => d.goodsId)
+  if (new Set(ids).size !== ids.length) return ElMessage.warning('存在重复商品，请合并或删除')
+  const payload = {
+    remark: manualForm.remark || undefined,
+    details: details.map(d => ({ goodsId: d.goodsId, quantity: d.quantity }))
+  }
+  submitting.value = true
+  try {
+    const res = await createPurchaseRequestAPI(payload)
+    if (res.code !== 200) throw new Error(res.msg || '创建失败')
+    ElMessage.success('采购申请单已提交，已通知采购管理员')
+    manualVisible.value = false
     loadList()
   } catch (e) {
     ElMessage.error(e.message || '创建失败')

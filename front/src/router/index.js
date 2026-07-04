@@ -101,6 +101,12 @@ const router = createRouter({
           meta: { roles: ['admin'], deptCodes: ['warehouse', 'purchase'] }
         },
         {
+          path: "business/production",
+          name: "BusinessProduction",
+          component: () => import("../views/business/ProductionView.vue"),
+          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+        },
+        {
           path: "system/notice",
           name: "SystemNotice",
           component: () => import("../views/system/NoticeView.vue"),

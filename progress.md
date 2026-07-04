@@ -5,6 +5,44 @@
 
 ---
 
+## 会话 4 — 2026-07-04
+
+### 三项功能完善（生产入库 / 商品重复添加释疑 / 退货确认误提示修复）
+
+用户提三点完善需求，已全部处理并通过 E2E + 前端 build 验证。系统已启动（后端 8080 / 前端 5173）待用户检查。
+
+**1. 新增「生产入库」模块（仓储管理员，自产零件入库）**
+- 范式对齐进货（`biz_purchase`/`PurchaseService`），但归属仓储部门、无供应商、生产单价可选、作废为仓储直接作废（不走跨部门审批）。
+- 后端新增：`entity/BizProduction`、`mapper/BizProductionMapper`、`dto/ProductionSaveDTO`+`ProductionQueryDTO`、`vo/ProductionVO`、`service/ProductionService`（page/getById/create/delete/voidDocument，含 increaseStock/decreaseStock 私有助手）、`controller/ProductionController`（`/business/production/*`，全套 @PreventDuplicateSubmit+@AuditLog+@RequireAdmin）。
+- `CodeGenerator` 加 `productionNo()` = "PRO"+时间戳+3随机。
+- `db.sql` 追加 `biz_production` 建表（unit_price/total_price 可空）+ 本地库执行。
+- 前端新增 `views/business/ProductionView.vue`（列表/新增/查看/当天删除/历史作废+红冲，生产单价可选）；`api/business.js` 加 5 接口；`router` 加 `business/production`（deptCodes warehouse）；`layout` 仓储菜单加「生产入库」（Download 图标，置于商品资料管理与生产领料之间）。
+- E2E（warehouse_admin）：建单带单价 200 / 建单不带单价 200（unitPrice/totalPrice=null）/ 库存 103→111(+8) / 列表返回 PRO260704... / sales_admin 建单 403「仅仓储管理员可访问生产入库模块」/ 当天删除回冲库存恢复 103。测试数据已清理。
+- `npm run build` 通过（ProductionView chunk 入包）。
+
+**2. 商品资料管理「已有商品不能再次添加」释疑（无代码改动）**
+- 调研结论：当前逻辑符合常理。`GoodsService.create()` 走 `checkGoodsNameUnique`（按 goods_name 精确去重，utf8mb4_unicode_ci 大小写不敏感），重名抛 400「商品名称已存在」——这是商品主数据唯一性，正确。
+- 商品资料管理=创建主数据（每种商品一条，仅创建时可设初始库存，编辑模式隐藏库存输入）；补货=入库交易（`biz_purchase.stock+`），不应在商品资料管理重复添加。
+- 用户「只能靠申请采购」理解不完整：补货有两条路径——直接进货（`PurchaseView`/`PurchaseService.create` 立即入库）与采购申请（审批流，最终复用 PurchaseService.create）。本次新增的生产入库是第三条入库路径（自产零件）。
+
+**3. 销售退货入库确认误提示修复**
+- 现象：仓储 admin 点「确认入库」操作成功，却弹出「仅销售部门管理员可访问销售模块」。
+- 根因：`SalesReturnView.vue` `handleConfirm` 在 confirm API 成功后又调 `await loadSourceSalesOptions()`（→ `GET /business/sales/options/returnable`，`requireSalesModuleAccess` 仅销售 admin），403 错误经 `.catch` → `ElMessage.error` 弹出。该调用对仓储确认入库无意义（可退选项仅建退货单用），`onMounted` 已对其静默忽略但 `handleConfirm` 未忽略。
+- 修复：删除 `handleConfirm` 中 `await loadSourceSalesOptions()` 一行，确认后仅 `loadList()`。
+
+### 补充：采购申请支持手动建任意商品（2026-07-04）
+
+- 触发：用户反馈「采购申请目前只有缺货识别才能建单，其他产品需要采购时怎么申请」。
+- 调研：后端 `PurchaseRequestService.create()` 本就支持任意在售商品（仅校验 `requireGoods`+`ensureGoodsEnabled`，不限定缺货），限制仅在前端——`PurchaseRequestView.vue` 只有「缺货识别建单」一个入口（仅加载 `stock ≤ warning_stock` 商品）。
+- 修复（纯前端）：`PurchaseRequestView.vue` 加「新建采购申请」按钮 + 手动建单对话框（下拉选任意在售商品 `getGoodsOptionsAPI`、可增删多行、填数量、备注），提交复用 `createPurchaseRequestAPI`（payload `{remark, details:[{goodsId,quantity}]}`）。保留原「缺货识别建单」作为快捷方式。含重复商品/未选/数量校验。
+- E2E（warehouse_admin）：对非缺货商品（三星24英寸显示器，缺货列表为空）手动建单 200 → PR260704... status=1 待采购 明细 ×7 → 撤销清理 200。`npm run build` 通过。无后端/DB 改动。
+
+### 下一步
+- 待用户检查三项改动；若生产入库需多商品明细（主从表）或成本必填，可再迭代。
+- 阶段 4（盘点/余料/成品追溯）仍未启动。
+
+---
+
 ## 会话 3 — 2026-07-02
 
 ### 巩固进度：登录巡检修复两个流程缺陷

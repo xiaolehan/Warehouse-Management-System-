@@ -9,6 +9,12 @@ export const createPurchaseAPI = (data) => request.post('/business/purchases', d
 export const deletePurchaseAPI = (id) => request.delete(`/business/purchases/${id}`)
 export const voidPurchaseAPI = (id, data) => request.put(`/business/purchases/${id}/void`, data)
 
+export const getProductionPageAPI = (params) => request.get('/business/production/page', { params })
+export const getProductionDetailAPI = (id) => request.get(`/business/production/${id}`)
+export const createProductionAPI = (data) => request.post('/business/production', data)
+export const deleteProductionAPI = (id) => request.delete(`/business/production/${id}`)
+export const voidProductionAPI = (id, data) => request.put(`/business/production/${id}/void`, data)
+
 export const getPurchaseReturnPageAPI = (params) => request.get('/business/purchase-returns/page', { params })
 export const getPurchaseReturnDetailAPI = (id) => request.get(`/business/purchase-returns/${id}`)
 export const createPurchaseReturnAPI = (data) => request.post('/business/purchase-returns', data)

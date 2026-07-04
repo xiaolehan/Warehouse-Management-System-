@@ -393,7 +393,6 @@ const handleConfirm = (row) => {
       throw new Error(res.msg || '确认失败')
     }
     ElMessage.success('已确认入库')
-    await loadSourceSalesOptions()
     loadList()
   }).catch((error) => {
     if (error?.message) {

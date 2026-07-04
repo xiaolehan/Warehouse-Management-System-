@@ -1135,6 +1135,35 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     KEY `idx_prd_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
 
+-- 3.2 生产入库表 (biz_production)  仓储管理员将自产零件存入仓库，库存增加
+CREATE TABLE IF NOT EXISTS `biz_production` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `production_no` VARCHAR(30) NOT NULL COMMENT '生产入库单号',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '入库数量',
+    `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '生产单价(可选,自产零件成本可能未知)',
+    `total_price` DECIMAL(10,2) DEFAULT NULL COMMENT '总金额(单价为空时为空)',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
+    `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
+    `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
+    `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
+    `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_production_no` (`production_no`),
+    KEY `idx_production_goods_id` (`goods_id`),
+    KEY `idx_production_status` (`biz_status`),
+    KEY `idx_production_source_id` (`source_id`),
+    KEY `idx_production_operator_id` (`operator_id`),
+    KEY `idx_production_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产入库表(自产零件入库,库存增加)';
+
 -- =============================================
 -- 七、增量迁移（已部署库升级用，全新库可忽略）
 -- =============================================
