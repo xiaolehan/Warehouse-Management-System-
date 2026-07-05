@@ -32,7 +32,7 @@ public class PickListController {
     }
 
     @PostMapping
-    @RequireAdmin("仅管理员可申请领料")
+    @RequireAdmin("仅仓储管理员可申请领料")
     @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交领料单")
     public Result<Void> create(@Valid @RequestBody PickListSaveDTO dto) {
         pickListService.create(dto);

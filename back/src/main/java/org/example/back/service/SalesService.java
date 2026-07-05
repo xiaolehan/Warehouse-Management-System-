@@ -157,6 +157,7 @@ public class SalesService {
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
+        ensureStockSufficient(goods, dto.getQuantity());
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getSalePrice(), "商品售价为空，请传入销售单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
         CostSnapshot costSnapshot = buildSalesCostSnapshot(goods.getId(), operationTime, goods.getPurchasePrice());
@@ -402,6 +403,20 @@ public class SalesService {
         int rows = baseGoodsMapper.update(null, wrapper);
         if (rows == 0) {
             throw BusinessException.stockInsufficient(msg);
+        }
+    }
+
+    /**
+     * 销售建单时软校验出库数量不超过当前库存，避免建出必然无法确认出库的单据。
+     * 注意：销售单建单不扣库存（待仓储确认出库时 decreaseStock 硬校验），此处仅做早期拦截。
+     */
+    private void ensureStockSufficient(BaseGoods goods, Integer quantity) {
+        if (quantity == null) {
+            return;
+        }
+        int available = goods.getStock() == null ? 0 : goods.getStock();
+        if (quantity > available) {
+            throw BusinessException.validateFail("出库数量超过当前库存(" + available + "件)，请调整数量或先补货");
         }
     }
 

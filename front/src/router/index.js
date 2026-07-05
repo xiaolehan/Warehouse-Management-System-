@@ -92,7 +92,7 @@ const router = createRouter({
           path: "business/pick-list",
           name: "BusinessPickList",
           component: () => import("../views/business/PickListView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
+          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
         },
         {
           path: "business/purchase-request",

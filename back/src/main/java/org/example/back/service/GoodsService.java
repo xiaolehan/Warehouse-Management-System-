@@ -11,8 +11,8 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsVO;
-import org.example.back.vo.OptionVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -74,7 +74,7 @@ public class GoodsService {
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
-    public List<OptionVO> options() {
+    public List<GoodsOptionVO> options() {
         authzService.requireAnyDeptAdminOrSuperAdmin(
             "仅仓储、采购或销售部门管理员可获取商品选项",
             AuthzService.DEPT_WAREHOUSE,
@@ -84,7 +84,7 @@ public class GoodsService {
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getStatus, 1).orderByAsc(BaseGoods::getGoodsName);
         return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new OptionVO(item.getId(), item.getGoodsName()))
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit()))
                 .toList();
     }
 

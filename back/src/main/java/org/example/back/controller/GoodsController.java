@@ -7,6 +7,7 @@ import org.example.back.common.result.Result;
 import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.service.GoodsService;
+import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsVO;
 import org.example.back.vo.OptionVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,7 +28,7 @@ public class GoodsController {
     }
 
     @GetMapping("/options")
-    public Result<List<OptionVO>> options() {
+    public Result<List<GoodsOptionVO>> options() {
         return Result.success(goodsService.options());
     }
 

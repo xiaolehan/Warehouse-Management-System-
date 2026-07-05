@@ -122,14 +122,15 @@
         </el-form-item>
         <el-form-item label="出库商品" prop="goodsId">
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
-            <el-option v-for="item in goodsOptions" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in goodsOptions" :key="item.id" :label="`${item.name}（库存 ${item.stock || 0}${item.unit ? ' ' + item.unit : ''}）`" :value="item.id" />
           </el-select>
+          <div v-if="selectedStock !== null" class="stock-hint">可售数量：{{ selectedStock }} {{ selectedUnit }}</div>
         </el-form-item>
         <el-form-item label="备注" prop="remark">
           <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
         </el-form-item>
         <el-form-item label="出库数量" prop="quantity">
-          <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
+          <el-input-number v-model="dialogForm.quantity" :min="1" :max="selectedStock || undefined" style="width: 100%" />
         </el-form-item>
         <el-form-item label="销售单价" prop="unitPrice">
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
@@ -160,7 +161,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
@@ -194,9 +195,39 @@ const totalAmountText = computed(() => {
   return (qty * price).toFixed(2)
 })
 
+const selectedGoods = computed(() => goodsOptions.value.find((i) => i.id === dialogForm.goodsId) || null)
+const selectedStock = computed(() => (selectedGoods.value ? selectedGoods.value.stock ?? 0 : null))
+const selectedUnit = computed(() => selectedGoods.value?.unit || '')
+
+// 切换商品时若当前出库数量超过可售库存，自动钳制到库存上限（库存为 0 时不钳制，交由校验拦截）
+watch(
+  () => dialogForm.goodsId,
+  () => {
+    const s = selectedStock.value
+    if (s !== null && s >= 1 && Number(dialogForm.quantity) > s) {
+      dialogForm.quantity = s
+    }
+  }
+)
+
 const dialogRules = {
   goodsId: [{ required: true, message: '请选择商品', trigger: 'change' }],
-  quantity: [{ required: true, message: '请输入数量', trigger: 'blur' }],
+  quantity: [
+    { required: true, message: '请输入数量', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        const s = selectedStock.value
+        if (s === 0) {
+          callback(new Error('该商品当前库存为 0，无法销售'))
+        } else if (s !== null && Number(value) > s) {
+          callback(new Error(`出库数量不能超过可售数量(${s})`))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'change'
+    }
+  ],
   unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }],
   salesDate: [{ required: true, message: '请选择销售日期', trigger: 'change' }]
 }
@@ -444,6 +475,13 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.stock-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #e6a23c;
+  line-height: 1.4;
+}
+
 .search-box {
   position: relative;
   margin-bottom: 20px;

@@ -246,13 +246,13 @@ public class PickListService {
     // ============================== 私有辅助 ==============================
 
     private void requirePickListModuleAccess() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅销售/仓储管理员可访问领料模块", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+        authzService.requireDeptAdminOrSuperAdmin(
+                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可访问领料模块");
     }
 
     private void requireApplyAccess() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅销售/仓储管理员可申请领料", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+        authzService.requireDeptAdminOrSuperAdmin(
+                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可申请领料");
     }
 
     private void requireWarehouseIssueAccess() {
