@@ -57,6 +57,10 @@ public final class CodeGenerator {
         return "PRO" + timestampSuffix();
     }
 
+    public static String approvalNo() {
+        return "APR" + timestampSuffix();
+    }
+
     private static String timestampSuffix() {
         return DateUtil.format(new Date(), "yyMMddHHmmss") + RandomUtil.randomNumbers(3);
     }

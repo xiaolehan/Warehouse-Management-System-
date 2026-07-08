@@ -32,6 +32,11 @@ public class PurchaseRequestVO {
 
     private LocalDateTime operationTime;
 
+    /**
+     * 预计到货时间（采购认领时填写）
+     */
+    private LocalDateTime expectedArrivalTime;
+
     private LocalDateTime arriveTime;
 
     private LocalDateTime receiveTime;

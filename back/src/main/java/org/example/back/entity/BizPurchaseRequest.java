@@ -33,6 +33,11 @@ public class BizPurchaseRequest {
     private LocalDateTime operationTime;
 
     /**
+     * 预计到货时间（采购认领时填写）
+     */
+    private LocalDateTime expectedArrivalTime;
+
+    /**
      * 采购到货提交时间（采购管理员提交入库申请时）
      */
     private LocalDateTime arriveTime;

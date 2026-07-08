@@ -56,6 +56,9 @@ public class PickListService {
     @Autowired
     private AuthzService authzService;
 
+    @Autowired
+    private MessageService messageService;
+
     // ============================== 查询 ==============================
 
     public PageResult<PickListVO> page(PickListQueryDTO queryDTO) {
@@ -155,13 +158,22 @@ public class PickListService {
 
         // PICK/SUPPLY 扣减库存（任一缺料整单回滚）；RETURN 回流入库
         boolean isReturn = TYPE_RETURN.equals(entity.getPickType());
-        for (BizPickListDetail detail : details) {
-            if (isReturn) {
-                increaseStock(detail.getGoodsId(), detail.getQuantity());
-            } else {
-                decreaseStock(detail.getGoodsId(), detail.getQuantity(),
-                        "商品[" + detail.getGoodsName() + "]库存不足，发料失败");
+        try {
+            for (BizPickListDetail detail : details) {
+                if (isReturn) {
+                    increaseStock(detail.getGoodsId(), detail.getQuantity());
+                } else {
+                    decreaseStock(detail.getGoodsId(), detail.getQuantity(),
+                            "商品[" + detail.getGoodsName() + "]库存不足，发料失败");
+                }
             }
+        } catch (BusinessException e) {
+            // 缺料失败：反馈销售（REQUIRES_NEW 独立提交，不随本事务回滚），去重避免重试刷屏
+            if (!messageService.hasUnreadBizMessage("pick_list", id)) {
+                messageService.sendPickListFailureToSalesAdmins(
+                        entity.getPickNo(), "发料缺料，库存不足，发料失败", id);
+            }
+            throw e;
         }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
@@ -176,6 +188,8 @@ public class PickListService {
         if (rows != 1) {
             throw BusinessException.validateFail("领料单已被处理，禁止重复发料");
         }
+        // 发料成功：撤销之前可能存在的缺料反馈待办（已不再缺料）
+        messageService.revokeUnreadByBiz("pick_list", id);
     }
 
     // ============================== 确认收货 ==============================
@@ -222,6 +236,9 @@ public class PickListService {
         if (rows != 1) {
             throw BusinessException.validateFail("领料单已被处理，禁止重复驳回");
         }
+        // 驳回反馈销售（REQUIRES_NEW 独立提交）
+        messageService.sendPickListFailureToSalesAdmins(
+                entity.getPickNo(), "仓储驳回领料：" + dto.getReason(), id);
     }
 
     // ============================== 撤销申请 ==============================
@@ -237,6 +254,8 @@ public class PickListService {
         if (entity.getStatus() != STATUS_PENDING) {
             throw BusinessException.validateFail("仅待发料状态可撤销");
         }
+        // 撤销未读的缺料反馈待办（避免悬挂通知）
+        messageService.revokeUnreadByBiz("pick_list", id);
         bizPickListMapper.deleteById(id);
         LambdaQueryWrapper<BizPickListDetail> detailWrapper = new LambdaQueryWrapper<>();
         detailWrapper.eq(BizPickListDetail::getPickListId, id);

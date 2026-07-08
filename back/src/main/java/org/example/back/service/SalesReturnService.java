@@ -64,15 +64,23 @@ public class SalesReturnService {
     private MessageService messageService;
 
     private void requireSalesReturnModuleAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门管理员可访问销售退货模块");
+        // D32：销售部门成员（admin+员工）可建退货单（不动库存，待仓储确认）
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门可访问销售退货模块");
     }
 
     /**
-     * 销售退货读取权限：销售部门管理员可完整管理，仓储部门管理员可查看以便确认入库。
+     * 销售管理员权限（admin）：删除当天退货单收口 admin（D32：员工仅 create+read）。
+     */
+    private void requireSalesReturnAdminOrSuperAdmin() {
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售管理员可执行该操作");
+    }
+
+    /**
+     * 销售退货读取权限：销售部门成员可完整管理，仓储部门成员可查看以便确认入库。
      */
     private void requireSalesReturnReadAccess() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅销售/仓储部门管理员可访问销售退货模块", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅销售/仓储部门可访问销售退货模块", AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
     }
 
     public PageResult<SalesReturnVO> page(SalesReturnQueryDTO queryDTO) {
@@ -178,7 +186,7 @@ public class SalesReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireSalesReturnModuleAccess();
+        requireSalesReturnAdminOrSuperAdmin();
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");
         validateDeleteWindow(entity.getOperationTime(), "客退单");

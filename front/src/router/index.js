@@ -56,25 +56,25 @@ const router = createRouter({
           path: "business/purchase",
           name: "BusinessPurchase",
           component: () => import("../views/business/PurchaseView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['purchase', 'warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['purchase', 'warehouse'] }
         },
         {
           path: "business/purchase-return",
           name: "BusinessPurchaseReturn",
           component: () => import("../views/business/PurchaseReturnView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['purchase', 'warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['purchase', 'warehouse'] }
         },
         {
           path: "business/sales",
           name: "BusinessSales",
           component: () => import("../views/business/SalesView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-return",
           name: "BusinessSalesReturn",
           component: () => import("../views/business/SalesReturnView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['sales', 'warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['sales', 'warehouse'] }
         },
         {
           path: "business/sales-chart",

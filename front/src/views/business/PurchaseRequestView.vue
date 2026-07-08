@@ -47,6 +47,9 @@
         </el-table-column>
         <el-table-column prop="applicantName" label="申请人" width="100" />
         <el-table-column prop="operatorName" label="采购处理人" width="110" />
+        <el-table-column label="预计到货" width="110">
+          <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+        </el-table-column>
         <el-table-column label="申请时间" width="160">
           <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
         </el-table-column>
@@ -157,6 +160,7 @@
         <el-descriptions-item label="采购处理人">{{ viewData.operatorName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="申请时间">{{ formatTime(viewData.createTime) }}</el-descriptions-item>
         <el-descriptions-item label="认领时间">{{ formatTime(viewData.operationTime) }}</el-descriptions-item>
+        <el-descriptions-item label="预计到货">{{ formatDate(viewData.expectedArrivalTime) }}</el-descriptions-item>
         <el-descriptions-item label="到货时间">{{ formatTime(viewData.arriveTime) }}</el-descriptions-item>
         <el-descriptions-item label="入库确认人">{{ viewData.confirmerName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="入库时间">{{ formatTime(viewData.confirmTime) }}</el-descriptions-item>
@@ -197,6 +201,21 @@
       <template #footer>
         <el-button @click="receiveVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitArrive">提交到货</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 认领对话框 -->
+    <el-dialog v-model="processVisible" title="认领采购申请单" width="480px" :close-on-click-modal="false">
+      <el-alert title="认领后状态变为采购中；可填写预计到货时间供仓储参考。" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-form label-width="100px">
+        <el-form-item label="预计到货时间">
+          <el-date-picker v-model="processForm.expectedArrivalTime" type="date" value-format="YYYY-MM-DDTHH:mm:ss"
+            placeholder="选择预计到货日期（可选）" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="processVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitProcess">确认认领</el-button>
       </template>
     </el-dialog>
 
@@ -257,6 +276,9 @@ const receiveForm = reactive({ id: null, items: [] })
 const rejectVisible = ref(false)
 const rejectForm = reactive({ id: null, reason: '' })
 
+const processVisible = ref(false)
+const processForm = reactive({ id: null, expectedArrivalTime: null })
+
 const isApplicant = (row) => row.applicantName && row.applicantName === userStore.realName
 
 const statusTagType = (status) => ({
@@ -264,6 +286,7 @@ const statusTagType = (status) => ({
 }[status] || 'info')
 
 const formatTime = (t) => t ? String(t).replace('T', ' ').slice(0, 19) : '—'
+const formatDate = (t) => t ? String(t).replace('T', ' ').slice(0, 10) : '—'
 
 const loadList = async () => {
   loading.value = true
@@ -390,13 +413,24 @@ const handleView = async (row) => {
 }
 
 const handleProcess = (row) => {
-  ElMessageBox.confirm('确认认领该采购申请单？认领后状态变为采购中。', '认领', { type: 'warning' })
-    .then(async () => {
-      const res = await processPurchaseRequestAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '认领失败')
-      ElMessage.success('已认领，状态变为采购中')
-      loadList()
-    }).catch(() => {})
+  processForm.id = row.id
+  processForm.expectedArrivalTime = null
+  processVisible.value = true
+}
+
+const submitProcess = async () => {
+  submitting.value = true
+  try {
+    const res = await processPurchaseRequestAPI(processForm.id, { expectedArrivalTime: processForm.expectedArrivalTime })
+    if (res.code !== 200) throw new Error(res.msg || '认领失败')
+    ElMessage.success('已认领，状态变为采购中')
+    processVisible.value = false
+    loadList()
+  } catch (e) {
+    ElMessage.error(e.message || '认领失败')
+  } finally {
+    submitting.value = false
+  }
 }
 
 const handleArrive = async (row) => {

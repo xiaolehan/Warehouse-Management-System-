@@ -5,6 +5,109 @@
 
 ---
 
+## 会话 9 — 2026-07-08
+
+### 六项需求改进方案规划
+
+- **触发：** 用户 `/planning-with-files:plan` 提 6 项需求（销售员商品销售/退货、价格偏离超管审批、采购拒绝备注、采购申请预计到货+认领人、采购员进退货、领料失败反馈销售）。
+- **session-catchup：** 检出 203 条未同步消息——会话 8（commit `d50849a`）未入档，已补登（见下）。
+- **调研：** 4 个并行 agent 全量扫描代码库，逐项对照现状，结论写入 `findings.md`「阶段 5 调研」。
+
+**需求-现状汇总：**
+
+| # | 需求 | 现状 | 落点 |
+|---|---|---|---|
+| 1 | 销售员商品销售+退货 | ✅ admin 已具备 | 阶段 8（员工放开） |
+| 2 | 价格偏离->超管审批->仓库确认 | 🆕 新增 | 阶段 5（主工作量） |
+| 3 | 采购拒绝+备注 | ✅ 已具备 | E2E 复核 |
+| 4 | 预计到货+认领人 | ⚠️ 认领人已有/预计到货缺失 | 阶段 6 |
+| 5 | 采购员进退货 | ✅ admin 已具备 | 阶段 8（员工放开） |
+| 6 | 领料失败反馈销售 | ❌ 缺失 | 阶段 7 |
+
+**决策（AskUserQuestion 4 问，用户全采纳推荐）：**
+- D29 价格偏离审批复用 `BizApprovalOrder` 框架（新 action `price_deviation_confirm` + 超管路由 + 审批通过解锁仓储 confirm）
+- D30 偏离阈值比例 ±5%（常量 `PRICE_DEVIATION_THRESHOLD=0.05`，后续可改配置表）
+- D31 仅销售单，销售退货沿用原销售单已审批价不重复审批
+- D32 销售/采购"人员"含普通员工（员工 create+read，库存变更 confirm 保持仓储收口，兼容 3.7）
+
+**产出：**
+- `findings.md` 加「阶段 5 调研」（六项需求逐项 gap 分析 + file:line）
+- `task_plan.md` 加阶段 5–8（价格偏离审批 / 预计到货 / 领料反馈 / 员工权限）+ 决策 D29–D32 + 总体进度更新
+- `progress.md` 补登会话 8（catchup）+ 本会话
+
+**下一步：** 待用户确认阶段优先级与开工顺序。建议：阶段 6/7（小快）先跑通验证链路，阶段 5（主工作量）单独重点攻坚，阶段 8（权限放开）最后做并全量回归。需求一/三/五已具备部分随阶段 8 一并 E2E 复核。
+
+### 阶段 6 实现：采购申请预计到货时间（✅ 完成 - 2026-07-08）
+
+- **后端：** db.sql ALTER 7.7 加 `expected_arrival_time DATETIME`；`BizPurchaseRequest`/`PurchaseRequestVO` 加 `expectedArrivalTime`；新增 `PurchaseRequestProcessDTO{expectedArrivalTime}`；`process()` 写入 ETA（`dto==null?null:dto.getExpectedArrivalTime()`）；Controller `process` 加 `@RequestBody` + `@Valid`；`toVO` 回填。`./mvnw compile` exit 0。
+- **前端：** `api/purchaseRequest.js` `processPurchaseRequestAPI(id,data)` 加 data 参；`PurchaseRequestView.vue` 认领由 ElMessageBox.confirm 改为对话框（el-date-picker type=date，value-format `YYYY-MM-DDTHH:mm:ss`，ISO 对齐后端默认 Jackson LocalDateTime 反序列化）+ 详情加"预计到货"+ 列表加"预计到货"列 + `formatDate` 助手。
+- **E2E（全通过）：** 认领带 ETA（status=2, operator=采购管理员, ETA=`2026-07-20T10:00:00`）/ 认领不带 ETA（ETA=None，可选字段）/ warehouse admin 认领 403"仅采购管理员可处理/入库/驳回采购申请单"状态不变 / 清理 remaining=0。Vite 代理 E2E 确认 VO 含 `expectedArrivalTime` 字段、存量数据 null 兼容。
+- **踩坑：** (1) Edit 匹配 `formatTime` 末尾空值标记是 em-dash（U+2014 `-`）非 hyphen，需用准确字符；(2) `run_in_background` 的 bash 不继承前台 `cd`，启动 backend/vite 需显式 `cd /abs/path &&`。
+
+### 阶段 7 实现：生产领料失败反馈销售（✅ 完成 - 2026-07-08）
+
+- **后端：**
+  - `MessageService` 加 `sendPickListFailureToSalesAdmins(pickNo, reason, pickListId)`（`@Transactional(REQUIRES_NEW)`--发料缺料事务将回滚，反馈需独立提交以免丢失；biz_type=`pick_list` 对齐 D21）+ `hasUnreadBizMessage(bizType, bizId)` 去重助手。引入 `Propagation`/`Transactional` import。
+  - `PickListService` 注入 `MessageService`：`reject()` 成功后发"仓储驳回领料：{reason}"反馈；`issue()` 用 try/catch 包裹 decreaseStock 循环，缺料 catch 时发"发料缺料，库存不足，发料失败"反馈（去重，避免重试刷屏），re-throw 原 BusinessException 保持 400；`issue()` 成功后 `revokeUnreadByBiz("pick_list", id)` 清旧缺料待办；`delete()` 同撤。
+- **前端：** 修 `PickListView.vue:34` 新增领料按钮 `deptCodes:['sales','warehouse']`->`['warehouse']`（d50849a 收口仓库遗留不一致，router/menu 已是 warehouse-only，仅按钮漏改）。销售侧复用 sys_message 消息中心，无需专属 UI。
+- **E2E（全通过）：** 驳回->销售收 1 未读 / 缺料 issue 400+消息存活回滚+库存不变 500 / 重复缺料去重（数不增）/ 删除撤消息（数->0）/ sales admin 驳回 403 状态不变 / 残留 0。Vite proxy pick-list page code=200，PickListView chunk 重建。
+- **踩坑：** JDT IDE 诊断报 phantom 语法错误（misplaced construct/record expected/unused import），`./mvnw clean compile` exit 0 证实为 CLAUDE.md 记载的 JDT stale/desync 误报，以 javac 为准。
+- **设计取舍：** 选广播销售 admin（非 sourceSalesId 定向销售员），避免 PickListService 引入 BizSalesMapper 跨模块耦合，追溯简单；sourceSalesId 仍保留在领料单上供销售回溯关联。
+
+### 阶段 5 实现：销售价格偏离超管审批（✅ 完成 - 2026-07-08）
+
+**主工作量阶段。** 复用 `BizApprovalOrder` 框架实现 D29/D30/D31：销售价偏离标准售价 >5% 自动建超管审批单，仓储 confirm 前置校验审批通过。
+
+- **后端：**
+  - `SalesService`：常量 `PRICE_DEVIATION_THRESHOLD=0.05` + `PRICE_DEVIATION_APPROVAL_ACTION`；`create()` 调 `isPriceDeviation` 探测，偏离则 `createPriceDeviationApproval` 建 BizApprovalOrder（action=price_deviation_confirm, status=1）+ 发消息给超管；`confirm()` 加 `ensurePriceDeviationApproved` 前置校验（偏离订单需 status=2 审批单）；`delete()/voidDocument()` 加 `revokePriceDeviationApprovals`（pending 置 status=3）。4 个私有助手（isPriceDeviated/createPriceDeviationApproval/ensurePriceDeviationApproved/revokePriceDeviationApprovals）。
+  - `ApprovalService`：常量 `ACTION_PRICE_DEVIATION_CONFIRM`；`validateAction` 放行新 action；`approve/reject` 改用 `peekPendingOrder`(预览)+`requireApproverAccess`(按 action 路由：price_deviation_confirm 限 `requireSuperAdmin`，其余仍仓储)；approve 时该 action 跳过 `executeVoidByApproval`（仅置 status=2，不执行业务动作）。
+  - `MessageService.sendPriceDeviationToSuperAdmin`（按 role=salesadmin 单点投递，biz_type=sales 对齐 D21）。
+  - `GoodsOptionVO` 加 `salePrice`；`GoodsService.options` 5 参构造填充；`CodeGenerator.approvalNo()`。
+  - DB：`biz_approval_order.request_action` VARCHAR(20)->VARCHAR(30)（ALTER 7.8，`price_deviation_confirm` 24 字符超限）。
+- **前端：** SalesView 建单对话框展示标准售价 + 实时偏离 % 提示（>5% 红字"需超管审批"）；超管菜单加"价格偏离审批"入口（复用 VoidApprovalView，后端按 action 路由超管）；VoidApprovalView actionOptions 加新 action + 成功提示通用化。
+- **E2E（全通过）：** 正常价无审批 confirm 200（库存 500->498）/ 偏离价自动建审批+超管收消息+仓储 confirm 400"需超管审批" / 超管通过后 confirm 200 confirmStatus=2 / warehouse admin 审批 403"价格偏离审批需超级管理员处理"状态不变 / 删除 pending 偏离单审批自动撤销 status=3 / 残留 0 库存恢复 500。
+- **踩坑：** (1) `request_action` VARCHAR(20) 容不下 `price_deviation_confirm`(24)，建单 500 MysqlDataTruncation -> ALTER 扩至 VARCHAR(30)；(2) E2E Test 3 confirm 400 实为 `@PreventDuplicateSubmit` 防抖窗口（被拦截 confirm 与 approve 后 confirm 间隔 < 窗口），脚本加 `sleep 3` 越窗口后通过，非业务 bug（真实场景审批跨人耗时）。
+
+### 阶段 8 实现：销售/采购员工建单权限放开（✅ 完成 - 2026-07-08）
+
+**D32 落地：员工可 create+read+到货+确认退货成功（不动库存），delete/void/confirm 保持 admin/仓储。**
+
+- **后端 `AuthzService`：** 加 `isDeptMember`/`hasDeptMemberOrSuperAdminAccess`/`requireDeptMemberOrSuperAdmin`/`requireAnyDeptMemberOrSuperAdmin`（admin OR employee 且 dept 匹配，超管全通）。
+- **4 个业务 Service：** `requireXxxModuleAccess`->`requireDeptMemberOrSuperAdmin`（create+读+到货/确认退货成功）；新增 `requireXxxAdminOrSuperAdmin`（delete 收口 admin）；读权限 `requireAnyDeptMemberOrSuperAdmin`。confirm/confirmReceive/confirmOut/void-execution 保持仓储/admin 不变（3.7 职责分离不破坏）。
+- **前端：** 4 业务路由 `roles:['admin']`->`['admin','employee']`；4 视图新建按钮 + PurchaseView 到货 + PurchaseReturnView 确认退货成功 -> `['admin','employee']`（删除/作废/确认入库出库保持 admin/warehouse）；layout 加 `isSalesEmployee`/`isPurchaseEmployee`/`isBizEmployee` computed + 员工菜单块 + `showSidebar` 放开业务部门员工。
+- **E2E（全通过）：** sales_employee 建销售单 200/读列表 200/删除 403"仅销售管理员可执行该操作"/admin 删除 200；purchase_employee 建进货 200/到货 200/删除 403；warehouse confirmReceive 200 库存 500->505(+5)/purchase_employee confirmReceive 403"仅仓储管理员可确认进货入库"；Vite 代理员工登录+列表 200。清理残留 0 库存恢复 500。
+- **踩坑：** (1) E2E 清理误用 `biz_purchase_detail`（biz_purchase 单表无明细表）报 ERROR 1146，改直接删 biz_purchase + 反向回冲已确认单库存；(2) 员工原无侧边栏（`showSidebar=!isEmployee`），需 `|| isBizEmployee` 放开 + 专属菜单块。
+
+### 阶段 5–8 全部完成总结（2026-07-08）
+
+六项需求改进全部落地并 E2E 验收通过，测试数据已清理，库存恢复。系统状态：后端 8080 / 前端 5173 / MySQL 3306 均运行中。决策 D29–D32 已写入 task_plan.md。需求一/三/五（admin 已具备部分）随阶段 8 一并 E2E 复核无回归。下一步待用户验收或启动阶段 4（库存治理与追溯）。
+
+### 补丁：销售/采购员工进页面加载商品选项 403（阶段 8 遗漏修复 - 2026-07-08）
+
+- **现象：** 用户用 sales_employee/purchase_employee 登录后点"商品销售"/"商品进货"，弹"仅仓储、采购或销售部门管理员可获取商品选项"。
+- **根因：** 阶段 8 放开了员工 create+read 权限，但漏了建单辅助读接口 `GoodsService.options()`（`/base/goods/options`，SalesView/PurchaseView 的 onMounted 调 `loadGoodsOptions`）。它仍用 `requireAnyDeptAdminOrSuperAdmin`（admin-only），员工进页面即 403。典型"读权限与写权限分开，改一处易漏另一处"--CLAUDE.md 验证习惯已记载的坑，本轮 E2E 只测了员工直调 create（填 goodsId）成功，没测员工**实际进页面**走 onMounted 全链路，故未发现。
+- **修复：** `GoodsService.options()` 权限 `requireAnyDeptAdminOrSuperAdmin`->`requireAnyDeptMemberOrSuperAdmin`，文案去"管理员"。退货单可退选项接口（`SalesService.returnableOptions`/`PurchaseService.returnableOptions`）阶段 8 已随 `requireXxxModuleAccess` 改 member 级，无需再改。
+- **验证（员工实际进页面 onMounted 全链路，后端 + Vite 代理双跑）：**
+  - sales_employee：goods/options 200(15) / sales/page 200(22) / sales/options/returnable 200(20) ✅
+  - purchase_employee：goods/options 200(15) / purchases/page 200(21) / purchases/options/returnable 200(20) ✅
+  - 回归：sales_admin/warehouse_admin goods/options 200 ✅；hr_admin goods/options 403"仅仓储、采购或销售部门可获取商品选项"（权限边界正确）✅
+- **教训：** 权限放开 E2E 不能只测直调写 API，必须测目标角色**实际进页面**触发 onMounted 的全部读接口（goods/options、returnableOptions、page、getById），尤其建单辅助接口。本轮补齐该覆盖。
+
+---
+
+## 会话 8 — 2026-07-04（catchup 补登，原未入档）
+
+### 生产领料收口仓库 + 销售单可售数量（commit d50849a）
+
+- **触发：** 用户反馈（1）销售 admin 不应见"生产领料"功能，只仓库管理员有即可；（2）商品销售新增销售单时应能看到商品库存量/可售数量。
+- **改动（commit `d50849a`，9 文件 +91/-15）：**
+  - 后端：新增 `GoodsOptionVO`（含 stock/unit）；`GoodsService.options` 返回胖选项；`SalesService` 建单加库存兜底校验；`PickListController`/`PickListService` 权限收口仓库。
+  - 前端：`layout/index.vue` 销售菜单删"生产领料"入口（-1）；`router/index.js` pick-list deptCodes 去 sales；`SalesView.vue` 商品选择展示可售数量、出库数量限上限（+46）。
+- **遗留：** `PickListView.vue:34` 组件内"新增领料"按钮判定仍含 sales（与后端仓库专属不一致），留待阶段 7 顺手修（K3）。
+- **注：** 本会话原未写入 progress.md，会话 9 session-catchup 检出后补登。
+
+---
+
 ## 会话 7 — 2026-07-04
 
 ### 阶段 3.7：商品进货/商品退货增加确认环节

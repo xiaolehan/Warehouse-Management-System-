@@ -116,7 +116,8 @@ const bizTypeOptions = [
 
 const actionOptions = [
   { label: '仅作废', value: 'void' },
-  { label: '作废并红冲', value: 'void_red' }
+  { label: '作废并红冲', value: 'void_red' },
+  { label: '价格偏离确认', value: 'price_deviation_confirm' }
 ]
 
 const searchForm = reactive({
@@ -221,7 +222,7 @@ const handleApprove = async (row) => {
     if (res.code !== 200) {
       throw new Error(res.msg || '审批失败')
     }
-    ElMessage.success('审批通过，已执行作废流程')
+    ElMessage.success('审批通过')
     await loadList()
   } catch (error) {
     if (error?.message && error.message !== 'cancel') {

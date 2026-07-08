@@ -8,6 +8,7 @@ import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.PurchaseRequestDetailDTO;
+import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestQueryDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
 import org.example.back.dto.PurchaseRequestRejectDTO;
@@ -154,7 +155,7 @@ public class PurchaseRequestService {
     // ============================== 采购认领（转采购中） ==============================
 
     @Transactional(rollbackFor = Exception.class)
-    public void process(Long id) {
+    public void process(Long id, PurchaseRequestProcessDTO dto) {
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PENDING) {
@@ -168,7 +169,8 @@ public class PurchaseRequestService {
                 .set(BizPurchaseRequest::getStatus, STATUS_PURCHASING)
                 .set(BizPurchaseRequest::getOperatorId, loginUser.getId())
                 .set(BizPurchaseRequest::getOperatorName, loginUser.getRealName())
-                .set(BizPurchaseRequest::getOperationTime, LocalDateTime.now());
+                .set(BizPurchaseRequest::getOperationTime, LocalDateTime.now())
+                .set(BizPurchaseRequest::getExpectedArrivalTime, dto == null ? null : dto.getExpectedArrivalTime());
         int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单已被处理，禁止重复认领");
@@ -416,6 +418,7 @@ public class PurchaseRequestService {
         vo.setOperatorId(entity.getOperatorId());
         vo.setOperatorName(entity.getOperatorName());
         vo.setOperationTime(entity.getOperationTime());
+        vo.setExpectedArrivalTime(entity.getExpectedArrivalTime());
         vo.setArriveTime(entity.getArriveTime());
         vo.setReceiveTime(entity.getReceiveTime());
         vo.setConfirmerId(entity.getConfirmerId());

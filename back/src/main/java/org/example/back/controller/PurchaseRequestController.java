@@ -6,6 +6,7 @@ import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
+import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestQueryDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
 import org.example.back.dto.PurchaseRequestRejectDTO;
@@ -57,8 +58,8 @@ public class PurchaseRequestController {
     @RequireAdmin("仅采购管理员可认领采购申请单")
     @AuditLog(module = "采购申请", action = "认领", targetType = "采购申请单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交认领请求")
-    public Result<Void> process(@PathVariable Long id) {
-        purchaseRequestService.process(id);
+    public Result<Void> process(@PathVariable Long id, @Valid @RequestBody PurchaseRequestProcessDTO dto) {
+        purchaseRequestService.process(id, dto);
         return Result.success();
     }
 

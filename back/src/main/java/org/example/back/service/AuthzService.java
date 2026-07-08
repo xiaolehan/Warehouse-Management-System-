@@ -78,6 +78,38 @@ public class AuthzService {
         return isAdmin() && normalizeDeptCode(deptCode).equals(currentDeptCode());
     }
 
+    /**
+     * 部门成员（admin 或 employee，且 dept 匹配）。用于 D32：员工可 create+read 业务单据（不动库存）。
+     */
+    public boolean isDeptMember(String deptCode) {
+        return (isAdmin() || isEmployee()) && normalizeDeptCode(deptCode).equals(currentDeptCode());
+    }
+
+    public boolean hasDeptMemberOrSuperAdminAccess(String deptCode) {
+        return isSuperAdmin() || isDeptMember(deptCode);
+    }
+
+    public void requireDeptMemberOrSuperAdmin(String deptCode, String message) {
+        if (!hasDeptMemberOrSuperAdminAccess(deptCode)) {
+            throw BusinessException.forbidden(message);
+        }
+    }
+
+    public void requireAnyDeptMemberOrSuperAdmin(Collection<String> deptCodes, String message) {
+        if (isSuperAdmin()) {
+            return;
+        }
+        String currentDeptCode = currentDeptCode();
+        boolean matched = deptCodes.stream().map(this::normalizeDeptCode).anyMatch(currentDeptCode::equals);
+        if (!(isAdmin() || isEmployee()) || !matched) {
+            throw BusinessException.forbidden(message);
+        }
+    }
+
+    public void requireAnyDeptMemberOrSuperAdmin(String message, String... deptCodes) {
+        requireAnyDeptMemberOrSuperAdmin(Arrays.asList(deptCodes), message);
+    }
+
     public boolean isHrAdmin() {
         return isDeptAdmin(DEPT_HR);
     }

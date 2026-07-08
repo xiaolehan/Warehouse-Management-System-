@@ -457,7 +457,7 @@ CREATE TABLE `biz_approval_order` (
     `biz_type` VARCHAR(30) NOT NULL COMMENT '业务类型: purchase/purchase_return/sales/sales_return',
     `biz_id` BIGINT NOT NULL COMMENT '业务单据ID',
     `biz_no` VARCHAR(30) DEFAULT NULL COMMENT '业务单号(冗余)',
-    `request_action` VARCHAR(20) NOT NULL COMMENT '申请动作: void/void_red',
+    `request_action` VARCHAR(30) NOT NULL COMMENT '申请动作: void/void_red/price_deviation_confirm',
     `request_reason` VARCHAR(200) DEFAULT NULL COMMENT '申请原因',
     `before_biz_status` TINYINT DEFAULT NULL COMMENT '审批前业务状态快照',
     `before_biz_snapshot` LONGTEXT COMMENT '审批前业务详情快照(JSON)',
@@ -1119,6 +1119,7 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request` (
     `operator_id` BIGINT DEFAULT NULL COMMENT '采购处理人ID(采购管理员)',
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '采购处理人姓名(冗余字段)',
     `operation_time` DATETIME DEFAULT NULL COMMENT '认领(转采购中)时间',
+    `expected_arrival_time` DATETIME DEFAULT NULL COMMENT '预计到货时间(采购认领时填写)',
     `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货提交时间',
     `receive_time` DATETIME DEFAULT NULL COMMENT '入库完成时间',
     `confirmer_id` BIGINT DEFAULT NULL COMMENT '入库确认人ID(仓储管理员)',
@@ -1214,6 +1215,14 @@ ALTER TABLE `biz_purchase_request`
 -- 7.4 biz_purchase_request_detail 增加到货数量字段
 ALTER TABLE `biz_purchase_request_detail`
     ADD COLUMN `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(采购到货提交时填写,确认入库按此数量加库存)' AFTER `quantity`;
+
+-- 7.7 biz_purchase_request 增加预计到货时间字段（采购认领时填写）
+ALTER TABLE `biz_purchase_request`
+    ADD COLUMN `expected_arrival_time` DATETIME DEFAULT NULL COMMENT '预计到货时间(采购认领时填写)' AFTER `operation_time`;
+
+-- 7.8 biz_approval_order 扩展 request_action 以容纳 price_deviation_confirm（销售价偏离超管审批）
+ALTER TABLE `biz_approval_order`
+    MODIFY COLUMN `request_action` VARCHAR(30) NOT NULL COMMENT '申请动作: void/void_red/price_deviation_confirm';
 
 -- 7.5 biz_purchase 增加入库确认字段（采购进货改为到货确认+仓储确认入库范式）
 -- 存量数据默认 confirm_status=3（已入库），保持兼容

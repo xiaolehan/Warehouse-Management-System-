@@ -15,6 +15,8 @@ import org.example.back.mapper.SysUserMapper;
 import org.example.back.vo.MessageVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -283,6 +285,39 @@ public class MessageService {
     }
 
     /**
+     * 是否存在未读的业务待办消息（用于缺料反馈去重，避免重试刷屏）。
+     */
+    public boolean hasUnreadBizMessage(String bizType, Long bizId) {
+        if (!StringUtils.hasText(bizType) || bizId == null) {
+            return false;
+        }
+        LambdaQueryWrapper<SysMessage> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysMessage::getBizType, bizType)
+                .eq(SysMessage::getBizId, bizId)
+                .eq(SysMessage::getIsRead, MESSAGE_UNREAD);
+        return sysMessageMapper.selectCount(wrapper) > 0;
+    }
+
+    /**
+     * 生产领料失败（驳回/缺料）反馈销售管理员（绑 biz_type=pick_list，对齐 D21 范式）。
+     * REQUIRES_NEW：发料缺料场景下领料事务将回滚，反馈消息需独立提交以免丢失。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void sendPickListFailureToSalesAdmins(String pickNo, String reason, Long pickListId) {
+        Long salesDeptId = resolveDeptIdByCode(AuthzService.DEPT_SALES);
+        if (salesDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                salesDeptId,
+                "生产领料失败反馈",
+                String.format(Locale.ROOT, "领料单 %s 反馈失败：%s。请关注相关订单履约。", pickNo, reason),
+                "pick_list",
+                pickListId
+        );
+    }
+
+    /**
      * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
      */
     public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName, Long requestId) {
@@ -368,6 +403,35 @@ public class MessageService {
                 "purchase_return",
                 returnId
         );
+    }
+
+    /**
+     * 销售价偏离标准售价超阈值时通知超级管理员审批（绑 biz_type=sales，对齐 D21 范式）。
+     * 超管 dept_id 为空，不能走部门广播，按 role=salesadmin 单点投递。
+     */
+    public void sendPriceDeviationToSuperAdmin(String salesNo, String operatorName, java.math.BigDecimal deviationPct, Long salesId) {
+        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysUser::getRole, AuthzService.ROLE_SUPERADMIN)
+                .eq(SysUser::getStatus, USER_STATUS_ENABLED)
+                .last("LIMIT 1");
+        SysUser superadmin = sysUserMapper.selectOne(wrapper);
+        if (superadmin == null) {
+            return;
+        }
+        String operator = StringUtils.hasText(operatorName) ? operatorName : "销售管理员";
+        long pct = deviationPct == null ? 0L : deviationPct.multiply(java.math.BigDecimal.valueOf(100))
+                .setScale(0, java.math.RoundingMode.HALF_UP).longValue();
+        SysMessage message = new SysMessage();
+        message.setRecipientUserId(superadmin.getId());
+        message.setRecipientDeptId(superadmin.getDeptId());
+        message.setTitle("待审批价格偏离销售单");
+        message.setContent(String.format(Locale.ROOT,
+                "销售单 %s 由 %s 提交，销售价偏离标准售价 %d%%，超 5%% 阈值，请审批后仓储方可确认出库。",
+                salesNo, operator, pct));
+        message.setIsRead(MESSAGE_UNREAD);
+        message.setBizType("sales");
+        message.setBizId(salesId);
+        sysMessageMapper.insert(message);
     }
 
     private Long resolveDeptIdByCode(String deptCode) {

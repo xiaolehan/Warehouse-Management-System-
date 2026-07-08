@@ -50,6 +50,7 @@ public class ApprovalService {
 
     private static final String ACTION_VOID = "void";
     private static final String ACTION_VOID_RED = "void_red";
+    private static final String ACTION_PRICE_DEVIATION_CONFIRM = "price_deviation_confirm";
 
     private static final String ROLE_ADMIN = "admin";
     private static final int APPROVAL_TEXT_MAX_LEN = 200;
@@ -168,14 +169,18 @@ public class ApprovalService {
 
     @Transactional(rollbackFor = Exception.class)
     public void approve(Long id, ApprovalDecisionDTO dto) {
-        LoginResponse.UserInfoVO approver = requireApprovalModuleAccess();
+        BizApprovalOrder peeked = peekPendingOrder(id);
+        LoginResponse.UserInfoVO approver = requireApproverAccess(peeked.getRequestAction());
         BizApprovalOrder entity = claimPendingOrder(id, approver);
         BizDocumentMeta beforeMeta = resolveBizMeta(entity.getBizType(), entity.getBizId());
 
         entity.setBeforeBizStatus(beforeMeta.bizStatus());
         entity.setBeforeBizSnapshot(beforeMeta.snapshot());
 
-        executeVoidByApproval(entity);
+        // 价格偏离审批仅标记通过，不执行业务动作（解锁仓储 confirm 由销售确认出库时校验）
+        if (!ACTION_PRICE_DEVIATION_CONFIRM.equals(entity.getRequestAction())) {
+            executeVoidByApproval(entity);
+        }
         BizDocumentMeta afterMeta = resolveBizMeta(entity.getBizType(), entity.getBizId());
 
         finalizeApprove(entity.getId(), dto, beforeMeta, afterMeta);
@@ -183,7 +188,8 @@ public class ApprovalService {
 
     @Transactional(rollbackFor = Exception.class)
     public void reject(Long id, ApprovalDecisionDTO dto) {
-        LoginResponse.UserInfoVO approver = requireApprovalModuleAccess();
+        BizApprovalOrder peeked = peekPendingOrder(id);
+        LoginResponse.UserInfoVO approver = requireApproverAccess(peeked.getRequestAction());
         BizApprovalOrder entity = claimPendingOrder(id, approver);
         BizDocumentMeta currentMeta = resolveBizMeta(entity.getBizType(), entity.getBizId());
 
@@ -191,6 +197,33 @@ public class ApprovalService {
         entity.setBeforeBizSnapshot(currentMeta.snapshot());
 
         finalizeReject(entity.getId(), dto, currentMeta);
+    }
+
+    /**
+     * 预览待审批单（仅读取+状态校验，不认领），用于按动作决定审批人权限。
+     */
+    private BizApprovalOrder peekPendingOrder(Long id) {
+        BizApprovalOrder entity = bizApprovalOrderMapper.selectById(id);
+        if (entity == null) {
+            throw BusinessException.notFound("审批单不存在");
+        }
+        if (!Integer.valueOf(STATUS_PENDING).equals(entity.getStatus())) {
+            throw BusinessException.validateFail("审批单已处理，不能重复操作");
+        }
+        return entity;
+    }
+
+    /**
+     * 按申请动作决定审批人权限：价格偏离审批需超管，作废审批限仓储管理员。
+     */
+    private LoginResponse.UserInfoVO requireApproverAccess(String requestAction) {
+        LoginResponse.UserInfoVO user = requireLoginUser();
+        if (ACTION_PRICE_DEVIATION_CONFIRM.equals(requestAction)) {
+            authzService.requireSuperAdmin("价格偏离审批需超级管理员处理");
+            return user;
+        }
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可执行审批操作");
+        return user;
     }
 
     private void executeVoidByApproval(BizApprovalOrder entity) {
@@ -372,7 +405,7 @@ public class ApprovalService {
     }
 
     private void validateAction(String action) {
-        if (ACTION_VOID.equals(action) || ACTION_VOID_RED.equals(action)) {
+        if (ACTION_VOID.equals(action) || ACTION_VOID_RED.equals(action) || ACTION_PRICE_DEVIATION_CONFIRM.equals(action)) {
             return;
         }
         throw BusinessException.validateFail("不支持的申请动作: " + action);

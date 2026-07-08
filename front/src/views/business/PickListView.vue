@@ -31,7 +31,7 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
           <el-button @click="resetSearch">重置</el-button>
-          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['sales', 'warehouse'] }" @click="handleAdd">新增领料</el-button>
+          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleAdd">新增领料</el-button>
         </el-form-item>
       </el-form>
 

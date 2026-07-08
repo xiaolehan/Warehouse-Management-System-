@@ -25,7 +25,7 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin'], deptCodes: ['sales'] }" type="warning" :icon="Plus" @click="handleAdd">新建销售退货单</el-button>
+            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }" type="warning" :icon="Plus" @click="handleAdd">新建销售退货单</el-button>
           </el-form-item>
         </el-form>
       </div>

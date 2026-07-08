@@ -71,15 +71,23 @@ public class PurchaseService {
     private MessageService messageService;
 
     private void requirePurchaseModuleAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购部门管理员可访问进货模块");
+        // D32：采购部门成员（admin+员工）可建进货/到货提交（不动库存，待仓储确认入库）
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购部门可访问进货模块");
+    }
+
+    /**
+     * 采购管理员权限（admin）：删除当天进货单收口 admin（D32：员工仅 create+read+到货）。
+     */
+    private void requirePurchaseAdminOrSuperAdmin() {
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购管理员可执行该操作");
     }
 
     /**
      * 读权限：采购 + 仓储 均可查看进货单（仓储需查看待确认入库的单据）。
      */
     private void requirePurchaseReadAccess() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅采购/仓储部门管理员可访问进货模块", AuthzService.DEPT_PURCHASE, AuthzService.DEPT_WAREHOUSE);
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅采购/仓储部门可访问进货模块", AuthzService.DEPT_PURCHASE, AuthzService.DEPT_WAREHOUSE);
     }
 
     public PageResult<PurchaseVO> page(PurchaseQueryDTO queryDTO) {
@@ -281,7 +289,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requirePurchaseModuleAccess();
+        requirePurchaseAdminOrSuperAdmin();
         BizPurchase purchase = requirePurchase(id);
         ensureNormalStatus(purchase.getBizStatus(), "进货单");
         validateDeleteWindow(purchase.getOperationTime(), "进货单");

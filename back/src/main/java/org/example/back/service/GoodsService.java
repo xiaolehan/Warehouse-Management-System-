@@ -75,8 +75,9 @@ public class GoodsService {
     }
 
     public List<GoodsOptionVO> options() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-            "仅仓储、采购或销售部门管理员可获取商品选项",
+        // D32：销售/采购员工建单时需加载商品下拉，放开部门成员（admin+员工）
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+            "仅仓储、采购或销售部门可获取商品选项",
             AuthzService.DEPT_WAREHOUSE,
             AuthzService.DEPT_PURCHASE,
             AuthzService.DEPT_SALES
@@ -84,7 +85,7 @@ public class GoodsService {
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getStatus, 1).orderByAsc(BaseGoods::getGoodsName);
         return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit()))
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSalePrice()))
                 .toList();
     }
 

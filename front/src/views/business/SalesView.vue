@@ -25,7 +25,7 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin'], deptCodes: ['sales'] }" type="success" :icon="Plus" @click="handleAdd">新建销售单</el-button>
+            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }" type="success" :icon="Plus" @click="handleAdd">新建销售单</el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -124,7 +124,7 @@
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
             <el-option v-for="item in goodsOptions" :key="item.id" :label="`${item.name}（库存 ${item.stock || 0}${item.unit ? ' ' + item.unit : ''}）`" :value="item.id" />
           </el-select>
-          <div v-if="selectedStock !== null" class="stock-hint">可售数量：{{ selectedStock }} {{ selectedUnit }}</div>
+          <div v-if="selectedStock !== null" class="stock-hint">可售数量：{{ selectedStock }} {{ selectedUnit }}<span v-if="selectedSalePrice"> ｜ 标准售价：¥{{ selectedSalePrice }}</span></div>
         </el-form-item>
         <el-form-item label="备注" prop="remark">
           <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
@@ -134,6 +134,7 @@
         </el-form-item>
         <el-form-item label="销售单价" prop="unitPrice">
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
+          <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 5% 阈值，提交后将需超管审批后仓储方可确认出库</div>
         </el-form-item>
         <el-form-item label="销售总额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
@@ -198,6 +199,15 @@ const totalAmountText = computed(() => {
 const selectedGoods = computed(() => goodsOptions.value.find((i) => i.id === dialogForm.goodsId) || null)
 const selectedStock = computed(() => (selectedGoods.value ? selectedGoods.value.stock ?? 0 : null))
 const selectedUnit = computed(() => selectedGoods.value?.unit || '')
+const selectedSalePrice = computed(() => selectedGoods.value?.salePrice ?? null)
+// 价格偏离比例（D30：超 5% 需超管审批）
+const priceDeviationPct = computed(() => {
+  const sp = selectedSalePrice.value
+  const up = dialogForm.unitPrice
+  if (!sp || sp <= 0 || !up || up <= 0) return 0
+  return Math.round(Math.abs(up - sp) / sp * 100)
+})
+const isPriceDeviated = computed(() => priceDeviationPct.value > 5)
 
 // 切换商品时若当前出库数量超过可售库存，自动钳制到库存上限（库存为 0 时不钳制，交由校验拦截）
 watch(
@@ -479,6 +489,13 @@ onMounted(async () => {
   margin-top: 4px;
   font-size: 12px;
   color: #e6a23c;
+  line-height: 1.4;
+}
+
+.price-deviation-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #f56c6c;
   line-height: 1.4;
 }
 

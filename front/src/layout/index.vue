@@ -83,6 +83,18 @@
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
 
+        <!-- 业务部门员工（D32）：销售/采购员工可建单与查看，库存变更仍由仓储/admin 确认 -->
+        <template v-else-if="isSalesEmployee">
+          <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
+          <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
+          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+        </template>
+        <template v-else-if="isPurchaseEmployee">
+          <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>商品进货</span></el-menu-item>
+          <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>商品退货</span></el-menu-item>
+          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+        </template>
+
         <template v-else-if="showSuperAdminCenter">
           <el-sub-menu index="/system/super-admin-center">
             <template #title>
@@ -94,6 +106,7 @@
             <el-menu-item index="/system/login-log"><el-icon><Notebook /></el-icon><span>登录日志</span></el-menu-item>
             <el-menu-item index="/system/operation-log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
             <el-menu-item index="/system/dept-approval"><el-icon><Stamp /></el-icon><span>部门审批</span></el-menu-item>
+            <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>价格偏离审批</span></el-menu-item>
           </el-sub-menu>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户管理</span></el-menu-item>
           <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>
@@ -155,7 +168,7 @@ const isSidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY
 const currentDeptCode = computed(() => normalizeDeptCode(userStore.deptCode))
 const isDeptAdminRole = computed(() => isAdminRole(userStore.role))
 const isEmployee = computed(() => isEmployeeRole(userStore.role))
-const showSidebar = computed(() => !isEmployee.value)
+const showSidebar = computed(() => !isEmployee.value || isBizEmployee.value)
 const sidebarWidth = computed(() => (isSidebarCollapsed.value ? '64px' : '220px'))
 const showSuperAdminCenter = computed(() => isSuperAdmin(userStore.role))
 const showMessageCenter = computed(() => !showSuperAdminCenter.value)
@@ -178,6 +191,10 @@ const isSalesAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.val
 const isWarehouseAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'warehouse')
 const isPurchaseAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'purchase')
 const isHrAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'hr')
+// 业务部门员工（D32）：销售/采购员工可访问对应业务模块（create+read，不动库存）
+const isSalesEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'sales')
+const isPurchaseEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'purchase')
+const isBizEmployee = computed(() => isSalesEmployee.value || isPurchaseEmployee.value)
 
 const toggleSidebar = () => {
   if (!showSidebar.value) {

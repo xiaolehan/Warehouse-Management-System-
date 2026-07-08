@@ -25,7 +25,7 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" type="success" :icon="Plus" @click="handleAdd">新增进货</el-button>
+            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" type="success" :icon="Plus" @click="handleAdd">新增进货</el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -52,7 +52,7 @@
               <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
               <el-button
                 v-if="scope.row.confirmStatus === 1"
-                v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
+                v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }"
                 size="small" type="success" link @click="handleArrive(scope.row)">到货确认</el-button>
               <el-button
                 v-if="scope.row.confirmStatus === 2"
