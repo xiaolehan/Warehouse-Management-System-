@@ -33,6 +33,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -42,9 +43,9 @@ public class SalesService {
     public static final int CONFIRM_SHIPPED = 2;
 
     /**
-     * 销售价偏离标准售价的审批阈值（D30）：偏离比例超过此值需超管审批，仓储方可确认出库。
+     * 销售价偏离标准售价的审批动作（D29）：偏离需超管审批，仓储确认出库前置校验。
+     * 偏离阈值由超管在系统参数页配置（sys_config.price_deviation_threshold，D30 兑现），见 SysConfigService。
      */
-    private static final BigDecimal PRICE_DEVIATION_THRESHOLD = new BigDecimal("0.05");
     private static final String PRICE_DEVIATION_APPROVAL_ACTION = "price_deviation_confirm";
 
     @Autowired
@@ -70,6 +71,9 @@ public class SalesService {
 
     @Autowired
     private MessageService messageService;
+
+    @Autowired
+    private SysConfigService sysConfigService;
 
     private void requireSalesModuleAccess() {
         // D32：销售部门成员（admin+员工）可建单/建退货（不动库存）
@@ -106,14 +110,40 @@ public class SalesService {
 
         Page<BizSales> page = bizSalesMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizSales::getId).toList());
-        List<SalesVO> records = page.getRecords().stream().map(item -> toVO(item, approvalMap.get(item.getId()))).toList();
+        // D 价格偏离审批：超管驳回后单子退回销售人员，仓储视角列表不再展示被驳回的偏离单
+        boolean warehouseView = isWarehouseView();
+        List<SalesVO> records = page.getRecords().stream()
+                .map(item -> toVO(item, approvalMap.get(item.getId())))
+                .filter(vo -> !warehouseView || !isPriceDeviationRejected(vo))
+                .toList();
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
+    }
+
+    /**
+     * 仓储视角：当前用户为仓储部门成员（admin/employee）。超管不调销售列表，故无需特殊处理。
+     */
+    private boolean isWarehouseView() {
+        return authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE);
+    }
+
+    /**
+     * 最新审批为价格偏离审批且被驳回（approvalStatus=3）-> 该单已退回销售人员，仓储不应见。
+     */
+    private boolean isPriceDeviationRejected(SalesVO vo) {
+        return vo.getApprovalStatus() != null
+                && Integer.valueOf(3).equals(vo.getApprovalStatus())
+                && PRICE_DEVIATION_APPROVAL_ACTION.equals(vo.getApprovalRequestAction());
     }
 
     public SalesVO getById(Long id) {
         requireSalesReadAccess();
         BizSales entity = requireEntity(id);
-        return toVO(entity, resolveLatestApproval(entity.getId()));
+        SalesVO vo = toVO(entity, resolveLatestApproval(entity.getId()));
+        // 仓储视角不可查看被驳回退回销售人员的偏离单（与列表过滤一致，防直调详情绕过）
+        if (isWarehouseView() && isPriceDeviationRejected(vo)) {
+            throw BusinessException.notFound("销售单不存在或已退回销售人员处理");
+        }
+        return vo;
     }
 
     public List<SalesSourceOptionVO> returnableOptions(Long goodsId) {
@@ -201,7 +231,7 @@ public class SalesService {
 
         // 价格偏离探测（D29/D30）：偏离超阈值则自动建超管审批单 + 通知超管，仓储 confirm 前置校验审批通过
         if (isPriceDeviated(unitPrice, goods.getSalePrice())) {
-            createPriceDeviationApproval(entity, goods.getSalePrice(), unitPrice, loginUser.getRealName());
+            createPriceDeviationApproval(entity, goods.getSalePrice(), unitPrice, loginUser.getRealName(), loginUser.getRole());
         }
 
         // 销售下单后不立即扣库存，待仓库管理员确认出库时再扣减；同时通知仓储管理员有待确认单据
@@ -247,10 +277,10 @@ public class SalesService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireSalesAdminOrSuperAdmin();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
         validateDeleteWindow(entity.getOperationTime(), "销售单");
+        ensureCanDeleteSales(entity);
         // 仅已确认出库（已扣库存）的销售单删除时需回补库存；待确认单据尚未扣库存，直接删除
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
             increaseStock(entity.getGoodsId(), entity.getQuantity());
@@ -260,6 +290,24 @@ public class SalesService {
         // 撤销价格偏离审批待办（单据已删除，超管不再需要审批）
         revokePriceDeviationApprovals(id);
         bizSalesMapper.deleteById(id);
+    }
+
+    /**
+     * 删除权限：销售管理员/超管可删本人部门当天单（D32）；销售员工仅可删自己建的、未出库的当天单（用于价格偏离被驳回后改价重提）。
+     * 员工不触碰库存：未出库单(confirm_status=1)未扣库存，删除仅撤销审批/消息，与 D32 职责分离兼容。
+     */
+    private void ensureCanDeleteSales(BizSales entity) {
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+            return;
+        }
+        // 销售员工分支：必须是销售部门员工、单据本人所建、且未出库
+        if (authzService.isDeptMember(AuthzService.DEPT_SALES)
+                && loginUser.getId() != null && loginUser.getId().equals(entity.getOperatorId())
+                && entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_PENDING) {
+            return;
+        }
+        throw BusinessException.forbidden("仅销售管理员可删除销售单（员工仅可删除自己未出库的当天单）");
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -482,6 +530,7 @@ public class SalesService {
         vo.setConfirmStatusText(confirmStatusText(entity.getConfirmStatus()));
         vo.setApprovalStatus(approvalOrder == null ? null : approvalOrder.getStatus());
         vo.setApprovalRequestAction(approvalOrder == null ? null : approvalOrder.getRequestAction());
+        vo.setApprovalRemark(approvalOrder == null ? null : approvalOrder.getApproveRemark());
         return vo;
     }
 
@@ -491,7 +540,7 @@ public class SalesService {
     // ============================== 价格偏离审批（D29/D30） ==============================
 
     /**
-     * 判断销售价是否偏离标准售价超阈值（阈值 5%）。
+     * 判断销售价是否偏离标准售价超阈值（阈值由超管配置，默认 5%）。
      * 偏离比例 = |unitPrice - salePrice| / salePrice，salePrice 为空或 <=0 时视为无法判定，不触发。
      */
     private boolean isPriceDeviated(BigDecimal unitPrice, BigDecimal standardSalePrice) {
@@ -503,14 +552,14 @@ public class SalesService {
         }
         BigDecimal diff = unitPrice.subtract(standardSalePrice).abs();
         BigDecimal ratio = diff.divide(standardSalePrice, 4, java.math.RoundingMode.HALF_UP);
-        return ratio.compareTo(PRICE_DEVIATION_THRESHOLD) > 0;
+        return ratio.compareTo(sysConfigService.getPriceDeviationThreshold()) > 0;
     }
 
     /**
      * 建价格偏离超管审批单（biz_type=sales, action=price_deviation_confirm, status=pending）。
      * 复用 biz_approval_order 的快照与 pending 唯一约束。
      */
-    private void createPriceDeviationApproval(BizSales entity, BigDecimal standardSalePrice, BigDecimal unitPrice, String operatorName) {
+    private void createPriceDeviationApproval(BizSales entity, BigDecimal standardSalePrice, BigDecimal unitPrice, String operatorName, String operatorRole) {
         BizApprovalOrder approval = new BizApprovalOrder();
         approval.setApprovalNo(CodeGenerator.approvalNo());
         approval.setBizType("sales");
@@ -520,13 +569,14 @@ public class SalesService {
         BigDecimal ratio = standardSalePrice.compareTo(BigDecimal.ZERO) > 0
                 ? unitPrice.subtract(standardSalePrice).abs().divide(standardSalePrice, 4, java.math.RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
-        approval.setRequestReason("销售价偏离标准售价 " + ratio.multiply(BigDecimal.valueOf(100)).setScale(0, java.math.RoundingMode.HALF_UP) + "%，超 5% 阈值，需超管审批");
+        BigDecimal thresholdPct = sysConfigService.getPriceDeviationThreshold().multiply(BigDecimal.valueOf(100)).setScale(0, java.math.RoundingMode.HALF_UP);
+        approval.setRequestReason("销售价偏离标准售价 " + ratio.multiply(BigDecimal.valueOf(100)).setScale(0, java.math.RoundingMode.HALF_UP) + "%，超 " + thresholdPct + "% 阈值，需超管审批");
         approval.setBeforeBizStatus(entity.getBizStatus());
         approval.setAfterBizStatus(entity.getBizStatus());
         approval.setStatus(1);
         approval.setRequesterId(entity.getOperatorId());
         approval.setRequesterName(operatorName);
-        approval.setRequesterRole("admin");
+        approval.setRequesterRole(operatorRole == null ? "" : operatorRole.trim().toLowerCase(Locale.ROOT));
         try {
             bizApprovalOrderMapper.insert(approval);
         } catch (org.springframework.dao.DuplicateKeyException ex) {

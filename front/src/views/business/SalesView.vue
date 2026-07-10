@@ -40,11 +40,18 @@
         <el-table-column prop="totalAmount" label="销售总额(元)" width="120" />
         <el-table-column prop="salesDate" label="销售日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column label="确认状态" width="120">
+        <el-table-column label="确认状态" width="140">
           <template #default="scope">
             <el-tag :type="scope.row.confirmStatus === 2 ? 'success' : 'warning'" size="small">
               {{ scope.row.confirmStatusText || (scope.row.confirmStatus === 2 ? '已确认出库' : '待仓库确认') }}
             </el-tag>
+            <el-tooltip
+              v-if="isPriceDeviationRejectedRow(scope.row)"
+              :content="'价格偏离审批被驳回：' + (scope.row.approvalRemark || '未填写原因')"
+              placement="top"
+            >
+              <el-tag type="danger" size="small" style="margin-left: 6px;">已驳回</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">
@@ -63,7 +70,7 @@
               </el-button>
               <el-button
                 v-if="showDeleteAction(scope.row)"
-                v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
+                v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }"
                 size="small"
                 type="danger"
                 link
@@ -134,7 +141,7 @@
         </el-form-item>
         <el-form-item label="销售单价" prop="unitPrice">
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
-          <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 5% 阈值，提交后将需超管审批后仓储方可确认出库</div>
+          <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，提交后将需超管审批后仓储方可确认出库</div>
         </el-form-item>
         <el-form-item label="销售总额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
@@ -166,7 +173,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
+import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
+import { isEmployeeRole, getRole } from '@/utils/auth'
 import {
   createSalesAPI,
   confirmSalesAPI,
@@ -200,14 +209,16 @@ const selectedGoods = computed(() => goodsOptions.value.find((i) => i.id === dia
 const selectedStock = computed(() => (selectedGoods.value ? selectedGoods.value.stock ?? 0 : null))
 const selectedUnit = computed(() => selectedGoods.value?.unit || '')
 const selectedSalePrice = computed(() => selectedGoods.value?.salePrice ?? null)
-// 价格偏离比例（D30：超 5% 需超管审批）
+// 价格偏离比例（D30：阈值由超管在系统参数页配置，默认 5%）
+const priceDeviationThreshold = ref(0.05) // 比例小数，如 0.05
+const priceDeviationThresholdPct = computed(() => Math.round(priceDeviationThreshold.value * 100))
 const priceDeviationPct = computed(() => {
   const sp = selectedSalePrice.value
   const up = dialogForm.unitPrice
   if (!sp || sp <= 0 || !up || up <= 0) return 0
   return Math.round(Math.abs(up - sp) / sp * 100)
 })
-const isPriceDeviated = computed(() => priceDeviationPct.value > 5)
+const isPriceDeviated = computed(() => priceDeviationPct.value > priceDeviationThresholdPct.value)
 
 // 切换商品时若当前出库数量超过可售库存，自动钳制到库存上限（库存为 0 时不钳制，交由校验拦截）
 watch(
@@ -267,6 +278,8 @@ const resolveBizDate = (row) => {
 const canDelete = (row) => {
   if (isBizDocumentDeleted(row)) return false
   if (row?.bizStatus !== 1) return false
+  // 员工仅可删除未出库（confirmStatus=1）的当天单，用于被驳回后改价重提；admin 可删已出库当天单（回补库存）
+  if (isEmployeeRole(getRole()) && Number(row?.confirmStatus) !== 1) return false
   return toDateOnly(resolveBizDate(row)) === localToday()
 }
 
@@ -287,6 +300,10 @@ const stateTextClass = (row) => {
   return ''
 }
 
+// 价格偏离审批被超管驳回（单子退回销售人员，列表展示驳回原因）
+const isPriceDeviationRejectedRow = (row) =>
+  Number(row?.approvalStatus) === 3 && String(row?.approvalRequestAction || '').toLowerCase() === 'price_deviation_confirm'
+
 const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete(row)
 
 const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
@@ -302,6 +319,20 @@ const loadGoodsOptions = async () => {
     throw new Error(res.msg || '加载商品下拉失败')
   }
   goodsOptions.value = res.data || []
+}
+
+const loadPriceDeviationThreshold = async () => {
+  try {
+    const res = await getPriceDeviationThresholdAPI()
+    if (res.code === 200 && res.data != null) {
+      const v = Number(res.data)
+      if (Number.isFinite(v) && v > 0 && v < 1) {
+        priceDeviationThreshold.value = v
+      }
+    }
+  } catch (e) {
+    // 读取失败时沿用默认 5%，不阻断建单
+  }
 }
 
 const loadList = async () => {
@@ -477,6 +508,7 @@ const submitForm = () => {
 onMounted(async () => {
   try {
     await loadGoodsOptions()
+    await loadPriceDeviationThreshold()
     await loadList()
   } catch (error) {
     ElMessage.error(error.message || '初始化失败')

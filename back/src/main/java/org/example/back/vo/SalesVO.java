@@ -66,4 +66,7 @@ public class SalesVO {
     private Integer approvalStatus;
 
     private String approvalRequestAction;
+
+    /** 最近审批单的备注（超管通过/驳回时填写，用于销售人员查看驳回原因）。 */
+    private String approvalRemark;
 }

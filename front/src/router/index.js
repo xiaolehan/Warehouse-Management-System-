@@ -8,6 +8,8 @@ const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/system/notice',
   '/system/super-admin',
   '/system/dept-approval',
+  '/system/void-approval',
+  '/system/config',
   '/system/user',
   '/system/security-ip-policy',
   '/system/login-log',
@@ -140,7 +142,13 @@ const router = createRouter({
           path: "system/void-approval",
           name: "SystemVoidApproval",
           component: () => import("../views/system/VoidApprovalView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+          meta: { roles: ['admin', 'superadmin'], deptCodes: ['warehouse'] }
+        },
+        {
+          path: "system/config",
+          name: "SystemConfig",
+          component: () => import("../views/system/SystemConfigView.vue"),
+          meta: { roles: ['superadmin'] }
         },
         {
           path: "system/super-admin",

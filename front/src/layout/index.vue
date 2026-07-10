@@ -107,6 +107,7 @@
             <el-menu-item index="/system/operation-log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
             <el-menu-item index="/system/dept-approval"><el-icon><Stamp /></el-icon><span>部门审批</span></el-menu-item>
             <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>价格偏离审批</span></el-menu-item>
+            <el-menu-item index="/system/config"><el-icon><Setting /></el-icon><span>系统参数</span></el-menu-item>
           </el-sub-menu>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户管理</span></el-menu-item>
           <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>
@@ -155,7 +156,7 @@ import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
   ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
-  Fold, Expand, Box, List, Download
+  Fold, Expand, Box, List, Download, Setting
 } from '@element-plus/icons-vue'
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'layout-sidebar-collapsed'

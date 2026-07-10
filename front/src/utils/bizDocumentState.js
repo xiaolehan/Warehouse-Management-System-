@@ -3,7 +3,9 @@ const APPROVAL_APPROVED = 2
 const APPROVAL_REJECTED = 3
 const APPROVAL_PROCESSING = 4
 
+const ACTION_VOID = 'void'
 const ACTION_VOID_RED = 'void_red'
+const ACTION_PRICE_DEVIATION_CONFIRM = 'price_deviation_confirm'
 
 export const isBizDocumentDeleted = (row = {}) => Boolean(row?.__uiDeleted || Number(row?.isDeleted || 0) === 1)
 
@@ -24,10 +26,14 @@ export const resolveBizDocumentState = (row = {}) => {
   }
 
   if (approvalStatus === APPROVAL_APPROVED) {
-    return {
-      label: approvalAction === ACTION_VOID_RED ? '作废并红冲成功' : '作废成功',
-      type: 'success'
+    // 仅作废类审批通过才显示作废态；价格偏离审批通过不等于作废，交由 confirmStatus 表达出库态
+    if (approvalAction === ACTION_VOID_RED) {
+      return { label: '作废并红冲成功', type: 'success' }
     }
+    if (approvalAction === ACTION_VOID) {
+      return { label: '作废成功', type: 'success' }
+    }
+    // price_deviation_confirm 已通过：不返回作废文案，落空让后续 confirmStatus 分支处理
   }
 
   if (Number(row?.bizStatus || 0) === 2) {

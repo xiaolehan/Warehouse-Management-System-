@@ -1246,6 +1246,29 @@ ALTER TABLE `biz_purchase_return`
     ADD COLUMN `complete_time` DATETIME DEFAULT NULL COMMENT '采购确认退货成功时间' AFTER `completer_name`,
     ADD KEY `idx_return_confirm_status` (`confirm_status`);
 
+-- 7.9 sys_config 系统参数表（超管可配置的业务阈值等参数，D30 兑现）
+-- 用于价格偏离审批阈值等可配置参数，替代硬编码常量
+DROP TABLE IF EXISTS `sys_config`;
+CREATE TABLE `sys_config` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `config_key` VARCHAR(64) NOT NULL COMMENT '参数键(唯一)',
+    `config_value` VARCHAR(255) NOT NULL COMMENT '参数值',
+    `config_name` VARCHAR(100) NOT NULL COMMENT '参数名称',
+    `remark` VARCHAR(255) DEFAULT NULL COMMENT '备注',
+    `updater_id` BIGINT DEFAULT NULL COMMENT '最近更新人ID',
+    `updater_name` VARCHAR(50) DEFAULT NULL COMMENT '最近更新人姓名',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_config_key` (`config_key`),
+    KEY `idx_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统参数表';
+
+-- 种子：价格偏离审批阈值（比例小数，0.05 = 5%）
+INSERT INTO `sys_config` (`config_key`, `config_value`, `config_name`, `remark`) VALUES
+('price_deviation_threshold', '0.05', '销售价格偏离阈值', '销售单价偏离标准售价超过此比例需超管审批(0.05=5%)');
+
 -- =============================================
 -- 脚本执行完成
 -- =============================================
