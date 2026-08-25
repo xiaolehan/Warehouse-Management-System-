@@ -9,8 +9,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="销售单号">
-            <el-input v-model="searchForm.keywords" placeholder="请输入销售单号" clearable></el-input>
+          <el-form-item label="出库商品">
+            <el-input v-model="searchForm.keywords" placeholder="请输入出库商品" clearable></el-input>
           </el-form-item>
           <el-form-item label="销售日期">
             <el-date-picker
@@ -36,8 +36,8 @@
         <el-table-column prop="goodsName" label="出库商品" />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column prop="quantity" label="销售数量" width="100" />
-        <el-table-column prop="salesPrice" label="销售均价(元)" width="120" />
-        <el-table-column prop="totalAmount" label="销售总额(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="salesPrice" label="销售均价(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="totalAmount" label="销售总额(元)" width="120" />
         <el-table-column prop="salesDate" label="销售日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column label="确认状态" width="140">
@@ -139,11 +139,11 @@
         <el-form-item label="出库数量" prop="quantity">
           <el-input-number v-model="dialogForm.quantity" :min="1" :max="selectedStock || undefined" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="销售单价" prop="unitPrice">
+        <el-form-item v-if="showPrice" label="销售单价" prop="unitPrice">
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
           <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，提交后将需超管审批后仓储方可确认出库</div>
         </el-form-item>
-        <el-form-item label="销售总额" prop="totalAmount">
+        <el-form-item v-if="showPrice" label="销售总额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
             <template #append>元</template>
           </el-input>
@@ -176,6 +176,7 @@ import { createApprovalOrderAPI } from '@/api/system'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { isEmployeeRole, getRole } from '@/utils/auth'
+import { getDeptCode, isSuperAdmin } from '@/utils/auth'
 import {
   createSalesAPI,
   confirmSalesAPI,
@@ -186,6 +187,10 @@ import {
 } from '@/api/business'
 
 const searchForm = reactive({ keywords: '', dateRange: [] })
+const userRole = getRole()
+const userDept = getDeptCode()
+// D36：销售金额列仅销售部门可见（售价）；仓储看库存不看价格；超管全见
+const showPrice = userDept === 'sales' || isSuperAdmin(userRole)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -342,7 +347,7 @@ const loadList = async () => {
     const params = {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      salesNo: searchForm.keywords || undefined,
+      goodsName: searchForm.keywords || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }

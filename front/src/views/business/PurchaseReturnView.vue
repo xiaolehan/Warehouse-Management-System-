@@ -9,8 +9,11 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="退货单号">
-            <el-input v-model="searchForm.keywords" placeholder="请输入退货单号" clearable></el-input>
+          <el-form-item label="退货商品">
+            <el-input v-model="searchForm.keywords" placeholder="请输入退货商品" clearable></el-input>
+          </el-form-item>
+          <el-form-item label="退货至供应商">
+            <el-input v-model="searchForm.supplierName" placeholder="请输入退货至供应商" clearable></el-input>
           </el-form-item>
           <el-form-item label="退货日期">
             <el-date-picker
@@ -37,7 +40,7 @@
         <el-table-column prop="goodsName" label="退货商品" />
         <el-table-column prop="supplierName" label="退货至供应商" />
         <el-table-column prop="returnQuantity" label="退货数量" width="100" />
-        <el-table-column prop="returnAmount" label="退货金额(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="returnAmount" label="退货金额(元)" width="120" />
         <el-table-column prop="returnDate" label="退货日期" width="180" />
         <el-table-column label="退货状态" width="110">
           <template #default="{ row }">
@@ -136,7 +139,7 @@
         <el-form-item label="退货数量" prop="returnQuantity">
           <el-input-number v-model="dialogForm.returnQuantity" :min="1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="退货单价" prop="price">
+        <el-form-item v-if="showPrice" label="退货单价" prop="price">
           <el-input-number v-model="dialogForm.price" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
         </el-form-item>
         <el-form-item label="退货日期" prop="returnDate">
@@ -168,6 +171,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
+import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
   createPurchaseReturnAPI,
   deletePurchaseReturnAPI,
@@ -178,7 +182,11 @@ import {
   completePurchaseReturnAPI
 } from '@/api/business'
 
-const searchForm = reactive({ keywords: '', dateRange: [] })
+const searchForm = reactive({ keywords: '', supplierName: '', dateRange: [] })
+const userRole = getRole()
+const userDept = getDeptCode()
+// D36：退货金额列仅采购部门可见（进价）；仓储看库存不看价格；超管全见
+const showPrice = userDept === 'purchase' || isSuperAdmin(userRole)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -276,7 +284,8 @@ const loadList = async () => {
     const params = {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      returnNo: searchForm.keywords || undefined,
+      goodsName: searchForm.keywords || undefined,
+      supplierName: searchForm.supplierName || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
@@ -304,6 +313,7 @@ const handleSearch = () => {
 // 重置搜索
 const resetSearch = () => {
   searchForm.keywords = ''
+  searchForm.supplierName = ''
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()

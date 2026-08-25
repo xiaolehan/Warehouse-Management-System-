@@ -16,6 +16,9 @@ public class PurchaseQueryDTO extends PageQuery {
 
     private Long goodsId;
 
+    /** 按供应商名称模糊筛选（供应商在 base_goods.supplier_id -> base_supplier，非本表列） */
+    private String supplierName;
+
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate;
 

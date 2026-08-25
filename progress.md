@@ -5,6 +5,20 @@
 
 ---
 
+## 会话 11 — 2026-08-25
+
+### 仓储确认页金额可见性 + 筛选改造（D36）
+
+- **触发：** 用户要求调整四个仓储入库/出库确认页：① 隐藏部分金额列；② 单号筛选改为商品名筛选；③ 进货/退货出库两页另增供应商文本搜索。
+- **决策 D36（用户确认）**：金额可见性按价格归属角色——**销售看售价、采购看进价、仓储只看库存不看价格、超管全见**。具体：销售出库确认隐藏「销售均价/销售总额」、销售退货入库隐藏「退货金额」→ 仅销售可见；进货入库隐藏「进货单价/总金额」、商品退货出库隐藏「退货金额」→ 仅采购可见。筛选：四页单号筛选**移除**，改为按商品名（模糊）；进货入库另增「供应商」、商品退货出库另增「退货至供应商」**文本搜索**（非下拉，Q5 更正）。
+- **改动：**
+  - 后端：`PurchaseQueryDTO`/`PurchaseReturnQueryDTO` 加 `supplierName`；`PurchaseService.page`/`PurchaseReturnService.page` 加供应商维过滤——因供应商不在业务表上，新增私有助手 `resolveGoodsIdsBySupplierName`（供应商名 LIKE → base_supplier → 其供货 goodsId 集合），空则直接返回空白页，`wrapper.in(goodsId, ids)`。
+  - 前端四视图：`SalesView`（出库商品筛选 + 均价/总额 `v-if showPrice`）、`SalesReturnView`（退回商品筛选 + 退货金额 `v-if`）、`PurchaseView`（商品名称+供应商双输入，单价/总额 `v-if`）、`PurchaseReturnView`（退货商品+退货至供应商双输入，退货金额 `v-if`）。`showPrice = userDept==='sales'||'purchase' || isSuperAdmin`，对齐 GoodsView D35 模式。前端关键词参数从 单号改传 goodsName，进货/退货出库另传 supplierName。**补（同会话）：各页详情弹窗内的价格字段同一 showPrice 隐藏**——销售两侧隐藏「销售单价/销售总额」「退货单价/退货金额」、进货隐藏「进货单价/总金额」、退货出库隐藏「退货单价」，仓储点「查看」也不再看到价格。
+- **验证：** 后端 `./mvnw clean compile` exit 0；前端 `npm run build` ✓。curl E2E 全通过——进货 goodsName('电阻'→3) / supplierName('华强'→3 全 华强电子、'不存在'→0) / 组合筛(电阻+华强→精确 1)；退货出库 supplierName('宏达'→2、'不存在'→0)；销售出库/销售退货入库 goodsName 正筛(炒菜机→3、佳能→1)；sales_admin 访问 purchases 403（权限隔离保留）。测试数据未新增，无污染。
+- **下一步：** 无阻塞。用户浏览器硬刷新 + 重登验证：仓储 admin 四确认页仅看数量无金额、采购看进价、销售看售价；筛选栏换商品/供应商搜索。改动未提交，push 待用户发起。
+
+---
+
 ## 会话 10 — 2026-08-25
 
 ### 物料(商品资料)管理调整（D35）

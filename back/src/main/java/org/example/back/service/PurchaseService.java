@@ -98,8 +98,18 @@ public class PurchaseService {
         LambdaQueryWrapper<BizPurchase> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getPurchaseNo()), BizPurchase::getPurchaseNo, queryDTO.getPurchaseNo())
                 .like(StringUtils.hasText(queryDTO.getGoodsName()), BizPurchase::getGoodsName, queryDTO.getGoodsName())
-                .eq(queryDTO.getGoodsId() != null, BizPurchase::getGoodsId, queryDTO.getGoodsId())
-            .ge(startTime != null, BizPurchase::getOperationTime, startTime)
+                .eq(queryDTO.getGoodsId() != null, BizPurchase::getGoodsId, queryDTO.getGoodsId());
+
+        // D36：按供应商名称模糊筛选。供应商不在 biz_purchase 上，需经 goods.supplier_id -> base_supplier 桥接出 goodsId 集合再过滤。
+        if (StringUtils.hasText(queryDTO.getSupplierName())) {
+            List<Long> supplierGoodsIds = resolveGoodsIdsBySupplierName(queryDTO.getSupplierName());
+            if (supplierGoodsIds.isEmpty()) {
+                return new PageResult<>(List.of(), 0L, queryDTO.getPageNum(), queryDTO.getPageSize(), 0L);
+            }
+            wrapper.in(BizPurchase::getGoodsId, supplierGoodsIds);
+        }
+
+        wrapper.ge(startTime != null, BizPurchase::getOperationTime, startTime)
             .lt(endTime != null, BizPurchase::getOperationTime, endTime)
                 .orderByDesc(BizPurchase::getId);
 
@@ -473,6 +483,19 @@ public class PurchaseService {
         LambdaQueryWrapper<BaseSupplier> wrapper = new LambdaQueryWrapper<>();
         wrapper.in(BaseSupplier::getId, supplierIds);
         return baseSupplierMapper.selectList(wrapper).stream().collect(Collectors.toMap(BaseSupplier::getId, Function.identity()));
+    }
+
+    // D36：供应商名 → 匹配供应商 → 其供货的 goodsId 集合。用于 biz_purchase 上无供应商列时的供应商维筛选。
+    private List<Long> resolveGoodsIdsBySupplierName(String supplierName) {
+        List<BaseSupplier> suppliers = baseSupplierMapper.selectList(
+                new LambdaQueryWrapper<BaseSupplier>().like(BaseSupplier::getSupplierName, supplierName));
+        if (suppliers.isEmpty()) {
+            return List.of();
+        }
+        List<Long> supplierIds = suppliers.stream().map(BaseSupplier::getId).toList();
+        return baseGoodsMapper.selectList(new LambdaQueryWrapper<BaseGoods>()
+                        .in(BaseGoods::getSupplierId, supplierIds))
+                .stream().map(BaseGoods::getId).toList();
     }
 
     private Map<Long, BizApprovalOrder> buildLatestApprovalMap(List<Long> bizIds) {

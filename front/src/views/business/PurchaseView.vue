@@ -9,8 +9,11 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="进货单号">
-            <el-input v-model="searchForm.keywords" placeholder="请输入进货单号" clearable></el-input>
+          <el-form-item label="商品名称">
+            <el-input v-model="searchForm.keywords" placeholder="请输入商品名称" clearable></el-input>
+          </el-form-item>
+          <el-form-item label="供应商">
+            <el-input v-model="searchForm.supplierName" placeholder="请输入供应商" clearable></el-input>
           </el-form-item>
           <el-form-item label="进货日期">
             <el-date-picker
@@ -35,9 +38,9 @@
         <el-table-column prop="orderNo" label="进货单号" width="150" />
         <el-table-column prop="goodsName" label="商品名称" />
         <el-table-column prop="supplierName" label="供应商" />
-        <el-table-column prop="price" label="进货单价(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="price" label="进货单价(元)" width="120" />
         <el-table-column prop="quantity" label="进货数量" width="100" />
-        <el-table-column prop="totalAmount" label="总金额(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="totalAmount" label="总金额(元)" width="120" />
         <el-table-column prop="purchaseDate" label="进货日期" width="180" />
         <el-table-column label="入库状态" width="110">
           <template #default="{ row }">
@@ -120,10 +123,10 @@
         <el-form-item label="进货数量" prop="quantity">
           <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="进货单价" prop="price">
+        <el-form-item v-if="showPrice" label="进货单价" prop="price">
           <el-input-number v-model="dialogForm.price" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="总金额" prop="totalAmount">
+        <el-form-item v-if="showPrice" label="总金额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
             <template #append>元</template>
           </el-input>
@@ -157,6 +160,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
+import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
   createPurchaseAPI,
   deletePurchaseAPI,
@@ -169,8 +173,13 @@ import {
 
 const searchForm = reactive({
   keywords: '',
+  supplierName: '',
   dateRange: []
 })
+const userRole = getRole()
+const userDept = getDeptCode()
+// D36：进货金额列仅采购部门可见（进价）；仓储看库存不看价格；超管全见
+const showPrice = userDept === 'purchase' || isSuperAdmin(userRole)
 
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -273,7 +282,8 @@ const loadList = async () => {
     const params = {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      purchaseNo: searchForm.keywords || undefined,
+      goodsName: searchForm.keywords || undefined,
+      supplierName: searchForm.supplierName || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
@@ -301,6 +311,7 @@ const handleSearch = () => {
 
 const resetSearch = () => {
   searchForm.keywords = ''
+  searchForm.supplierName = ''
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()
