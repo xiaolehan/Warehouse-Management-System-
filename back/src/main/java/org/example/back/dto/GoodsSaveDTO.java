@@ -1,7 +1,6 @@
 package org.example.back.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -10,8 +9,10 @@ import java.math.BigDecimal;
 @Data
 public class GoodsSaveDTO {
 
-    @NotBlank(message = "商品名称不能为空")
+    @NotBlank(message = "物料名称不能为空")
     private String goodsName;
+
+    private String productName;
 
     private String category;
 
@@ -20,12 +21,9 @@ public class GoodsSaveDTO {
     @NotNull(message = "供应商不能为空")
     private Long supplierId;
 
-    @NotNull(message = "进价不能为空")
-    @DecimalMin(value = "0.01", message = "进价必须大于0")
+    // 进价/售价为采购维护字段：仓储建物料时可空（采购编辑时由 Service 校验进价>0）
     private BigDecimal purchasePrice;
 
-    @NotNull(message = "售价不能为空")
-    @DecimalMin(value = "0.01", message = "售价必须大于0")
     private BigDecimal salePrice;
 
     private Integer stock;

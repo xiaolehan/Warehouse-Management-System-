@@ -46,13 +46,13 @@ const router = createRouter({
           path: "base/supplier",
           name: "BaseSupplier",
           component: () => import("../views/base/SupplierView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['purchase'] }
         },
         {
           path: "base/goods",
           name: "BaseGoods",
           component: () => import("../views/base/GoodsView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase'] }
         },
         {
           path: "business/purchase",

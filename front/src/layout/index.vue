@@ -29,6 +29,8 @@
         </template>
 
         <template v-else-if="isPurchaseAdmin">
+          <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>商品进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>商品退货</span></el-menu-item>
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请处理</span></el-menu-item>
@@ -54,8 +56,7 @@
         </template>
 
         <template v-else-if="isWarehouseAdmin">
-          <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
-          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>商品资料管理</span></el-menu-item>
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
@@ -90,6 +91,8 @@
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
         <template v-else-if="isPurchaseEmployee">
+          <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>商品进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>商品退货</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>

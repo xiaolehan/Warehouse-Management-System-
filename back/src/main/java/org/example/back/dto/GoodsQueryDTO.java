@@ -9,6 +9,10 @@ public class GoodsQueryDTO extends PageQuery {
 
     private String goodsName;
 
+    private String productName;
+
+    private String category;
+
     private Long supplierId;
 
     private Integer status;

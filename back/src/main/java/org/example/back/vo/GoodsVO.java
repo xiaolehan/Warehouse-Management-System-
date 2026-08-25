@@ -14,6 +14,8 @@ public class GoodsVO {
 
     private String goodsName;
 
+    private String productName;
+
     private String category;
 
     private String brand;

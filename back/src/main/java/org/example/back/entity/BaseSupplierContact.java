@@ -6,41 +6,24 @@ import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("base_goods")
-public class BaseGoods {
+@TableName("base_supplier_contact")
+public class BaseSupplierContact {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
-    private String goodsCode;
-
-    private String goodsName;
-
-    private String productName;
-
-    private String category;
-
-    private String brand;
-
     private Long supplierId;
 
-    private BigDecimal purchasePrice;
+    private String contactPerson;
 
-    private BigDecimal salePrice;
+    private String contactPhone;
 
-    private Integer stock;
+    private String position;
 
-    private Integer warningStock;
-
-    private String unit;
-
-    private Integer status;
-
-    private String description;
+    private Integer isDefault;
 
     private LocalDateTime createTime;
 

@@ -38,8 +38,13 @@ public class GoodsService {
     @Autowired
     private AuthzService authzService;
 
-    private void requireGoodsModuleAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可访问商品资料");
+    // D35 职责分工：物料资料开放给仓储+采购部门读取；写操作按部门区分字段
+    private void requireGoodsReadAccess() {
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储或采购部门可访问物料资料",
+                AuthzService.DEPT_WAREHOUSE,
+                AuthzService.DEPT_PURCHASE
+        );
     }
 
     private void requireGoodsPageAccess(boolean warningOnly) {
@@ -52,7 +57,19 @@ public class GoodsService {
             );
             return;
         }
-        requireGoodsModuleAccess();
+        requireGoodsReadAccess();
+    }
+
+    // 编辑：仓储 admin 或 采购部门（admin+员工）可进入，各改各职责字段
+    private void requireGoodsUpdateAccess() {
+        if (authzService.isSuperAdmin()) {
+            return;
+        }
+        boolean warehouseAdmin = authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE);
+        boolean purchaseMember = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
+        if (!warehouseAdmin && !purchaseMember) {
+            throw BusinessException.forbidden("仅仓储管理员或采购部门可编辑物料");
+        }
     }
 
     public PageResult<GoodsVO> page(GoodsQueryDTO queryDTO) {
@@ -62,6 +79,8 @@ public class GoodsService {
 
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getGoodsName()), BaseGoods::getGoodsName, queryDTO.getGoodsName())
+                .like(StringUtils.hasText(queryDTO.getProductName()), BaseGoods::getProductName, queryDTO.getProductName())
+                .like(StringUtils.hasText(queryDTO.getCategory()), BaseGoods::getCategory, queryDTO.getCategory())
                 .eq(queryDTO.getSupplierId() != null, BaseGoods::getSupplierId, queryDTO.getSupplierId())
                 .eq(queryDTO.getStatus() != null, BaseGoods::getStatus, queryDTO.getStatus())
             .apply(warningOnly && !"zero".equals(warningType), "stock <= warning_stock")
@@ -90,17 +109,17 @@ public class GoodsService {
     }
 
     public GoodsVO getById(Long id) {
-        requireGoodsModuleAccess();
+        requireGoodsReadAccess();
         BaseGoods goods = requireGoods(id);
         BaseSupplier supplier = baseSupplierMapper.selectById(goods.getSupplierId());
         return toVO(goods, supplier);
     }
 
+    // 建物料仅仓储 admin；仓储建时不含进价/售价（价格由采购补录）
     public void create(GoodsSaveDTO dto) {
-        requireGoodsModuleAccess();
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料");
         checkGoodsNameUnique(dto.getGoodsName(), null);
         requireSupplier(dto.getSupplierId());
-        validateGoodsPricing(dto.getPurchasePrice(), dto.getSalePrice());
         validateStock(dto.getStock());
         validateWarningStock(dto.getWarningStock());
         BaseGoods goods = new BaseGoods();
@@ -112,30 +131,43 @@ public class GoodsService {
         baseGoodsMapper.insert(goods);
     }
 
+    // D35：编辑按职责分字段——采购可改进价(并校验>0)、不可动库存；仓储改库存/预警阈值、不可动价格；
+    //      二者均可改物料基本字段(名称/产品名/种类/供应商/单位)。售价不在本页维护。
     public void update(Long id, GoodsSaveDTO dto) {
-        requireGoodsModuleAccess();
-        requireSupplier(dto.getSupplierId());
+        requireGoodsUpdateAccess();
         BaseGoods goods = requireGoods(id);
+        boolean isPurchase = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
+
+        if (isPurchase) {
+            // D35.2 采购(admin/员工)：仅就地补录/修改进价，基本资料与库存均由仓储维护，采购一概不动
+            if (dto.getPurchasePrice() == null || dto.getPurchasePrice().compareTo(BigDecimal.ZERO) <= 0) {
+                throw BusinessException.validateFail("进价必须大于0");
+            }
+            goods.setPurchasePrice(dto.getPurchasePrice());
+            baseGoodsMapper.updateById(goods);
+            return;
+        }
+
+        // 仓储(或超管)：改基本字段(名称/产品名/种类/供应商/单位/描述/状态) + 库存/预警阈值，价格字段不动
+        requireSupplier(dto.getSupplierId());
         checkGoodsNameUnique(dto.getGoodsName(), id);
-        validateGoodsPricing(dto.getPurchasePrice(), dto.getSalePrice());
         validateStock(dto.getStock());
         validateWarningStock(dto.getWarningStock());
         goods.setGoodsName(dto.getGoodsName());
+        goods.setProductName(dto.getProductName());
         goods.setCategory(dto.getCategory());
         goods.setBrand(dto.getBrand());
         goods.setSupplierId(dto.getSupplierId());
-        goods.setPurchasePrice(dto.getPurchasePrice());
-        goods.setSalePrice(dto.getSalePrice());
+        goods.setUnit(dto.getUnit());
+        goods.setDescription(dto.getDescription());
+        goods.setStatus(dto.getStatus() == null ? goods.getStatus() : dto.getStatus());
         goods.setStock(dto.getStock() == null ? goods.getStock() : dto.getStock());
         goods.setWarningStock(dto.getWarningStock() == null ? goods.getWarningStock() : dto.getWarningStock());
-        goods.setUnit(dto.getUnit());
-        goods.setStatus(dto.getStatus() == null ? goods.getStatus() : dto.getStatus());
-        goods.setDescription(dto.getDescription());
         baseGoodsMapper.updateById(goods);
     }
 
     public void delete(Long id) {
-        requireGoodsModuleAccess();
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料");
         requireGoods(id);
         baseGoodsMapper.deleteById(id);
     }
@@ -164,15 +196,6 @@ public class GoodsService {
         }
         return supplier;
     }
-    // 验证商品的进价和售价是否合法
-    private void validateGoodsPricing(BigDecimal purchasePrice, BigDecimal salePrice) {
-        if (purchasePrice == null || purchasePrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw BusinessException.validateFail("进价必须大于0");
-        }
-        if (salePrice == null || salePrice.compareTo(BigDecimal.ZERO) <= 0) {
-            throw BusinessException.validateFail("售价必须大于0");
-        }
-    }
     // 验证库存是否合法
     private void validateStock(Integer stock) {
         if (stock != null && stock < 0) {
@@ -199,7 +222,8 @@ public class GoodsService {
         GoodsVO vo = new GoodsVO();
         BeanUtils.copyProperties(goods, vo);
         vo.setSupplierName(supplier == null ? null : supplier.getSupplierName());
-        vo.setPrice(goods.getSalePrice() == null ? BigDecimal.ZERO : goods.getSalePrice());
+        // D35：单价列为进价（仅供采购可见；仓储前端隐藏该列），售价不在本页维护
+        vo.setPrice(goods.getPurchasePrice() == null ? BigDecimal.ZERO : goods.getPurchasePrice());
         return vo;
     }
 }

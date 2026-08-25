@@ -19,10 +19,6 @@ public class BaseSupplier {
 
     private String supplierName;
 
-    private String contactPerson;
-
-    private String contactPhone;
-
     private String address;
 
     private Integer status;

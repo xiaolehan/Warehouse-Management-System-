@@ -5,6 +5,39 @@
 
 ---
 
+## 会话 10 — 2026-08-25
+
+### 物料(商品资料)管理调整（D35）
+
+- **触发：** 用户要求 ① 菜单"商品资料管理"→"物料管理"；② 表头"商品名称→物料名称"、"分类→物料种类"、查询"商品名称→物料名称"，新增"产品名称"列放物料名称后一列；③ 查询扩为 4 种筛选（物料名称/供应商/物料种类/产品名称）；④ 页面开放给采购 admin+员工；仓储 admin 页**不显示单价列**、采购可见。
+- **决策 D35（用户已确认）：** 进价/售价仓储全程不可见、不可操作，只看到库存数量；采购只填**进价**（列表"单价"列=进价）且不可动库存；仓储建/删物料（建时无价格字段）+ 编辑库存+预警阈值；基本字段（物料名称/产品名称/物料种类/供应商/单位）双方都可改；新增独立字段 `product_name`（不复用 brand）。
+- **改动：**
+  - DB：`base_goods` 加 `product_name VARCHAR(50) NULL`（放 goods_name 后），`db.sql` DDL+seed 同步。
+  - 后端：`BaseGoods/GoodsSaveDTO/GoodsQueryDTO/GoodsVO` 加 `productName`；`GoodsSaveDTO` 去掉 purchasePrice/salePrice 的强制校验（仓储建无价）；`GoodsService`——读取放开 `requireAnyDeptMemberOrSuperAdmin(WAREHOUSE,PURCHASE)`，`page` 加 category/productName like；`create` 仅仓储 admin；`update` 按部门分字段（采购提 purchasePrice 校验>0 / 仓储提 stock+warningStock，各不改对方字段）；`delete` 仅仓储 admin；`toVO` `price=进价`。
+  - 前端：`GoodsView.vue` 4 筛选 + 产品名称列 + 单价列 `v-if showPrice`（采购/超管显示）+ 表单按角色条件渲染（进价仅采购、初始/当前库存与预警阈值仅仓储、采购库存只读）+ 按钮新增/删除仅仓储、编辑双方；router `base/goods` deptCodes→`warehouse,purchase` roles admin/employee；layout `isPurchaseAdmin`/`isPurchaseEmployee` 加"物料管理"、仓储菜单改名；AdminHome 文案同步。
+- **验证：** 后端 `clean compile` exit 0；前端 `npm run build` ✓；E2E 全通过——四条件筛选各就其位（物料名称=电阻 2 / 产品名称=超清HDMI线 1 / 物料种类=数码产品 7 / 供应商=2 3，组合筛选命中）；仓储建(无价) 200、采购建 403「仅仓储部门管理员可创建物料」；采购 update 改进价 12.34 生效、采购改库存被忽略(12.34/5 不变)；仓储 update 改库存 66、进价仍 12.34(不被覆盖)；采购 delete 403 / 仓储 delete 200；purchase_employee 可访问列表且见 price 字段。测试物料 T_MAT_WH_01(id20)/T_PN_001(id21) 逻辑删除清理。
+- **注意：** 本地库含早期手工测试垃圾物料（goodsName='1'/'1=2'、T_ 前缀 id 3/5/9，product_name 均空，非 seed），orderByDesc(id) 下排在最前、污染列表首页；本次未物理删除以保留历史。seed 商品产品名未在本地库生效。
+- **二次调整 D35.2（用户确认）：** ① 采购严格**只编辑单价（进价）**，物料基本字段（名称/产品名/种类/供应商/单位）与库存不再由采购编辑，一律归仓储；② 仓储物料管理操作列「详情+编辑+删除」默认小按钮挤在 200px 列内换行/拥挤，改为 **link 文本按钮并排**同线展示（采购按钮文案「改单价」）。
+- **改动（D35.2）：** `GoodsService.update` 分支重构——采购仅 `set purchasePrice`（校验>0）即返回、不动任何其它字段；仓储/超管分支才 `set` 基本字段+stock+warningStock、且不写 purchasePrice。`GoodsView` 操作列 link 化 + width180；表单基本字段（物料名/产品名/种类/供应商/单位）采购编辑时 `disabled`（仅进价可编辑）；payload 采购只带 `purchasePrice`。
+- **验证（D35.2）：** 后端 `clean compile` exit0；前端 `npm run build` ✓；E2E——采购 update 传不同基本字段+stock9999+单价 → 只 price→8.88、goodsName/产品/类别/供应商/库存10 全保持仓储原值；仓储 update 改基本+库存42 且故意带 purchasePrice1.0 → price 仍 8.88 未被覆盖；仓储建无价 200 / 采购建 403；测试数据清理。
+- **下一步：** 无阻塞。用户浏览器硬刷新（Ctrl+Shift+R）+ 重登验证（仓储 admin 操作列三 link 按钮同线；采购 admin/员工点「改单价」，对话框仅进价可填、其它字段灰显只读）。
+
+---
+
+### 供应商管理三项调整（D33）
+
+- **触发：** 用户要求 ① 供应商管理表头加"职务"列（联系人后一栏，新增/查看/编辑同步）；② 允许同一供应商多联系人；③ 供应商管理从仓储菜单移入采购 admin+员工页面。
+- **决策 D33（用户已确认）：** 拆 `base_supplier_contact` 子表支持多联系人（每人含职务，`is_default` 标主联系人）；采购 admin+employee 均可增删改；CRUD 权限改为采购部门 member，`options` 放开为仓储/采购/销售成员下拉（对齐 `GoodsService.options`，避免 GoodsView/预警下拉 403）。
+- **改动：**
+  - DB：新增 `base_supplier_contact` 表 + 迁移旧 `contact_person/phone` 为子表主联系人（`is_default=1`）+ 删 `base_supplier` 两旧列；`db.sql` 同步（DDL+seed）。
+  - 后端：新增 `BaseSupplierContact` 实体/Mapper、`SupplierContactDTO/VO`；`SupplierSaveDTO` 改 `List<contacts>`（@NotEmpty+@Valid）；`SupplierVO` 加 `contacts`+`position`（主联系人职务）；`SupplierService` 组装联系人/主联系人、`@Transactional` 存联系人、`page` 联系人搜索改子表存在性。
+  - 前端：`SupplierView.vue` 改动态多联系人表单（可增删行，含职务）+ 表头加"职务"列；router `base/supplier` deptCodes warehouse→purchase+roles admin/employee；layout 菜单从 `isWarehouseAdmin` 移除、加入 `isPurchaseAdmin`/`isPurchaseEmployee`。
+- **验证：** 后端 `clean compile` exit 0；前端 `npm run build` ✓；E2E 全通过——SUP001 迁移后主联系人=刘总+contacts；双联系人建单/职务正确/编辑重建 3 联系人；purchase_employee 可增删改；warehouse/sales create 403「仅采购部门可访问供应商资料」；options 各角色 200；SUP004 关联商品删除→400 保护；测试数据物理清理（供应商 1-6 完好）。
+- **探讨结论 D34：** 用户问"是否把多联系人直接展示在列表/网页"。给出 tooltip+人数标签 / 可展开行 / 直接铺标签 / 维持现状 四方案对比后，**用户选维持现状不动**——列表仅展示主联系人，全部联系人经「查看」弹窗查阅，不做改动。
+- **下一步：** 无阻塞。用户浏览器硬刷新 + 重登验证菜单归属。
+
+---
+
 ## 会话 9 — 2026-07-08
 
 ### 六项需求改进方案规划

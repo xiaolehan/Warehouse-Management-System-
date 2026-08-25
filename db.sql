@@ -221,8 +221,6 @@ CREATE TABLE `base_supplier` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `supplier_code` VARCHAR(20) NOT NULL COMMENT '供应商编码',
     `supplier_name` VARCHAR(100) NOT NULL COMMENT '供应商名称',
-    `contact_person` VARCHAR(50) DEFAULT NULL COMMENT '联系人',
-    `contact_phone` VARCHAR(20) DEFAULT NULL COMMENT '联系电话',
     `address` VARCHAR(200) DEFAULT NULL COMMENT '地址',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-启用, 0-禁用',
     `description` VARCHAR(200) DEFAULT NULL COMMENT '描述',
@@ -235,19 +233,38 @@ CREATE TABLE `base_supplier` (
     KEY `idx_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='供应商表';
 
--- 2.2 商品表 (base_goods)
+-- 2.2 供应商联系人表 (base_supplier_contact)
+-- 支持一个供应商多个联系人，每人带职务；is_default 标记主联系人
+DROP TABLE IF EXISTS `base_supplier_contact`;
+CREATE TABLE `base_supplier_contact` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `supplier_id` BIGINT NOT NULL COMMENT '供应商ID',
+    `contact_person` VARCHAR(50) DEFAULT NULL COMMENT '联系人',
+    `contact_phone` VARCHAR(20) DEFAULT NULL COMMENT '联系电话',
+    `position` VARCHAR(50) DEFAULT NULL COMMENT '职务',
+    `is_default` TINYINT NOT NULL DEFAULT 0 COMMENT '是否主联系人: 1-是, 0-否',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_supplier_id` (`supplier_id`),
+    KEY `idx_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='供应商联系人表';
+
+-- 2.3 商品表 (base_goods)
 -- 存储商品基本信息，关联供应商，包含库存字段
 DROP TABLE IF EXISTS `base_goods`;
 CREATE TABLE `base_goods` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `goods_code` VARCHAR(20) NOT NULL COMMENT '商品编码',
-    `goods_name` VARCHAR(100) NOT NULL COMMENT '商品名称',
-    `category` VARCHAR(50) DEFAULT NULL COMMENT '商品类别',
+    `goods_name` VARCHAR(100) NOT NULL COMMENT '物料名称',
+    `product_name` VARCHAR(50) DEFAULT NULL COMMENT '产品名称',
+    `category` VARCHAR(50) DEFAULT NULL COMMENT '物料种类',
     `brand` VARCHAR(50) DEFAULT NULL COMMENT '商品品牌(用于图表聚合)',
     `supplier_id` BIGINT NOT NULL COMMENT '供应商ID',
-    `purchase_price` DECIMAL(10,2) DEFAULT NULL COMMENT '进价',
+    `purchase_price` DECIMAL(10,2) DEFAULT NULL COMMENT '进价(仅供采购可见/编辑)',
     `sale_price` DECIMAL(10,2) DEFAULT NULL COMMENT '售价',
-    `stock` INT NOT NULL DEFAULT 0 COMMENT '当前库存量',
+    `stock` INT NOT NULL DEFAULT 0 COMMENT '当前库存量(仅供仓储编辑)',
     `warning_stock` INT NOT NULL DEFAULT 10 COMMENT '库存预警阈值',
     `unit` VARCHAR(20) DEFAULT NULL COMMENT '单位',
     `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-上架, 0-下架',
@@ -533,18 +550,27 @@ INSERT INTO `sys_employee` (`user_id`, `emp_code`, `emp_name`, `dept_id`, `posit
 ((SELECT id FROM `sys_user` WHERE `username` = 'hr_employee'), 'EMP005', '人事员工', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'hr'), '人事专员', '13800138105', 'hr_employee@warehouse.com');
 
 -- 4.4 初始化供应商数据
-INSERT INTO `base_supplier` (`supplier_code`, `supplier_name`, `contact_person`, `contact_phone`, `address`, `description`) VALUES
-('SUP001', '华强电子有限公司', '刘总', '0755-88888888', '深圳市华强北路电子大厦', '主营电子元件'),
-('SUP002', '盛达贸易集团', '陈总', '021-77777777', '上海市浦东新区张江高科', '综合贸易公司'),
-('SUP003', '科技数码港', '黄总', '010-66666666', '北京市海淀区中关村', '数码产品供应商'),
-('SUP004', '宏达电子元件厂', '吴总', '0755-55555555', '深圳市宝安区西乡街道', '电子元件制造'),
-('SUP005', '智能科技股份', '周总', '020-44444444', '广州市天河区科韵路', '智能硬件供应商');
+INSERT INTO `base_supplier` (`supplier_code`, `supplier_name`, `address`, `description`) VALUES
+('SUP001', '华强电子有限公司', '深圳市华强北路电子大厦', '主营电子元件'),
+('SUP002', '盛达贸易集团', '上海市浦东新区张江高科', '综合贸易公司'),
+('SUP003', '科技数码港', '北京市海淀区中关村', '数码产品供应商'),
+('SUP004', '宏达电子元件厂', '深圳市宝安区西乡街道', '电子元件制造'),
+('SUP005', '智能科技股份', '广州市天河区科韵路', '智能硬件供应商');
+
+-- 4.4.1 初始化供应商联系人数据（is_default=1 标主联系人）
+INSERT INTO `base_supplier_contact` (`supplier_id`, `contact_person`, `contact_phone`, `position`, `is_default`) VALUES
+((SELECT id FROM `base_supplier` WHERE `supplier_code` = 'SUP001'), '刘总', '0755-88888888', '采购经理', 1),
+((SELECT id FROM `base_supplier` WHERE `supplier_code` = 'SUP002'), '陈总', '021-77777777', '销售总监', 1),
+((SELECT id FROM `base_supplier` WHERE `supplier_code` = 'SUP003'), '黄总', '010-66666666', '总经理', 1),
+((SELECT id FROM `base_supplier` WHERE `supplier_code` = 'SUP004'), '吴总', '0755-55555555', '业务经理', 1),
+((SELECT id FROM `base_supplier` WHERE `supplier_code` = 'SUP005'), '周总', '020-44444444', '销售经理', 1);
 
 -- 4.5 初始化商品数据
-INSERT INTO `base_goods` (`goods_code`, `goods_name`, `category`, `brand`, `supplier_id`, `purchase_price`, `sale_price`, `stock`, `unit`, `description`)
+INSERT INTO `base_goods` (`goods_code`, `goods_name`, `product_name`, `category`, `brand`, `supplier_id`, `purchase_price`, `sale_price`, `stock`, `unit`, `description`)
 SELECT
     seed.`goods_code`,
     seed.`goods_name`,
+    seed.`product_name`,
     seed.`category`,
     seed.`brand`,
     supplier.`id`,
@@ -554,18 +580,18 @@ SELECT
     seed.`unit`,
     seed.`description`
 FROM (
-    SELECT 'GD001' AS `goods_code`, '电阻10K' AS `goods_name`, '电子配件' AS `category`, '村田' AS `brand`, 'SUP004' AS `supplier_code`, 0.5 AS `purchase_price`, 1.5 AS `sale_price`, 500 AS `stock`, '个' AS `unit`, '10K欧姆电阻' AS `description`
-    UNION ALL SELECT 'GD002', '电容100uF', '电子配件', '村田', 'SUP004', 1.0, 2.5, 400, '个', '100微法电容'
-    UNION ALL SELECT 'GD003', '华为Mate60', '数码产品', '华为', 'SUP003', 4500.0, 5999.0, 200, '台', '华为最新旗舰手机'
-    UNION ALL SELECT 'GD004', '小米14 Pro', '数码产品', '小米', 'SUP003', 3800.0, 4999.0, 150, '台', '小米高端手机'
-    UNION ALL SELECT 'GD005', '联想ThinkPad', '数码产品', '联想', 'SUP002', 6000.0, 7500.0, 80, '台', '联想商务笔记本'
-    UNION ALL SELECT 'GD006', '戴尔显示器', '数码产品', '戴尔', 'SUP005', 1200.0, 1699.0, 120, '台', '戴尔27寸显示器'
-    UNION ALL SELECT 'GD007', '三星24英寸显示器', '数码产品', '三星', 'SUP005', 900.0, 1299.0, 100, '台', '三星入门显示器'
-    UNION ALL SELECT 'GD008', '华为FreeBuds', '数码产品', '华为', 'SUP001', 300.0, 499.0, 300, '副', '华为无线耳机'
-    UNION ALL SELECT 'GD009', '小米AirDots', '数码产品', '小米', 'SUP001', 80.0, 129.0, 500, '副', '小米蓝牙耳机'
-    UNION ALL SELECT 'GD010', '惠普打印机', '办公用品', '惠普', 'SUP002', 800.0, 1200.0, 50, '台', '惠普激光打印机'
-    UNION ALL SELECT 'GD011', '爱普生投影仪', '办公用品', '爱普生', 'SUP003', 3500.0, 4500.0, 30, '台', '爱普生商用投影仪'
-    UNION ALL SELECT 'GD012', '佳能扫描仪', '办公用品', '佳能', 'SUP002', 1500.0, 2000.0, 40, '台', '佳能高速扫描仪'
+    SELECT 'GD001' AS `goods_code`, '电阻10K' AS `goods_name`, '电阻' AS `product_name`, '电子配件' AS `category`, '村田' AS `brand`, 'SUP004' AS `supplier_code`, 0.5 AS `purchase_price`, 1.5 AS `sale_price`, 500 AS `stock`, '个' AS `unit`, '10K欧姆电阻' AS `description`
+    UNION ALL SELECT 'GD002', '电容100uF', '电容', '电子配件', '村田', 'SUP004', 1.0, 2.5, 400, '个', '100微法电容'
+    UNION ALL SELECT 'GD003', '华为Mate60', 'Mate60手机', '数码产品', '华为', 'SUP003', 4500.0, 5999.0, 200, '台', '华为最新旗舰手机'
+    UNION ALL SELECT 'GD004', '小米14 Pro', '14Pro手机', '数码产品', '小米', 'SUP003', 3800.0, 4999.0, 150, '台', '小米高端手机'
+    UNION ALL SELECT 'GD005', '联想ThinkPad', 'ThinkPad笔记本', '数码产品', '联想', 'SUP002', 6000.0, 7500.0, 80, '台', '联想商务笔记本'
+    UNION ALL SELECT 'GD006', '戴尔显示器', '戴尔显示器', '数码产品', '戴尔', 'SUP005', 1200.0, 1699.0, 120, '台', '戴尔27寸显示器'
+    UNION ALL SELECT 'GD007', '三星24英寸显示器', '三星显示器', '数码产品', '三星', 'SUP005', 900.0, 1299.0, 100, '台', '三星入门显示器'
+    UNION ALL SELECT 'GD008', '华为FreeBuds', 'FreeBuds耳机', '数码产品', '华为', 'SUP001', 300.0, 499.0, 300, '副', '华为无线耳机'
+    UNION ALL SELECT 'GD009', '小米AirDots', 'AirDots耳机', '数码产品', '小米', 'SUP001', 80.0, 129.0, 500, '副', '小米蓝牙耳机'
+    UNION ALL SELECT 'GD010', '惠普打印机', '惠普激光打印', '办公用品', '惠普', 'SUP002', 800.0, 1200.0, 50, '台', '惠普激光打印机'
+    UNION ALL SELECT 'GD011', '爱普生投影仪', '爱普生投影', '办公用品', '爱普生', 'SUP003', 3500.0, 4500.0, 30, '台', '爱普生商用投影仪'
+    UNION ALL SELECT 'GD012', '佳能扫描仪', '佳能扫描', '办公用品', '佳能', 'SUP002', 1500.0, 2000.0, 40, '台', '佳能高速扫描仪'
 ) AS seed
 JOIN `base_supplier` AS supplier ON supplier.`supplier_code` = seed.`supplier_code`;
 

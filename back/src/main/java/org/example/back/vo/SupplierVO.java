@@ -3,6 +3,7 @@ package org.example.back.vo;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 public class SupplierVO {
@@ -13,12 +14,13 @@ public class SupplierVO {
 
     private String supplierName;
 
-    private String contactPerson;
-
+    /** 主联系人姓名（列表展示用，取自 is_default=1 或第一条） */
     private String contact;
 
-    private String contactPhone;
+    /** 主联系人职务 */
+    private String position;
 
+    /** 主联系人电话 */
     private String phone;
 
     private String address;
@@ -28,4 +30,6 @@ public class SupplierVO {
     private String description;
 
     private LocalDateTime createTime;
+
+    private List<SupplierContactVO> contacts;
 }
