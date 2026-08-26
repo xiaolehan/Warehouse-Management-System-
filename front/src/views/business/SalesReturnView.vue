@@ -12,6 +12,9 @@
           <el-form-item label="退回商品">
             <el-input v-model="searchForm.keywords" placeholder="请输入退回商品" clearable></el-input>
           </el-form-item>
+          <el-form-item label="退货公司名">
+            <el-input v-model="searchForm.customerName" placeholder="请输入退货公司名" clearable></el-input>
+          </el-form-item>
           <el-form-item label="退货日期">
             <el-date-picker
               v-model="searchForm.dateRange"
@@ -35,6 +38,7 @@
         <el-table-column prop="returnNo" label="销售退货单号" width="150" />
         <el-table-column prop="orderNo" label="原销售单" width="150" />
         <el-table-column prop="goodsName" label="退回商品" />
+        <el-table-column prop="customerName" label="退货公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="reason" label="退货原因" show-overflow-tooltip />
         <el-table-column prop="quantity" label="退货数量" width="100" />
         <el-table-column v-if="showPrice" prop="refundAmount" label="退货金额(元)" width="120" />
@@ -130,6 +134,20 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="退货公司名" prop="customerName">
+          <el-select
+            v-model="dialogForm.customerName"
+            placeholder="选择或输入退货公司名"
+            style="width: 100%"
+            clearable
+            filterable
+            allow-create
+            default-first-option
+            :reserve-keyword="false"
+          >
+            <el-option v-for="name in customerNameOptions" :key="name" :label="name" :value="name" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="退回商品">
           <el-input :value="selectedSourceSales?.goodsName || '-'" disabled />
         </el-form-item>
@@ -186,7 +204,7 @@ import {
   getSalesReturnPageAPI
 } from '@/api/business'
 
-const searchForm = reactive({ keywords: '', dateRange: [] })
+const searchForm = reactive({ keywords: '', customerName: '', dateRange: [] })
 const userRole = getRole()
 const userDept = getDeptCode()
 // D36：退货金额列仅销售部门可见（售价）；仓储看库存不看价格；超管全见
@@ -198,12 +216,26 @@ const loading = ref(false)
 const sourceSalesOptions = ref([])
 const selectedSourceSales = ref(null)
 
+// 来源销售单的历史客户公司名（去重）作为下拉提示；允许手动输入任意文字
+const customerNameOptions = computed(() => {
+  const seen = new Set()
+  const list = []
+  for (const item of sourceSalesOptions.value) {
+    const name = (item.customerName || '').trim()
+    if (name && !seen.has(name)) {
+      seen.add(name)
+      list.push(name)
+    }
+  }
+  return list
+})
+
 const tableData = ref([])
 
 const dialogVisible = ref(false)
 const dialogType = ref('add')
 const dialogFormRef = ref(null)
-const dialogForm = reactive({ sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '' })
+const dialogForm = reactive({ sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '', customerName: '' })
 
 const refundAmountText = computed(() => {
   const qty = Number(dialogForm.quantity || 0)
@@ -286,6 +318,8 @@ const handleSourceSalesChange = (sourceSalesId) => {
   selectedSourceSales.value = sourceSalesOptions.value.find((item) => item.id === sourceSalesId) || null
   if (dialogType.value === 'add' && selectedSourceSales.value) {
     dialogForm.unitPrice = Number(selectedSourceSales.value.unitPrice || 0)
+    // 选中来源单后自动带出该公司名（仍可手动修改）
+    dialogForm.customerName = selectedSourceSales.value.customerName || dialogForm.customerName || ''
   }
 }
 
@@ -297,6 +331,7 @@ const loadList = async () => {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
       goodsName: searchForm.keywords || undefined,
+      customerName: searchForm.customerName || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
@@ -324,6 +359,7 @@ const handleSearch = () => {
 
 const resetSearch = () => {
   searchForm.keywords = ''
+  searchForm.customerName = ''
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()
@@ -344,7 +380,7 @@ const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
   selectedSourceSales.value = null
-  Object.assign(dialogForm, { sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '' })
+  Object.assign(dialogForm, { sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '', customerName: '' })
   dialogVisible.value = true
 }
 
@@ -364,6 +400,7 @@ const handleView = async (row) => {
     }
     Object.assign(dialogForm, {
       sourceSalesId: detail.sourceSalesId ?? null,
+      customerName: detail.customerName || '',
       quantity: detail.quantity ?? 1,
       unitPrice: detail.unitPrice ?? (detail.refundAmount && detail.quantity ? Number(detail.refundAmount) / Number(detail.quantity) : 0),
       returnDate: normalizeDateTime(detail.returnDate || detail.operationTime || detail.createTime),
@@ -447,6 +484,7 @@ const submitForm = () => {
       }
       const payload = {
         sourceSalesId: dialogForm.sourceSalesId,
+        customerName: dialogForm.customerName || undefined,
         quantity: dialogForm.quantity,
         unitPrice: Number(dialogForm.unitPrice),
         operationTime: buildOperationTime(dialogForm.returnDate),

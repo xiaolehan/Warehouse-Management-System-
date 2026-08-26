@@ -59,6 +59,11 @@ public class SalesVO {
 
     private String contractNo;
 
+    /**
+     * 是否含税: 0-不含税, 1-含税
+     */
+    private Integer taxIncluded;
+
     private LocalDateTime createTime;
 
     private Integer isDeleted;

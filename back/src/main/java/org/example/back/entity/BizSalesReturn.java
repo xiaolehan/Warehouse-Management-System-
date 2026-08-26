@@ -70,6 +70,11 @@ public class BizSalesReturn {
     private String voidReason;
 
     /**
+     * 客户公司名快照（从来源销售单带入）
+     */
+    private String customerName;
+
+    /**
      * 仓库确认状态: 1-待仓库确认, 2-已确认入库
      */
     private Integer confirmStatus;

@@ -14,6 +14,8 @@ public class SalesQueryDTO extends PageQuery {
 
     private String goodsName;
 
+    private String customerName;
+
     private Long goodsId;
 
     @DateTimeFormat(pattern = "yyyy-MM-dd")

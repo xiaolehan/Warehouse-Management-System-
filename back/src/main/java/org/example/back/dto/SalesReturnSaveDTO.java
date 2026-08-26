@@ -25,5 +25,10 @@ public class SalesReturnSaveDTO {
 
     private LocalDateTime operationTime;
 
+    /**
+     * 退货公司名（可选，默认从来源销售单带出）
+     */
+    private String customerName;
+
     private String remark;
 }

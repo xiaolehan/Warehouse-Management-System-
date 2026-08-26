@@ -82,6 +82,11 @@ public class BizSales {
     private String customerName;
 
     /**
+     * 是否含税: 0-不含税, 1-含税（仅记录标志，不影响金额计算）
+     */
+    private Integer taxIncluded;
+
+    /**
      * 合同编号(对齐下单文档)
      */
     private String contractNo;

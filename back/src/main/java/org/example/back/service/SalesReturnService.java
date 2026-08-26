@@ -91,6 +91,7 @@ public class SalesReturnService {
         LambdaQueryWrapper<BizSalesReturn> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getReturnNo()), BizSalesReturn::getReturnNo, queryDTO.getReturnNo())
                 .like(StringUtils.hasText(queryDTO.getGoodsName()), BizSalesReturn::getGoodsName, queryDTO.getGoodsName())
+                .like(StringUtils.hasText(queryDTO.getCustomerName()), BizSalesReturn::getCustomerName, queryDTO.getCustomerName())
                 .eq(queryDTO.getGoodsId() != null, BizSalesReturn::getGoodsId, queryDTO.getGoodsId())
             .ge(startTime != null, BizSalesReturn::getOperationTime, startTime)
             .lt(endTime != null, BizSalesReturn::getOperationTime, endTime)
@@ -141,6 +142,9 @@ public class SalesReturnService {
         entity.setOperatorName(loginUser.getRealName());
         entity.setOperationTime(operationTime);
         entity.setRemark(dto.getRemark());
+        // 退货公司名快照：优先取前端传入，否则从来源销售单带出
+        entity.setCustomerName(StringUtils.hasText(dto.getCustomerName())
+                ? dto.getCustomerName() : sourceSales.getCustomerName());
         entity.setBizStatus(1);
         entity.setConfirmStatus(CONFIRM_PENDING);
 
@@ -236,6 +240,7 @@ public class SalesReturnService {
             redFlushDoc.setSourceSalesNo(entity.getSourceSalesNo());
             redFlushDoc.setGoodsId(entity.getGoodsId());
             redFlushDoc.setGoodsName(entity.getGoodsName());
+            redFlushDoc.setCustomerName(entity.getCustomerName());
             redFlushDoc.setQuantity(-entity.getQuantity());
             redFlushDoc.setUnitPrice(entity.getUnitPrice());
             redFlushDoc.setCostUnitPrice(entity.getCostUnitPrice());

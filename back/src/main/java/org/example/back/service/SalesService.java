@@ -103,6 +103,7 @@ public class SalesService {
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getSalesNo()), BizSales::getSalesNo, queryDTO.getSalesNo())
                 .like(StringUtils.hasText(queryDTO.getGoodsName()), BizSales::getGoodsName, queryDTO.getGoodsName())
+                .like(StringUtils.hasText(queryDTO.getCustomerName()), BizSales::getCustomerName, queryDTO.getCustomerName())
                 .eq(queryDTO.getGoodsId() != null, BizSales::getGoodsId, queryDTO.getGoodsId())
             .ge(startTime != null, BizSales::getOperationTime, startTime)
             .lt(endTime != null, BizSales::getOperationTime, endTime)
@@ -183,6 +184,7 @@ public class SalesService {
                     vo.setSalesNo(item.getSalesNo());
                     vo.setGoodsId(item.getGoodsId());
                     vo.setGoodsName(item.getGoodsName());
+                    vo.setCustomerName(item.getCustomerName());
                     vo.setQuantity(item.getQuantity());
                     vo.setReturnedQuantity(returnedQty);
                     vo.setReturnableQuantity(returnableQty);
@@ -226,6 +228,7 @@ public class SalesService {
         entity.setConfirmStatus(CONFIRM_PENDING);
         entity.setCustomerName(dto.getCustomerName());
         entity.setContractNo(dto.getContractNo());
+        entity.setTaxIncluded(dto.getTaxIncluded());
 
         bizSalesMapper.insert(entity);
 

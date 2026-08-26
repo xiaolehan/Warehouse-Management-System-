@@ -16,6 +16,8 @@ public class SalesSourceOptionVO {
 
     private String goodsName;
 
+    private String customerName;
+
     private Integer quantity;
 
     private Integer returnedQuantity;

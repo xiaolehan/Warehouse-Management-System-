@@ -18,6 +18,8 @@ public class SalesReturnVO {
 
     private String orderNo;
 
+    private String customerName;
+
     private Long goodsId;
 
     private String goodsName;

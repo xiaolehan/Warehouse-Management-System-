@@ -12,6 +12,9 @@
           <el-form-item label="出库商品">
             <el-input v-model="searchForm.keywords" placeholder="请输入出库商品" clearable></el-input>
           </el-form-item>
+          <el-form-item label="客户公司名">
+            <el-input v-model="searchForm.customerName" placeholder="请输入客户公司名" clearable></el-input>
+          </el-form-item>
           <el-form-item label="销售日期">
             <el-date-picker
               v-model="searchForm.dateRange"
@@ -34,10 +37,18 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="salesNo" label="销售单号" width="150" />
         <el-table-column prop="goodsName" label="出库商品" />
+        <el-table-column prop="customerName" label="客户公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column prop="quantity" label="销售数量" width="100" />
         <el-table-column v-if="showPrice" prop="salesPrice" label="销售均价(元)" width="120" />
         <el-table-column v-if="showPrice" prop="totalAmount" label="销售总额(元)" width="120" />
+        <el-table-column v-if="showPrice" label="是否含税" width="100" align="center">
+          <template #default="scope">
+            <el-tag :type="Number(scope.row.taxIncluded) === 1 ? 'success' : 'info'" size="small">
+              {{ Number(scope.row.taxIncluded) === 1 ? '含税' : '不含税' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="salesDate" label="销售日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column label="确认状态" width="140">
@@ -143,6 +154,12 @@
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
           <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，提交后将需超管审批后仓储方可确认出库</div>
         </el-form-item>
+        <el-form-item v-if="showPrice" label="是否含税" prop="taxIncluded">
+          <el-radio-group v-model="dialogForm.taxIncluded">
+            <el-radio :value="1">含税</el-radio>
+            <el-radio :value="0">不含税</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item v-if="showPrice" label="销售总额" prop="totalAmount">
           <el-input :value="totalAmountText" disabled>
             <template #append>元</template>
@@ -186,7 +203,7 @@ import {
   getSalesPageAPI
 } from '@/api/business'
 
-const searchForm = reactive({ keywords: '', dateRange: [] })
+const searchForm = reactive({ keywords: '', customerName: '', dateRange: [] })
 const userRole = getRole()
 const userDept = getDeptCode()
 // D36：销售金额列仅销售部门可见（售价）；仓储看库存不看价格；超管全见
@@ -202,7 +219,7 @@ const tableData = ref([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')
 const dialogFormRef = ref(null)
-const dialogForm = reactive({ goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '' })
+const dialogForm = reactive({ goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '', taxIncluded: 0 })
 
 const totalAmountText = computed(() => {
   const qty = Number(dialogForm.quantity || 0)
@@ -348,6 +365,7 @@ const loadList = async () => {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
       goodsName: searchForm.keywords || undefined,
+      customerName: searchForm.customerName || undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
@@ -375,6 +393,7 @@ const handleSearch = () => {
 
 const resetSearch = () => {
   searchForm.keywords = ''
+  searchForm.customerName = ''
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()
@@ -394,7 +413,7 @@ const handleCurrentChange = (val) => {
 const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
-  Object.assign(dialogForm, { goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '' })
+  Object.assign(dialogForm, { goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '', taxIncluded: 0 })
   dialogVisible.value = true
 }
 
@@ -413,7 +432,8 @@ const handleView = async (row) => {
       unitPrice: detail.salesPrice ?? detail.unitPrice ?? 0,
       salesDate: normalizeDateTime(detail.salesDate || detail.operationTime || detail.createTime),
       customerName: detail.customerName || '',
-      contractNo: detail.contractNo || ''
+      contractNo: detail.contractNo || '',
+      taxIncluded: detail.taxIncluded ?? 0
     })
     dialogVisible.value = true
   } catch (error) {
@@ -495,6 +515,7 @@ const submitForm = () => {
         operationTime: buildOperationTime(dialogForm.salesDate),
         customerName: dialogForm.customerName || undefined,
         contractNo: dialogForm.contractNo || undefined,
+        taxIncluded: dialogForm.taxIncluded ?? 0,
         remark: dialogForm.remark || ''
       }
       const res = await createSalesAPI(payload)

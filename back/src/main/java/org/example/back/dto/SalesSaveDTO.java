@@ -33,5 +33,10 @@ public class SalesSaveDTO {
      */
     private String contractNo;
 
+    /**
+     * 是否含税: 0-不含税, 1-含税（仅记录标志，不影响金额计算）
+     */
+    private Integer taxIncluded;
+
     private String remark;
 }
