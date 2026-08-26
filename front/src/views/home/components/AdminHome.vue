@@ -170,8 +170,8 @@ const quickActions = computed(() => {
       { path: '/system/void-approval', title: '作废审批', description: '审核采购与销售历史单据作废申请' }
     ],
     purchase: [
-      { path: '/business/purchase', title: '商品进货', description: '处理进货单据与审批结果回看' },
-      { path: '/business/purchase-return', title: '进货退货', description: '处理进货退货与状态追踪' },
+      { path: '/business/purchase', title: '物料进货', description: '处理进货单据与审批结果回看' },
+      { path: '/business/purchase-return', title: '物料退货', description: '处理进货退货与状态追踪' },
       { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存商品明细' }
     ],
     hr: [

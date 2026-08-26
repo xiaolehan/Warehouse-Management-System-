@@ -9,8 +9,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="商品名称">
-            <el-input v-model="searchForm.keywords" placeholder="请输入商品名称" clearable></el-input>
+          <el-form-item label="物料名称">
+            <el-input v-model="searchForm.keywords" placeholder="请输入物料名称" clearable></el-input>
           </el-form-item>
           <el-form-item label="供应商">
             <el-input v-model="searchForm.supplierName" placeholder="请输入供应商" clearable></el-input>
@@ -36,7 +36,7 @@
       <el-table :data="tableData" border style="width: 100%" v-loading="loading">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="orderNo" label="进货单号" width="150" />
-        <el-table-column prop="goodsName" label="商品名称" />
+        <el-table-column prop="goodsName" label="物料名称" />
         <el-table-column prop="supplierName" label="供应商" />
         <el-table-column v-if="showPrice" prop="price" label="进货单价(元)" width="120" />
         <el-table-column prop="quantity" label="进货数量" width="100" />
@@ -115,7 +115,7 @@
 
     <el-dialog :title="dialogType === 'view' ? '查看进货信息' : '新增进货'" v-model="dialogVisible" width="500px">
       <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
-        <el-form-item label="商品名称" prop="goodsId">
+        <el-form-item label="物料名称" prop="goodsId">
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
             <el-option v-for="item in goodsOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>

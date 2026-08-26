@@ -9,8 +9,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="退货商品">
-            <el-input v-model="searchForm.keywords" placeholder="请输入退货商品" clearable></el-input>
+          <el-form-item label="退货物料">
+            <el-input v-model="searchForm.keywords" placeholder="请输入退货物料" clearable></el-input>
           </el-form-item>
           <el-form-item label="退货至供应商">
             <el-input v-model="searchForm.supplierName" placeholder="请输入退货至供应商" clearable></el-input>
@@ -37,7 +37,7 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="returnNo" label="退货单号" width="150" />
         <el-table-column prop="orderNo" label="原进货单" width="150" />
-        <el-table-column prop="goodsName" label="退货商品" />
+        <el-table-column prop="goodsName" label="退货物料" />
         <el-table-column prop="supplierName" label="退货至供应商" />
         <el-table-column prop="returnQuantity" label="退货数量" width="100" />
         <el-table-column v-if="showPrice" prop="returnAmount" label="退货金额(元)" width="120" />
@@ -130,7 +130,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="退货商品">
+        <el-form-item label="退货物料">
           <el-input :value="selectedSourcePurchase?.goodsName || '-'" disabled />
         </el-form-item>
         <el-form-item label="可退数量">
