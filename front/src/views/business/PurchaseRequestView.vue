@@ -171,7 +171,7 @@
         <el-table-column label="序号" width="60" type="index" />
         <el-table-column prop="goodsName" label="商品" />
         <el-table-column prop="quantity" label="数量" width="100" />
-        <el-table-column label="采购单价" width="120">
+        <el-table-column v-if="showPrice" label="采购单价" width="120">
           <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
         </el-table-column>
       </el-table>
@@ -239,6 +239,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
   getPurchaseRequestPageAPI, getPurchaseRequestDetailAPI, getShortageGoodsAPI,
   createPurchaseRequestAPI, processPurchaseRequestAPI, arrivePurchaseRequestAPI,
@@ -248,6 +249,8 @@ import {
 import { getGoodsOptionsAPI } from '@/api/business'
 
 const userStore = useUserStore()
+
+const showPrice = getDeptCode() === 'purchase' || isSuperAdmin(getRole())
 
 const loading = ref(false)
 const tableData = ref([])

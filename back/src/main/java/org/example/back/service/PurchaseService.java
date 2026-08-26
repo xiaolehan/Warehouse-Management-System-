@@ -246,6 +246,12 @@ public class PurchaseService {
 
         bizPurchaseMapper.insert(purchase);
         increaseStock(goods.getId(), dto.getQuantity());
+
+        // 采购申请链路确认入库时，把本次采购单价回写为商品最新进价（仅更新 purchase_price 一列，
+        // 避免用 updateById 整行覆盖——increaseStock 已用 SQL 自增 stock，内存 goods 里有旧库存值）
+        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
+        priceUpdate.eq(BaseGoods::getId, goods.getId()).set(BaseGoods::getPurchasePrice, unitPrice);
+        baseGoodsMapper.update(null, priceUpdate);
     }
 
     // ============================== 采购到货确认（推仓储） ==============================
