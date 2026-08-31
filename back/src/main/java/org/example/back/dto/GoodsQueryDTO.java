@@ -9,6 +9,9 @@ public class GoodsQueryDTO extends PageQuery {
 
     private String goodsName;
 
+    /** 货品类型: material/product（D41） */
+    private String type;
+
     private String productName;
 
     private String category;

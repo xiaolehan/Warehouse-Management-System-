@@ -28,8 +28,8 @@ public class GoodsController {
     }
 
     @GetMapping("/options")
-    public Result<List<GoodsOptionVO>> options() {
-        return Result.success(goodsService.options());
+    public Result<List<GoodsOptionVO>> options(@RequestParam(required = false) String type) {
+        return Result.success(goodsService.options(type));
     }
 
     @GetMapping("/{id}")

@@ -5,6 +5,101 @@
 
 ---
 
+## 会话 16 — 2026-08-31
+
+### 阶段 13 生产入库/生产领料迁到生产端（已完成 + E2E 全绿）
+
+- **设计结论（对齐原始需求"生产端生产入库/生产领料"）：** 生产领料在生产任务单开工时已自动生成（D43），无需手动；故生产端**生产入库改为订单驱动**（质检合格进入待入库后，点击"生产入库"→ 成品库存增加 + 记录一笔生产入库交易 + 订单已完成），取代生产人员在仓储自由建"生产入库"单。仓储侧手工"新增生产入库"保留为建仓/冲账的仓储管理员工具。
+- **后端：**
+  - `ProductionOrderService` 新增 `receipt(id)`（注入 `BizProductionMapper`）：仅 `STATUS_AWAIT_QC(3)` 可入库，先 `qcService.ensurePassedForReceipt` 复检（两测点最新 OK 且未报废）→ 成品 `increaseStock` + 写 `biz_production` 入库交易（remark="生产任务单 ... 完工入库"）→ 订单 → `STATUS_DONE(4)`。加私有 `increaseStock` 助手。控制器加 `POST /business/production-order/{id}/receipt`。
+  - `ProductionService`（仓储生产入库）拆分权限：`page/getById` → `requireProductionReadAccess()`（仓储+生产部门成员可读）；`create/delete/void` → `requireProductionWriteAccess()`（仓储管理员）。消息改为"仅仓储/生产部门可查看生产入库"。
+  - `PickListService`（生产领料）：`page/getById` 读权限放开到仓储+生产部门成员（消息"仅仓储/生产部门可查看领料"）；`page` 数据范围——生产成员只看 PICK 类型（含生产任务单自动领料），非仓储非生产只看本人；`ensureViewAccess` 放行生产成员查看 PICK 领料（不限申请人）；发料/驳回/申请仍仓储管理员。
+- **前端：** `ProductionOrderView` 把"完工"按钮改为 status===3 显示"生产入库"（调 receipt；状态 3 标签由"待质检"改"待入库"+加 6 已报废）；`business.js` 加 `receiptProductionOrderAPI`；`router` 生产入库/生产领料路由 meta 放开到 warehouse+production+employee；`layout` 生产管理员/生产员工菜单各加"生产入库"和"生产领料"。
+- **E2E（production_admin + production_employee + warehouse_admin + sales_admin）：** 成品+BOM→任务单 qty10→start 自动发料→首测+成品测 OK→**待入库(3)**→receipt→**已完成(4)**、成品库存 0→10、`biz_production` 生成"完工入库"交易。权限矩阵（均看 body.code）：生产成员/仓储管理员读 生产入库、生产领料 **200**；sales_admin rage **403**；生产 admin/员工 POST 手工生产入库 **403**；仓储管理员 POST **200**。测试数据全清理、物料库存还原 500/400。
+- **可见范围：** 生产成员在仓储"生产入库"列表只读（新增按钮按 v-permission 仓储 admin 隐藏），主入库入口是生产任务单的"生产入库"按钮。
+
+### 下一步（全部阶段 9-13 完成；可整理 CONTEXT.md / ADR / commit）
+
+---
+
+## 会话 15 — 2026-08-31
+
+### 阶段 12 生产质检：首测/成品测，NG→返工→重测→报废（已完成 + E2E 全绿）
+
+- **DB（db.sql + 实库）：** `biz_production_qc`（order_id / goods_id / goods_name / test_point first首测|final成品测 / tester / result OK|NG / reason / disposition REWORK返工|SCRAP报废 / create_time）。（D40）
+- **生产单状态调整：** `BizProductionOrder` 加 `STATUS_SCRAPPED=6`；`statusText` 由"待质检"改为"待入库"（3），第 6 为"已报废"。
+- **后端（新文件）：** `entity/BizProductionQc`、`mapper/BizProductionQcMapper`、`vo/QcStateVO`（passed/scrapped + 两测点状态 + 记录历史）、`dto/QcSaveDTO`（orderId/testPoint/result/reason，NG 时 reason 必填校验）+`QcDisposeDTO`、`service/QcService`、`controller/QcController`(`/business/qc` record/dispose/order/{id} snapshot)。
+  - **核心逻辑（追加式记录，最新一条为准）：** `record` 插入后 `buildState` 若两测点最新均 OK → 订单自动 → 待入库；`dispose` 取该测点最新 NG：REWORK → 置 disposition + 订单回生产中待重测；SCRAP → 置 disposition + 订单 → 已报废 + 撤未读 biz 消息。
+  - `complete`/质检通过才允许完工放入库（`ProductionOrderService` 注入 QcService + BizProductionQcMapper，getById 附带 qcState）。
+  - **踩坑（本次揪出真 bug）：** `setDisposition` 用 `.eq(getDisposition, null)` 生成 `disposition = NULL`（SQL 永假）→ REWORK/SCRAP 处置**静默不落库**，详情里一直显示"NG-待处置"且可重复处置。改为 `.isNull(getDisposition)` 才真正更新。
+- **前端：** `views/business/QcView.vue`（QC 控制台：列出生产中/待入库订单+两测点状态 tag、量子弹窗含首测/成品测处置按钮与测试结果录入 + 记录历史表）；`business.js` 加 getQcSnapshot/recordQc/disposeQc；路由 `business/qc` 由占位页改为该页（菜单原已就绪）。
+- **E2E（production_admin + production_employee + sales_admin）：**
+  - 建成品+BOM（电阻×2/电容×3）+ 建任务单 qty10 → start 自动发料（电阻20/电容30 扣库正确）→ 首测 OK → 成品测 NG（无原因 400）→ 记录 NG → dispose REWORK 后 disposition=REWORK 落库、状态"返工-待重测" → 重测 OK → 两测点全绿 → 订单**待入库、passed=true**。
+  - SCRAP：start → NG → dispose SCRAP → 订单已报废(6)、scrapped=true、disposition=SCRAP。返工重测后首测未测仍不 passed（正确）。
+  - 权限：production_employee **可**质检(记录/处置 200)；sales_admin snapshot **403**"仅生产研发部可执行质检"。
+  - 测试数据（成品/BOM/工单/领料/质检/预警）全量清理，物料库存还原 500/400。
+
+### 下一步（阶段 13：迁移生产入库/生产领料到生产端）
+
+---
+
+## 会话 13 — 2026-08-31
+
+### 阶段 10 BOM 子系统（已完成 + E2E 全绿）
+
+- **数据层（db.sql + 实库已生效）：** `base_goods` 加 `type`（material/product，D41）；`biz_bom`（bom_code 唯一 + `uk_bom_goods` 一成品一 BOM）、`biz_bom_detail`（goodsId 可空=说明行，is_reference 参考行不参与齐套）。
+- **Goods 栈加 type（实体/SaveDTO/VO/QueryDTO/OptionVO/Controller options(type)）：** `GoodsService` 加 `GOODS_TYPE_PRODUCT/MATERIAL` 常量 + `normalizeType`（缺省 material）+ type 过滤，物料资料读取放开到生产部门（D39/D41）。
+- **BOM 后端（新文件）：** `entity/BizBom`+`BizBomDetail`、`mapper/BizBomMapper`+`BizBomDetailMapper`、`dto/BomSaveDTO`（@Valid 明细）+`BomDetailDTO`+`BomQueryDTO`、`vo/BomVO`+`BomDetailVO`、`service/BomService`、`controller/BomController`(`/base/bom`)。
+  - 权限：读=`requireAnyDeptMemberOrSuperAdmin(PRODUCTION, WAREHOUSE)`；写=`requireDeptAdminOrSuperAdmin(PRODUCTION,...)`。
+  - 校验：goods 必须 `type=product` 且启用；bom_code 唯一；一成品一 BOM；明细可空 goodsId（说明行），关联必须为 material；updata 明细整体重建（删旧+插新）。
+- **BOM 前端：** 新页 `views/base/BomView.vue`（搜索/表格/CRUD 弹窗带明细行内编辑 + 批量导入弹窗：从 Excel 复制 Tab 文本粘贴解析）。路由 `base/bom` 由占位页改为 BomView；布局加生产管理员下 BOM 菜单，并据 D41 给仓储管理员也加 BOM 菜单（只读）。
+- **权限错位坑（本次踩）：** `requireDeptAdminOrSuperAdmin(String deptCode, String message)` 参数顺序是 **(deptCode, message)**，我误写成了 (message, deptCode)，导致 403 返回体 message 恰为 `"production"`。已修正。注：`requireAnyDeptMemberOrSuperAdmin(String message, String... deptCodes)` 是 **message 在前**，两种方法参数顺序不一致，易踩。
+- **devtools 双 classloader ClassCastException：** 修改后没等 devtools 完成重启就开始 curl，命中已知坑（两个 RestartClassLoader 并存）。`fuser -k 8080/tcp` + 确认 8080 释放 + `./mvnw clean compile` 后重起即恢复。
+- **auth header：** `sa-token.token-prefix=Bearer`，故 curl 需 `Authorization: Bearer <token>`（无前缀会 401，回报"用户未登录/请先登录"）。
+- **E2E（production_admin=写+读，warehouse_admin=只读，production_employee=只读）：** create→page→getById→update(明细重建)→delete 全 200；warehouse_admin/production_employee create 403（"仅生产研发部管理员可维护 BOM"）；hr_admin 403；非 product goods 建 BOM →400。测试成品(`G_PTO153` goods_id=24)与软删 BOM 明细已清理，DB 干净。
+
+### 下一步（阶段 11 生产任务单 + 齐套预警）
+
+---
+
+## 会话 14 — 2026-08-31
+
+### 阶段 11 生产任务单 + 齐套预警（已完成 + E2E 全绿）
+
+- **DB（db.sql + 实库）：** `biz_production_order`（order_no 唯一 / goods_id 成品 / quantity / status / kit_status / source / process_snapshot 工序快照 / remark）。（D42/D43）
+- **后端（新文件）：** `entity/BizProductionOrder`（status 常量 1待生产/2生产中/3待质检/4已完成/5已作废；kit ok/partial/block）、`mapper/BizProductionOrderMapper`、`dto/ProductionOrderSaveDTO`+`ProductionOrderQueryDTO`、`vo/ProductionOrderVO`+`KitShortageVO`（含 lineStatus），`service/ProductionOrderService`，`controller/ProductionOrderController`(`/business/production-order`)。
+  - **核心 `computeKit`：** 展开成品 BOM×生产数量 → 每物料 需求 vs 库存 → ok/partial/block 三级；任一行 block→整体 block。
+  - **create**（生产 admin）：要求成品并有 BOM（无 BOM 拒绝），算齐套、存 kit_status，**有缺口即 `MessageService.sendKitShortageToPurchaseAdmins` 站内信通知采购 admin（biz=production_order）**；返回 createTime 修正（insert 后 re-select）。
+  - **start 开工**：重查齐套，block 则 400 阻断；否则**自动按 BOM×数量生成领料单（PICK，直接置已发料）并扣库存**（按 min(需求floor, 库存) 发，缺料部分留待采购补后再领），进入生产中。
+  - **complete / void**：投产员可完工；待生产/生产中可作废（作废撤销未读采购预警 messages+备注原因）。
+  - getById 对待生产/生产中**实时重算齐套**（反映当前库存）。
+  - 工序静态 SOP 8 道装配工序（D40；首测/成品测走质检阶段12）快照存 process_snapshot。
+- **前端：** `ProductionOrderView.vue`（列表/下达弹窗含齐套结果红绿黄表 + 缺口标红/开工/完工/作废/详情含工序清单+齐套明细）；`business.js` 加 6 个 API；路由生产任务单由占位页改为该页。
+- **E2E（production_admin）：** create qty=100 → kit=block（轴承0库存）、友情 partial；start 被 400 阻断。补足轴承库存后 start 成功：自动生成 pick_list（电阻200/电容100/联想80/轴承100）+库存正确扣减+status→生产中；complete→已完成；作废已完工单 400、可作废待生产单→已作废且其采购预警消息被撤；purchase_admin 收到"生产齐套预警-待采购"站内信。全部 200/正确。
+- **踩坑：** curl 直接拼中文 query 参数报 `HTTP 400 Invalid character`（RFC 3986）——前端的 axios `params` 会自动 URL 编码，E2E 时用 `curl -G --data-urlencode`。测试数据（成品/BOM/轴承/自动领料单/工单/预警消息）已全量清理，物料库存已还原。
+
+### 下一步（阶段 12 质检记录：首测/成品测，NG→返工→重测→报废，合格才允许成品质检后生产入库）
+
+---
+
+## 会话 12 — 2026-08-31
+
+### 生产模块设计定稿（阶段 9–13 规划，未开工）
+
+- **触发：** 用户要新增"生产模块 + 生产管理员/员工登录界面"，并讨论与仓储端的联动（生产入库/生产领料是否移到生产端）。用户提供 `document/生产单.jpg`（产品制程单，10 道工序）与 `document/PTO153-BOM.xlsx`（成品 PTO153 的 BOM：序号/产品名称/规格/数量/材质/备注，证明"每个成品一张 BOM"）。
+- **一次读图失败的坑：** 当前对话模型为 deepseek-v4-flash，**只支持文本输入**，`Read 生产单.jpg` 报 `400 Model only support text input`。解决：`pip install --user --break-system-packages rapidocr-onnxruntime` 本地 OCR 提取制程单文字（`键美化A` 为水印，型号实际空白）。该依赖在 `~/.local`，非项目依赖。
+- **二次开发（`/mattpocock-skills:grill-with-docs` grilling + domain-modeling）：** 逐轮锁定决策。核心洞察：用户真实痛点是"生产到一半发现缺料→现采购→工期延误"，根源是系统无法在开工前判断"成品需要哪些物料各多少"（无 BOM）→ 把 Q5 从"单单据版"改判为 **BOM＋齐套预警**。生产与研发合并为一个部门"生产研发部"。
+- **产出：** `task_plan.md` 加阶段 9–13（部门角色 / BOM / 生产任务单+齐套预警 / 质检 / 迁移）+ 决策 D37–D45 + 总体进度更新；`CONTEXT.md` 补"生产"域 12 词条（成品/物料/BOM/单台用量/齐套预警/生产任务单/质检记录/返工重测报废/生产领料/生产入库/生产研发部）；`progress.md` 记本会话。
+- **设计定稿（决策汇总）：**
+  - D37 生产=新部门 `production`（生产研发部），复用三档角色；管理员管 BOM+建任务，员工执行。
+  - D38 生产入库/生产领料移到生产端，仓储留只读台账。
+  - D39 生产人员只读全库存（数量层，无金额）；价格仍按 D36 归属。
+  - D40 8 装配工序静态清单（不追踪）；2 测试工序落库"质检记录"，NG→返工→重测→报废，合格才入库。
+  - D41 base_goods 加 type(成品/物料) + BOM 主从表；D42 齐套预警（缺→阻断+通知采购）；D43 领料按 BOM 自动生成；D44 product_name 保留不作权威；D45 BOM 导入 xlsx + 手工，PTO153 试点。
+- **下一步：** 待用户确认设计定稿 → 按阶段 9 起开工。建议顺序：9(部门角色)→10(BOM)→11(工单+齐套)→12(质检)→13(迁移)。实现注意复用现有范式（AuditLog/PreventDuplicateSubmit/MessageService.sendToDeptAdminsWithBiz；"生产"域需新 dept 消息给本部门 admin）。
+
+---
+
 ## 会话 11 — 2026-08-25
 
 ### 仓储确认页金额可见性 + 筛选改造（D36）

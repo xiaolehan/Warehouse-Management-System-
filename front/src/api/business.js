@@ -27,6 +27,19 @@ export const completePurchaseReturnAPI = (id) => request.put(`/business/purchase
 
 export const getSalesPageAPI = (params) => request.get('/business/sales/page', { params })
 export const getSalesDetailAPI = (id) => request.get(`/business/sales/${id}`)
+
+export const getProductionOrderPageAPI = (params) => request.get('/business/production-order/page', { params })
+export const getProductionOrderDetailAPI = (id) => request.get(`/business/production-order/${id}`)
+export const createProductionOrderAPI = (data) => request.post('/business/production-order', data)
+export const startProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/start`)
+export const completeProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/complete`)
+export const receiptProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/receipt`)
+export const voidProductionOrderAPI = (id, reason) => request.post(`/business/production-order/${id}/void`, null, { params: { reason } })
+
+// 生产质检
+export const getQcSnapshotAPI = (orderId) => request.get(`/business/qc/order/${orderId}`)
+export const recordQcAPI = (data) => request.post('/business/qc/record', data)
+export const disposeQcAPI = (data) => request.post('/business/qc/dispose', data)
 export const getReturnableSalesOptionsAPI = (params) => request.get('/business/sales/options/returnable', { params })
 export const createSalesAPI = (data) => request.post('/business/sales', data)
 export const deleteSalesAPI = (id) => request.delete(`/business/sales/${id}`)

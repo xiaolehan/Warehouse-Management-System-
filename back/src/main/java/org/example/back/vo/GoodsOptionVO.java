@@ -25,4 +25,7 @@ public class GoodsOptionVO {
     private String unit;
 
     private BigDecimal salePrice;
+
+    /** D41 货品类型: material/product */
+    private String type;
 }

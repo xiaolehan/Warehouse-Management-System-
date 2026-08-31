@@ -12,6 +12,9 @@ public class GoodsSaveDTO {
     @NotBlank(message = "物料名称不能为空")
     private String goodsName;
 
+    /** 货品类型: material-物料/零件, product-成品（D41），缺省 material */
+    private String type;
+
     private String productName;
 
     private String category;

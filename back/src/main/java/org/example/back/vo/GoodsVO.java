@@ -12,6 +12,9 @@ public class GoodsVO {
 
     private String goodsCode;
 
+    /** 货品类型: material/product（D41） */
+    private String type;
+
     private String goodsName;
 
     private String productName;

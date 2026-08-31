@@ -18,6 +18,9 @@ public class BaseGoods {
 
     private String goodsCode;
 
+    /** 货品类型: material-物料/零件, product-成品（D41） */
+    private String type;
+
     private String goodsName;
 
     private String productName;

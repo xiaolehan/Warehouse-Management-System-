@@ -57,6 +57,7 @@
 
         <template v-else-if="isWarehouseAdmin">
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
@@ -81,6 +82,24 @@
             <el-menu-item index="/system/work-requirement"><el-icon><Tickets /></el-icon><span>工作要求</span></el-menu-item>
             <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>
           </el-sub-menu>
+          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+        </template>
+
+        <!-- 生产研发部（D37）：生产管理员管 BOM+建任务+派发；生产员工执行 -->
+        <template v-else-if="isProductionAdmin">
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/business/production-order"><el-icon><Notebook /></el-icon><span>生产任务单</span></el-menu-item>
+          <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
+          <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
+          <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+        </template>
+        <template v-else-if="isProductionEmployee">
+          <el-menu-item index="/business/production-order"><el-icon><Notebook /></el-icon><span>生产任务单</span></el-menu-item>
+          <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
+          <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
+          <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
 
@@ -195,10 +214,12 @@ const isSalesAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.val
 const isWarehouseAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'warehouse')
 const isPurchaseAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'purchase')
 const isHrAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'hr')
-// 业务部门员工（D32）：销售/采购员工可访问对应业务模块（create+read，不动库存）
+const isProductionAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'production')
+// 业务部门员工（D32）：销售/采购员工可访问对应业务模块（create+read，不动库存）；生产员工可执行
 const isSalesEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'sales')
 const isPurchaseEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'purchase')
-const isBizEmployee = computed(() => isSalesEmployee.value || isPurchaseEmployee.value)
+const isProductionEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'production')
+const isBizEmployee = computed(() => isSalesEmployee.value || isPurchaseEmployee.value || isProductionEmployee.value)
 
 const toggleSidebar = () => {
   if (!showSidebar.value) {

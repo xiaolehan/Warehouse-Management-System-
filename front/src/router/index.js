@@ -52,7 +52,25 @@ const router = createRouter({
           path: "base/goods",
           name: "BaseGoods",
           component: () => import("../views/base/GoodsView.vue"),
-          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production'] }
+        },
+        {
+          path: "base/bom",
+          name: "BaseBom",
+          component: () => import("../views/base/BomView.vue"),
+          meta: { roles: ['admin', 'employee', 'superadmin'], deptCodes: ['production', 'warehouse'] }
+        },
+        {
+          path: "business/production-order",
+          name: "BusinessProductionOrder",
+          component: () => import("../views/business/ProductionOrderView.vue"),
+          meta: { roles: ['admin', 'employee'], deptCodes: ['production'] }
+        },
+        {
+          path: "business/qc",
+          name: "BusinessQc",
+          component: () => import("../views/business/QcView.vue"),
+          meta: { roles: ['admin', 'employee'], deptCodes: ['production'] }
         },
         {
           path: "business/purchase",
@@ -94,7 +112,7 @@ const router = createRouter({
           path: "business/pick-list",
           name: "BusinessPickList",
           component: () => import("../views/business/PickListView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'production'] }
         },
         {
           path: "business/purchase-request",
@@ -106,7 +124,7 @@ const router = createRouter({
           path: "business/production",
           name: "BusinessProduction",
           component: () => import("../views/business/ProductionView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'production'] }
         },
         {
           path: "system/notice",

@@ -362,6 +362,29 @@ public class MessageService {
     }
 
     /**
+     * D42 生产任务单齐套预警：确认任务单时若发现物料缺口，通知采购管理员采购补料。
+     */
+    public void sendKitShortageToPurchaseAdmins(String orderNo, String goodsName, String shortageSummary, Long orderId) {
+        Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
+        if (purchaseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                purchaseDeptId,
+                "生产齐套预警-待采购",
+                String.format(
+                        Locale.ROOT,
+                        "生产任务单 %s（成品：%s）存在物料缺口，请采购补料。缺口明细：%s",
+                        orderNo == null ? "-" : orderNo,
+                        goodsName == null ? "-" : goodsName,
+                        shortageSummary == null ? "-" : shortageSummary
+                ),
+                "production_order",
+                orderId
+        );
+    }
+
+    /**
      * 采购到货后通知仓储管理员有待确认的进货入库。
      */
     public void sendPurchaseArrivedToWarehouseAdmins(String purchaseNo, String operatorName, Long purchaseId) {

@@ -1,0 +1,353 @@
+<template>
+  <el-card>
+    <el-form :inline="true" :model="searchForm">
+      <el-form-item label="任务单号">
+        <el-input v-model="searchForm.orderNo" placeholder="请输入任务单号" clearable />
+      </el-form-item>
+      <el-form-item label="成品名称">
+        <el-input v-model="searchForm.goodsName" placeholder="请输入成品名称" clearable />
+      </el-form-item>
+      <el-form-item label="状态">
+        <el-select v-model="searchForm.status" placeholder="全部" clearable style="width: 130px">
+          <el-option v-for="s in statusOptions" :key="s.value" :label="s.label" :value="s.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
+        <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
+        <el-button
+          type="success" :icon="Plus" @click="handleAdd"
+          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+        >下达生产任务单</el-button>
+      </el-form-item>
+    </el-form>
+
+    <el-table :data="tableData" border style="width: 100%" v-loading="loading">
+      <el-table-column type="index" label="序号" width="60" />
+      <el-table-column prop="orderNo" label="任务单号" min-width="130" />
+      <el-table-column prop="goodsName" label="成品名称" min-width="170" />
+      <el-table-column prop="quantity" label="数量" width="80" align="center" />
+      <el-table-column prop="unit" label="单位" width="70" align="center" />
+      <el-table-column label="齐套状态" width="110" align="center">
+        <template #default="scope">
+          <el-tag :type="kitTagType(scope.row.kitStatus)" size="small">{{ scope.row.kitStatusText }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="100" align="center">
+        <template #default="scope">
+          <el-tag :type="statusTagType(scope.row.status)" size="small">{{ scope.row.statusText }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="createTime" label="下达时间" width="170" />
+      <el-table-column label="操作" width="220" fixed="right">
+        <template #default="scope">
+          <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
+          <el-button v-if="scope.row.status === 1" size="small" type="primary" :icon="VideoPlay" @click="handleStart(scope.row)">开工</el-button>
+          <el-button v-if="scope.row.status === 3" size="small" type="success" :icon="CircleCheck" @click="handleReceipt(scope.row)">生产入库</el-button>
+          <el-button
+            v-if="scope.row.status === 1 || scope.row.status === 2" size="small" type="danger" :icon="CloseBold"
+            @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          >作废</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div style="margin-top: 20px; display: flex; justify-content: flex-end;">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        :total="total"
+        @size-change="handleSizeChange"
+        @current-change="handleCurrentChange"
+      />
+    </div>
+
+    <!-- 下达生产任务单 -->
+    <el-dialog :title="'下达生产任务单' + (createResult ? '（已下达，齐套结果如下）' : '')" v-model="createVisible" width="620px">
+      <el-form :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px" :disabled="!!createResult">
+        <el-form-item label="成品" prop="goodsId">
+          <el-select v-model="createForm.goodsId" filterable placeholder="选择成品（type=product）" style="width: 100%">
+            <el-option
+              v-for="opt in productOptions" :key="opt.goodsId"
+              :label="`${opt.goodsName}（${opt.unit || ''}）`" :value="opt.goodsId"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="生产数量" prop="quantity">
+          <el-input-number v-model="createForm.quantity" :min="1" style="width: 200px" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="createForm.remark" type="textarea" :rows="2" placeholder="备注（可选）" />
+        </el-form-item>
+      </el-form>
+
+      <template v-if="createResult">
+        <el-divider content-position="left">
+          齐套预警
+          <el-tag :type="kitTagType(createResult.kitStatus)" size="small" style="margin-left: 8px">{{ createResult.kitStatusText }}</el-tag>
+        </el-divider>
+        <el-alert
+          v-if="createResult.kitStatus === 'block'"
+          title="存在严重缺料，开工将被阻断，请采购补齐后重试。" type="error" :closable="false" style="margin-bottom: 8px"
+        />
+        <el-alert
+          v-else-if="createResult.kitStatus === 'partial'"
+          title="存在部分缺料，可开工（有库存的部分将先发料），同时已通知采购补料。" type="warning" :closable="false" style="margin-bottom: 8px"
+        />
+        <el-alert v-else title="物料齐套，可正常开工。" type="success" :closable="false" style="margin-bottom: 8px" />
+        <el-table :data="createResult.kitLines || []" border size="small">
+          <el-table-column prop="goodsName" label="物料" min-width="120" />
+          <el-table-column prop="unit" label="单位" width="60" />
+          <el-table-column label="用量" width="80">
+            <template #default="s">{{ fmtNum(s.row.unitUsage) }}</template>
+          </el-table-column>
+          <el-table-column label="需用量" width="90">
+            <template #default="s">{{ fmtNum(s.row.required) }}</template>
+          </el-table-column>
+          <el-table-column prop="stock" label="库存" width="80" />
+          <el-table-column label="缺口" width="90">
+            <template #default="s">
+              <span :class="s.row.deficit > 0 ? 'deficit-red' : ''">{{ fmtNum(s.row.deficit) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="匹配" width="90" align="center">
+            <template #default="s">
+              <el-tag :type="lineTagType(s.row.lineStatus)" size="small">{{ s.row.lineStatusText }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <template #footer>
+        <el-button v-if="!createResult" type="primary" :icon="Check" @click="handleCreate">下达并预警</el-button>
+        <el-button :icon="Close" @click="closeCreate">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 查看详情 -->
+    <el-dialog title="生产任务单详情" v-model="detailVisible" width="720px" top="6vh">
+      <template v-if="detail">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="任务单号">{{ detail.orderNo }}</el-descriptions-item>
+          <el-descriptions-item label="成品">{{ detail.goodsName }}</el-descriptions-item>
+          <el-descriptions-item label="数量">{{ detail.quantity }} {{ detail.unit }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="statusTagType(detail.status)" size="small">{{ detail.statusText }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="齐套状态">
+            <el-tag :type="kitTagType(detail.kitStatus)" size="small">{{ detail.kitStatusText }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="下达时间">{{ detail.createTime }}</el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider content-position="left">装配工序（静态 SOP）</el-divider>
+        <ol style="margin: 0; padding-left: 20px">
+          <li v-for="(step, i) in (detail.processList || [])" :key="i">{{ step }}</li>
+        </ol>
+
+        <template v-if="detail.kitLines && detail.kitLines.length">
+          <el-divider content-position="left">齐套明细</el-divider>
+          <el-table :data="detail.kitLines" border size="small">
+            <el-table-column prop="goodsName" label="物料" min-width="120" />
+            <el-table-column label="需用量" width="100">
+              <template #default="s">{{ fmtNum(s.row.required) }}</template>
+            </el-table-column>
+            <el-table-column prop="stock" label="库存" width="80" />
+            <el-table-column label="缺口" width="90">
+              <template #default="s"><span :class="s.row.deficit > 0 ? 'deficit-red' : ''">{{ fmtNum(s.row.deficit) }}</span></template>
+            </el-table-column>
+            <el-table-column label="匹配" width="90" align="center">
+              <template #default="s"><el-tag :type="lineTagType(s.row.lineStatus)" size="small">{{ s.row.lineStatusText }}</el-tag></template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </template>
+    </el-dialog>
+  </el-card>
+</template>
+
+<script setup>
+import { onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close
+} from '@element-plus/icons-vue'
+import {
+  receiptProductionOrderAPI,
+  createProductionOrderAPI,
+  getProductionOrderDetailAPI,
+  getProductionOrderPageAPI,
+  startProductionOrderAPI,
+  voidProductionOrderAPI
+} from '@/api/business'
+import { getGoodsProductOptionsAPI } from '@/api/base'
+
+const statusOptions = [
+  { value: 1, label: '待生产' },
+  { value: 2, label: '生产中' },
+  { value: 3, label: '待入库' },
+  { value: 4, label: '已完成' },
+  { value: 5, label: '已作废' },
+  { value: 6, label: '已报废' }
+]
+
+const searchForm = reactive({ orderNo: '', goodsName: '', status: null })
+const tableData = ref([])
+const loading = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+
+const productOptions = ref([])
+const createVisible = ref(false)
+const createFormRef = ref(null)
+const createResult = ref(null)
+const createForm = reactive({ goodsId: null, quantity: 1, remark: '' })
+const createRules = {
+  goodsId: [{ required: true, message: '请选择成品', trigger: 'change' }],
+  quantity: [{ required: true, message: '请输入生产数量', trigger: 'blur' }]
+}
+
+const detailVisible = ref(false)
+const detail = ref(null)
+
+const loadList = async () => {
+  loading.value = true
+  try {
+    const params = {
+      pageNum: currentPage.value,
+      pageSize: pageSize.value,
+      orderNo: searchForm.orderNo || undefined,
+      goodsName: searchForm.goodsName || undefined,
+      status: searchForm.status || undefined
+    }
+    const res = await getProductionOrderPageAPI(params)
+    if (res.code !== 200) throw new Error(res.msg || '查询失败')
+    const pageData = res.data || {}
+    tableData.value = pageData.records || []
+    total.value = pageData.total || 0
+  } catch (error) {
+    ElMessage.error(error.message || '加载生产任务单失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadOptions = async () => {
+  try {
+    const p = await getGoodsProductOptionsAPI()
+    productOptions.value = (p.data || []).map((it) => ({ goodsId: it.id, goodsName: it.goodsName, unit: it.unit }))
+  } catch (error) {
+    ElMessage.error(error.message || '加载成品选项失败')
+  }
+}
+
+const handleSearch = () => { currentPage.value = 1; loadList() }
+const resetSearch = () => {
+  searchForm.orderNo = ''
+  searchForm.goodsName = ''
+  searchForm.status = null
+  currentPage.value = 1
+  loadList()
+}
+const handleSizeChange = (v) => { pageSize.value = v; currentPage.value = 1; loadList() }
+const handleCurrentChange = () => loadList()
+
+const handleAdd = () => {
+  createResult.value = null
+  createForm.goodsId = null
+  createForm.quantity = 1
+  createForm.remark = ''
+  createFormRef.value?.clearValidate()
+  createVisible.value = true
+}
+
+const handleCreate = () => {
+  createFormRef.value?.validate(async (valid) => {
+    if (!valid) return
+    try {
+      const res = await createProductionOrderAPI({
+        goodsId: createForm.goodsId,
+        quantity: createForm.quantity,
+        remark: createForm.remark || ''
+      })
+      if (res.code !== 200) throw new Error(res.msg || '下达失败')
+      createResult.value = res.data || {}
+      ElMessage.success('生产任务单已下达')
+    } catch (error) {
+      ElMessage.error(error.message || '下达生产任务单失败')
+    }
+  })
+}
+
+const closeCreate = () => {
+  createVisible.value = false
+  if (createResult.value) loadList()
+}
+
+const openDetail = async (row) => {
+  const res = await getProductionOrderDetailAPI(row.id)
+  if (res.code !== 200) throw new Error(res.msg || '详情查询失败')
+  detail.value = res.data || {}
+  detailVisible.value = true
+}
+
+const handleView = async (row) => {
+  try { await openDetail(row) } catch (error) { ElMessage.error(error.message) }
+}
+
+const handleStart = async (row) => {
+  try {
+    ElMessageBox.confirm(`确认开工？开工将按 BOM 自动生成领料单并扣减库存。`, '开工确认', { type: 'warning' })
+    .then(async () => {
+      const res = await startProductionOrderAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '开工失败')
+      ElMessage.success('已开工，物料已自动领料')
+      await loadList()
+    }).catch((e) => { if (e && e.message) ElMessage.error(e.message) })
+  } catch (error) {
+    ElMessage.error(error.message || '开工失败')
+  }
+}
+
+const handleReceipt = (row) => {
+  ElMessageBox.confirm(`确认生产任务单「${row.orderNo}」生产入库？入库后成品库存将增加 ${row.quantity} ${row.unit}，订单标记已完成。`, '入库确认', { type: 'warning' })
+    .then(async () => {
+      const res = await receiptProductionOrderAPI(row.id)
+      if (res.code !== 200) throw new Error(res.msg || '入库失败')
+      ElMessage.success('已生产入库，成品库存已增加')
+      await loadList()
+    }).catch((e) => { if (e && e.message) ElMessage.error(e.message) })
+}
+
+const handleVoid = (row) => {
+  ElMessageBox.prompt(`确认作废生产任务单「${row.orderNo}」？请填写作废原因`, '作废确认', {
+    type: 'warning',
+    inputPlaceholder: '作废原因（可选）',
+    inputValidator: (v) => (v === '' ? false : true),
+    inputErrorMessage: '作废原因不能为空'
+  }).then(async ({ value }) => {
+    const res = await voidProductionOrderAPI(row.id, value)
+    if (res.code !== 200) throw new Error(res.msg || '作废失败')
+    ElMessage.success('已作废')
+    await loadList()
+  }).catch((e) => { if (e === 'cancel') return; if (e && e.message) ElMessage.error(e.message) })
+}
+
+// 标题格式化工具
+const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
+const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
+const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : 'danger')
+const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : 'danger')
+
+onMounted(() => {
+  loadList()
+  loadOptions()
+})
+</script>
+
+<style scoped>
+.deficit-red { color: #f56c6c; font-weight: 600; }
+</style>

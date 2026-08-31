@@ -49,12 +49,18 @@ public class ProductionService {
     @Autowired
     private AuthzService authzService;
 
-    private void requireProductionModuleAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可访问生产入库模块");
+    private void requireProductionReadAccess() {
+        // 阶段13：生产部门成员可查看生产入库记录（含生产订单完工入库）；仓储管理员仍全权
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储/生产部门可查看生产入库", AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PRODUCTION);
+    }
+
+    private void requireProductionWriteAccess() {
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可维护生产入库单");
     }
 
     public PageResult<ProductionVO> page(ProductionQueryDTO queryDTO) {
-        requireProductionModuleAccess();
+        requireProductionReadAccess();
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
 
@@ -77,7 +83,7 @@ public class ProductionService {
     }
 
     public ProductionVO getById(Long id) {
-        requireProductionModuleAccess();
+        requireProductionReadAccess();
         BizProduction production = requireProduction(id);
         BaseGoods goods = baseGoodsMapper.selectById(production.getGoodsId());
         return toVO(production, goods);
@@ -85,7 +91,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(ProductionSaveDTO dto) {
-        requireProductionModuleAccess();
+        requireProductionWriteAccess();
         validateQuantity(dto.getQuantity());
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
@@ -114,7 +120,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireProductionModuleAccess();
+        requireProductionWriteAccess();
         BizProduction production = requireProduction(id);
         ensureNormalStatus(production.getBizStatus(), "生产入库单");
         validateDeleteWindow(production.getOperationTime(), "生产入库单");
@@ -124,7 +130,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void voidDocument(Long id, DocumentVoidDTO dto) {
-        requireProductionModuleAccess();
+        requireProductionWriteAccess();
         BizProduction production = requireProduction(id);
         ensureNormalStatus(production.getBizStatus(), "生产入库单");
 

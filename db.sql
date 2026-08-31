@@ -521,7 +521,8 @@ INSERT INTO `sys_dept` (`dept_name`, `dept_code`, `leader`, `phone`, `descriptio
 ('仓储部', 'warehouse', '赵经理', '021-12345681', '负责仓储、库存与作废审批管理'),
 ('采购部', 'purchase', '王经理', '021-12345679', '负责采购与退货业务管理'),
 ('人事部', 'hr', '张总', '021-12345678', '负责组织与人事管理'),
-('系统管理部', 'system_management', '平台管理员', '021-12345677', '用于展示系统管理员与超级管理员信息');
+('系统管理部', 'system_management', '平台管理员', '021-12345677', '用于展示系统管理员与超级管理员信息'),
+('生产研发部', 'production', '生产负责人', '021-12345683', '负责生产与研发（BOM 建档、生产任务、质检）');
 
 -- 4.1.1 初始化IP策略示例数据
 INSERT INTO `sys_ip_policy` (`policy_name`, `ip_cidr`, `allow_flag`, `status`, `priority`, `remark`) VALUES
@@ -541,7 +542,9 @@ INSERT INTO `sys_user` (`id`, `username`, `password`, `real_name`, `role`, `dept
 (8, 'purchase_employee', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '采购员工', 'employee', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'purchase'), 1, '13800138007', 'purchase_employee@warehouse.com'),
 (9, 'warehouse_employee', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '仓储员工', 'employee', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'warehouse'), 1, '13800138008', 'warehouse_employee@warehouse.com'),
 (10, 'finance_employee', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '财务员工', 'employee', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'finance'), 1, '13800138009', 'finance_employee@warehouse.com'),
-(11, 'superadmin', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '超级管理员', 'superadmin', NULL, 1, '13800138010', 'superadmin@warehouse.com');
+(11, 'superadmin', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '超级管理员', 'superadmin', NULL, 1, '13800138010', 'superadmin@warehouse.com'),
+(12, 'production_admin', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '生产管理员', 'admin', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'production'), 1, '13800138011', 'production_admin@warehouse.com'),
+(13, 'production_employee', '$2a$10$yxRor5xgip624/ulGHfyxerZlyhK39FpoVlaTIeBmi1DTAGFD6tl6', '生产员工', 'employee', (SELECT id FROM `sys_dept` WHERE `dept_code` = 'production'), 1, '13800138012', 'production_employee@warehouse.com');
 
 -- 4.3 初始化员工数据
 INSERT INTO `sys_employee` (`user_id`, `emp_code`, `emp_name`, `dept_id`, `position`, `phone`, `email`) VALUES
@@ -1183,6 +1186,44 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     KEY `idx_prd_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
 
+-- 3.3 BOM 物料清单（D41）：成品 -> 明细（物料 + 单台用量）；生产研发部维护；D44 后作为"成品-物料"权威来源
+-- base_goods 增加 type 区分成品/物料（D41）
+ALTER TABLE `base_goods` ADD COLUMN `type` VARCHAR(20) NOT NULL DEFAULT 'material' COMMENT '货品类型: material-物料/零件, product-成品' AFTER `goods_code`;
+
+CREATE TABLE IF NOT EXISTS `biz_bom` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `bom_code` VARCHAR(50) NOT NULL COMMENT 'BOM 编码(如 PTO153-BOM)',
+    `goods_id` BIGINT NOT NULL COMMENT '成品 goods_id（type=product）',
+    `goods_name` VARCHAR(50) DEFAULT NULL COMMENT '成品名称(冗余)',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_bom_code` (`bom_code`),
+    UNIQUE KEY `uk_bom_goods` (`goods_id`),
+    KEY `idx_bom_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='BOM 主表';
+
+CREATE TABLE IF NOT EXISTS `biz_bom_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `bom_id` BIGINT NOT NULL COMMENT 'BOM id',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `goods_id` BIGINT DEFAULT NULL COMMENT '关联物料 goods_id(type=material)，可空',
+    `component_name` VARCHAR(100) DEFAULT NULL COMMENT '组件/物料名称(冗余，不关联时展示用)',
+    `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格',
+    `quantity` DECIMAL(12,4) NOT NULL DEFAULT 1 COMMENT '单台用量',
+    `material` VARCHAR(50) DEFAULT NULL COMMENT '材质',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注(含外购标记等)',
+    `is_reference` TINYINT NOT NULL DEFAULT 0 COMMENT '是否参考行(不参与齐套): 0-否, 1-是',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_bomd_bom_id` (`bom_id`),
+    KEY `idx_bomd_goods_id` (`goods_id`),
+    KEY `idx_bomd_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='BOM 明细表';
+
 -- 3.2 生产入库表 (biz_production)  仓储管理员将自产零件存入仓库，库存增加
 CREATE TABLE IF NOT EXISTS `biz_production` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
@@ -1300,3 +1341,50 @@ INSERT INTO `sys_config` (`config_key`, `config_value`, `config_name`, `remark`)
 -- =============================================
 -- 脚本执行完成
 -- =============================================
+
+-- =============================================
+-- 阶段 11：生产任务单（biz_production_order）+ 齐套预警
+-- =============================================
+CREATE TABLE IF NOT EXISTS `biz_production_order` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `order_no` VARCHAR(30) NOT NULL COMMENT '生产任务单号',
+    `goods_id` BIGINT NOT NULL COMMENT '成品 goods_id(type=product)',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '成品名称(冗余)',
+    `unit` VARCHAR(20) DEFAULT NULL COMMENT '成品单位(冗余)',
+    `quantity` INT NOT NULL COMMENT '生产数量',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废',
+    `kit_status` VARCHAR(20) DEFAULT NULL COMMENT '齐套状态: ok-齐套, partial-部分缺料, block-严重缺料',
+    `source` VARCHAR(20) DEFAULT 'MANUAL' COMMENT '来源: MANUAL-手动创建',
+    `process_snapshot` TEXT COMMENT '工序清单快照(8道装配工序静态 SOP，打印用)',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_order_no` (`order_no`),
+    KEY `idx_goods_id` (`goods_id`),
+    KEY `idx_order_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产任务单（D42 齐套预警）';
+
+-- =============================================
+-- 阶段 12：质检记录（biz_production_qc）D40
+-- 8 道装配工序不追踪；首测(first)/成品测(final) 单独质检：记录为追加式，
+-- 最新一条 OK 则该测点通过；NG 需处置(返工 REWORK/报废 SCRAP)，返工后重测，两条测点全过才允许生产入库。
+-- =============================================
+CREATE TABLE IF NOT EXISTS `biz_production_qc` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `order_id` BIGINT NOT NULL COMMENT '生产任务单 id',
+    `goods_id` BIGINT DEFAULT NULL COMMENT '成品 goods_id(冗余)',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '成品名称(冗余)',
+    `test_point` VARCHAR(20) NOT NULL COMMENT '测点: first-首测, final-成品测',
+    `tester_id` BIGINT DEFAULT NULL COMMENT '测试员 id',
+    `tester_name` VARCHAR(50) DEFAULT NULL COMMENT '测试员姓名',
+    `result` VARCHAR(10) NOT NULL COMMENT '结果: OK-合格, NG-不合格',
+    `reason` VARCHAR(200) DEFAULT NULL COMMENT 'NG 原因/备注',
+    `disposition` VARCHAR(20) DEFAULT NULL COMMENT '处置: REWORK-返工, SCRAP-报废(仅对 NG 记录)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '测试时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_qc_order` (`order_id`, `is_deleted`),
+    KEY `idx_qc_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产质检记录（D40 首测/成品测）';

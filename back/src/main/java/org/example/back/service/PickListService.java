@@ -67,6 +67,7 @@ public class PickListService {
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         boolean isWarehouseOrSuper = authzService.isSuperAdmin()
                 || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE);
+        boolean isProductionMember = authzService.isDeptMember(AuthzService.DEPT_PRODUCTION);
 
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
@@ -90,8 +91,13 @@ public class PickListService {
                 .ge(startTime != null, BizPickList::getCreateTime, startTime)
                 .lt(endTime != null, BizPickList::getCreateTime, endTime)
                 .in(matchedPickListIds != null, BizPickList::getId, matchedPickListIds)
-                .eq(!isWarehouseOrSuper, BizPickList::getApplicantId, loginUser.getId())
                 .orderByDesc(BizPickList::getId);
+        // 数据范围：仓储/超管看全部；生产成员只看"生产领料"（PICK 类型，含生产任务单自动领料）；其余看本人
+        if (!isWarehouseOrSuper && isProductionMember) {
+            wrapper.eq(BizPickList::getPickType, TYPE_PICK);
+        } else if (!isWarehouseOrSuper) {
+            wrapper.eq(BizPickList::getApplicantId, loginUser.getId());
+        }
 
         Page<BizPickList> page = bizPickListMapper.selectPage(
                 new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
@@ -265,8 +271,9 @@ public class PickListService {
     // ============================== 私有辅助 ==============================
 
     private void requirePickListModuleAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可访问领料模块");
+        // 阶段13：生产部门成员也可查看领料（生产任务单自动领料的领料单），仓储管理员仍全权
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储/生产部门可查看领料", AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PRODUCTION);
     }
 
     private void requireApplyAccess() {
@@ -284,6 +291,10 @@ public class PickListService {
             return;
         }
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        // 生产部门成员可查看生产领料（PICK 类型，含生产任务单自动领料），不限申请人
+        if (authzService.isDeptMember(AuthzService.DEPT_PRODUCTION) && TYPE_PICK.equals(entity.getPickType())) {
+            return;
+        }
         if (!entity.getApplicantId().equals(loginUser.getId())) {
             throw BusinessException.forbidden("无权查看该领料单");
         }

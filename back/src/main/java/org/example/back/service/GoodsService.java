@@ -29,6 +29,11 @@ import java.util.stream.Collectors;
 @Service
 public class GoodsService {
 
+    /** D41 货品类型：成品 */
+    public static final String GOODS_TYPE_PRODUCT = "product";
+    /** D41 货品类型：物料/零件（缺省） */
+    public static final String GOODS_TYPE_MATERIAL = "material";
+
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
 
@@ -39,11 +44,13 @@ public class GoodsService {
     private AuthzService authzService;
 
     // D35 职责分工：物料资料开放给仓储+采购部门读取；写操作按部门区分字段
+    // D39 生产部门可只读看物料库存（数量层）
     private void requireGoodsReadAccess() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
-                "仅仓储或采购部门可访问物料资料",
+                "仅仓储、采购或生产部门可访问物料资料",
                 AuthzService.DEPT_WAREHOUSE,
-                AuthzService.DEPT_PURCHASE
+                AuthzService.DEPT_PURCHASE,
+                AuthzService.DEPT_PRODUCTION
         );
     }
 
@@ -83,6 +90,7 @@ public class GoodsService {
                 .like(StringUtils.hasText(queryDTO.getCategory()), BaseGoods::getCategory, queryDTO.getCategory())
                 .eq(queryDTO.getSupplierId() != null, BaseGoods::getSupplierId, queryDTO.getSupplierId())
                 .eq(queryDTO.getStatus() != null, BaseGoods::getStatus, queryDTO.getStatus())
+                .eq(StringUtils.hasText(queryDTO.getType()), BaseGoods::getType, queryDTO.getType())
             .apply(warningOnly && !"zero".equals(warningType), "stock <= warning_stock")
             .eq(warningOnly && "zero".equals(warningType), BaseGoods::getStock, 0)
                 .orderByDesc(BaseGoods::getId);
@@ -93,18 +101,22 @@ public class GoodsService {
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
-    public List<GoodsOptionVO> options() {
+    public List<GoodsOptionVO> options(String type) {
         // D32：销售/采购员工建单时需加载商品下拉，放开部门成员（admin+员工）
+        // D39/D41：生产部门只读；type 用于生产任务单品选成品(product)
         authzService.requireAnyDeptMemberOrSuperAdmin(
-            "仅仓储、采购或销售部门可获取商品选项",
+            "仅仓储、采购、销售或生产部门可获取商品选项",
             AuthzService.DEPT_WAREHOUSE,
             AuthzService.DEPT_PURCHASE,
-            AuthzService.DEPT_SALES
+            AuthzService.DEPT_SALES,
+            AuthzService.DEPT_PRODUCTION
         );
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BaseGoods::getStatus, 1).orderByAsc(BaseGoods::getGoodsName);
+        wrapper.eq(BaseGoods::getStatus, 1)
+                .eq(StringUtils.hasText(type) && !"all".equals(type), BaseGoods::getType, normalizeType(type))
+                .orderByAsc(BaseGoods::getGoodsName);
         return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSalePrice()))
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSalePrice(), item.getType()))
                 .toList();
     }
 
@@ -124,6 +136,7 @@ public class GoodsService {
         validateWarningStock(dto.getWarningStock());
         BaseGoods goods = new BaseGoods();
         BeanUtils.copyProperties(dto, goods);
+        goods.setType(normalizeType(dto.getType()));
         goods.setGoodsCode(CodeGenerator.goodsCode());
         goods.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
         goods.setStock(dto.getStock() == null ? 0 : dto.getStock());
@@ -157,6 +170,7 @@ public class GoodsService {
         goods.setProductName(dto.getProductName());
         goods.setCategory(dto.getCategory());
         goods.setBrand(dto.getBrand());
+        goods.setType(StringUtils.hasText(dto.getType()) ? normalizeType(dto.getType()) : goods.getType());
         goods.setSupplierId(dto.getSupplierId());
         goods.setUnit(dto.getUnit());
         goods.setDescription(dto.getDescription());
@@ -196,6 +210,15 @@ public class GoodsService {
         }
         return supplier;
     }
+    // D41：货品类型归一化，缺省为物料
+    private String normalizeType(String type) {
+        if (!StringUtils.hasText(type)) {
+            return GOODS_TYPE_MATERIAL;
+        }
+        String t = type.trim().toLowerCase(Locale.ROOT);
+        return GOODS_TYPE_PRODUCT.equals(t) ? GOODS_TYPE_PRODUCT : GOODS_TYPE_MATERIAL;
+    }
+
     // 验证库存是否合法
     private void validateStock(Integer stock) {
         if (stock != null && stock < 0) {
