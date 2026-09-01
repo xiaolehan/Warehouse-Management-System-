@@ -13,6 +13,7 @@
             <el-option label="待入库确认" :value="5" />
             <el-option label="已入库" :value="3" />
             <el-option label="已驳回" :value="4" />
+            <el-option label="草稿" :value="6" />
           </el-select>
         </el-form-item>
         <el-form-item label="商品名">
@@ -32,7 +33,12 @@
 
       <!-- 列表 -->
       <el-table v-loading="loading" :data="tableData" border stripe>
-        <el-table-column prop="requestNo" label="单号" width="180" />
+        <el-table-column label="单号" width="200">
+          <template #default="{ row }">
+            <div>{{ row.requestNo }}</div>
+            <el-tag v-if="row.sourceType === 'production'" type="success" size="small" style="margin-top:2px">生产补料 #{{ row.productionOrderId }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="明细">
           <template #default="{ row }">
             <div v-for="d in row.details" :key="d.id" class="detail-line">
@@ -56,6 +62,11 @@
         <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleView(row)">详情</el-button>
+            <!-- 仓储：草稿 → 转正 / 驳回 -->
+            <el-button link type="primary" v-if="row.status === 6"
+              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="openConfirm(row)">转正</el-button>
+            <el-button link type="danger" v-if="row.status === 6"
+              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="doRejectDraft(row)">驳回</el-button>
             <!-- 采购：待采购 → 认领 / 驳回 -->
             <el-button link type="primary" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleProcess(row)">认领</el-button>
@@ -231,6 +242,26 @@
         <el-button type="primary" :loading="submitting" @click="submitReject">确认驳回</el-button>
       </template>
     </el-dialog>
+
+    <!-- 转正草稿对话框 -->
+    <el-dialog v-model="confirmVisible" :title="`转正草稿 - ${confirmRow.requestNo || ''}`" width="640px">
+      <el-alert title="转正后进入正式采购流程；请为待定物料选择仓库物料。" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-table :data="confirmRow.details || []" border>
+        <el-table-column prop="goodsName" label="物料" min-width="140" />
+        <el-table-column prop="quantity" label="申请数量" width="90" />
+        <el-table-column label="关联物料" min-width="160">
+          <template #default="s">
+            <el-select v-model="s.row.goodsId" placeholder="待定，请选择物料" filterable clearable style="width: 100%">
+              <el-option v-for="o in materialOptions" :key="o.id" :label="o.name" :value="o.id" />
+            </el-select>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="confirmVisible = false">取消</el-button>
+        <el-button type="primary" :loading="confirmSubmitting" @click="doConfirm">转正</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -244,9 +275,11 @@ import {
   getPurchaseRequestPageAPI, getPurchaseRequestDetailAPI, getShortageGoodsAPI,
   createPurchaseRequestAPI, processPurchaseRequestAPI, arrivePurchaseRequestAPI,
   confirmReceivePurchaseRequestAPI, arriveCancelPurchaseRequestAPI, arriveRejectPurchaseRequestAPI,
-  rejectPurchaseRequestAPI, deletePurchaseRequestAPI
+  rejectPurchaseRequestAPI, deletePurchaseRequestAPI,
+  confirmDraftPurchaseRequestAPI, rejectDraftPurchaseRequestAPI
 } from '@/api/purchaseRequest'
 import { getGoodsOptionsAPI } from '@/api/business'
+import { getGoodsMaterialOptionsAPI } from '@/api/base'
 
 const userStore = useUserStore()
 
@@ -285,7 +318,7 @@ const processForm = reactive({ id: null, expectedArrivalTime: null })
 const isApplicant = (row) => row.applicantName && row.applicantName === userStore.realName
 
 const statusTagType = (status) => ({
-  1: 'info', 2: 'warning', 3: 'success', 4: 'danger', 5: 'warning'
+  1: 'info', 2: 'warning', 3: 'success', 4: 'danger', 5: 'warning', 6: 'warning'
 }[status] || 'info')
 
 const formatTime = (t) => t ? String(t).replace('T', ' ').slice(0, 19) : '—'
@@ -537,6 +570,58 @@ const handleDelete = (row) => {
       if (res.code !== 200) throw new Error(res.msg || '撤销失败')
       ElMessage.success('已撤销')
       loadList()
+    }).catch(() => {})
+}
+
+// 生产补料草稿：转正 / 驳回
+const materialOptions = ref([])
+const confirmVisible = ref(false)
+const confirmRow = ref({})
+const confirmSubmitting = ref(false)
+
+function loadMaterialOptions() {
+  getGoodsMaterialOptionsAPI().then((res) => {
+    materialOptions.value = res.code === 200 ? (res.data || []) : []
+  }).catch(() => { materialOptions.value = [] })
+}
+
+function openConfirm(row) {
+  if (!materialOptions.value.length) loadMaterialOptions()
+  confirmRow.value = row
+  confirmVisible.value = true
+}
+
+function doConfirm() {
+  const items = (confirmRow.value.details || [])
+    .filter((d) => d.goodsId == null)
+    .map((d) => ({ detailId: d.id, goodsId: d.goodsId }))
+  if (items.some((i) => i.goodsId == null)) {
+    ElMessage.warning('请为待定物料选择关联物料')
+    return
+  }
+  confirmSubmitting.value = true
+  confirmDraftPurchaseRequestAPI(confirmRow.value.id, { items })
+    .then((res) => {
+      if (res.code !== 200) throw new Error(res.msg || '转正失败')
+      ElMessage.success('已转正为待采购，已通知采购处理')
+      confirmVisible.value = false
+      loadList()
+    }).catch((e) => {
+      ElMessage.error(e.message || '转正失败')
+    }).finally(() => {
+      confirmSubmitting.value = false
+    })
+}
+
+function doRejectDraft(row) {
+  ElMessageBox.confirm('确认驳回该补料草稿？', '提示', { type: 'warning' })
+    .then((res) => {
+      rejectDraftPurchaseRequestAPI(row.id, { reason: '仓储驳回' })
+        .then((r) => {
+          if (r.code !== 200) throw new Error(r.msg || '驳回失败')
+          ElMessage.success('已驳回')
+          loadList()
+        }).catch((e) => { ElMessage.error(e.message || '驳回失败') })
     }).catch(() => {})
 }
 
