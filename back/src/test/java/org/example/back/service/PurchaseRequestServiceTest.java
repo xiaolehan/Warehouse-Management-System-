@@ -307,6 +307,43 @@ class PurchaseRequestServiceTest {
         verify(messageService).sendPurchaseRequestToPurchaseAdmins(anyString(), any(), eq(3L));
     }
 
+    // ---------- confirmDraft 用例 3：方案先行行(goodsId 空)由转正时补物料 → 写明细 goodsId ----------
+    @Test
+    void confirmDraft_writesGoodsIdToSchemeFirstDetail() {
+        BizPurchaseRequest draft = new BizPurchaseRequest();
+        draft.setId(3L);
+        draft.setStatus(6); // DRAFT
+        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(100L); d1.setRequestId(3L); d1.setGoodsId(null); d1.setGoodsName("板1"); // 方案先行行
+        when(bizPurchaseRequestDetailMapper.selectList(ArgumentMatchers.any()))
+                .thenReturn(List.of(d1));
+
+        DraftConfirmDTO dto = new DraftConfirmDTO();
+        DraftConfirmItemDTO item = new DraftConfirmItemDTO();
+        item.setDetailId(100L);
+        item.setGoodsId(66L);
+        dto.setItems(List.of(item));
+
+        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
+
+        service.confirmDraft(3L, dto);
+
+        // 明细应按 66 回写（newGoodsId != null 且与现值不同）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequestDetail>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(bizPurchaseRequestDetailMapper).update(any(), captor.capture());
+        assertTrue(captor.getValue().getParamNameValuePairs().containsValue(66L),
+                "明细 goods_id 参数应回写为 66, 实际: " + captor.getValue().getParamNameValuePairs());
+
+        // 主单仍应转到 PENDING 并撤草稿通知 + 发采购通知
+        verify(bizPurchaseRequestMapper).update(any(), ArgumentMatchers.any());
+        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
+        verify(messageService).sendPurchaseRequestToPurchaseAdmins(any(), any(), eq(3L));
+    }
+
     // ---------- rejectDraft 用例：草稿驳回 → REJECTED + 撤通知 ----------
     @Test
     void rejectDraft_setsRejectedAndRevokesNotice() {
