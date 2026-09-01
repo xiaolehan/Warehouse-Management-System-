@@ -266,6 +266,32 @@ public class PurchaseRequestService {
         messageService.revokeUnreadByBiz("purchase_request", id);
     }
 
+    /**
+     * 生产申请人撤销自家草稿：置 rejected 保留审计。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void cancelDraft(Long id) {
+        requireProductionDraftAccess();
+        BizPurchaseRequest entity = requireEntity(id);
+        if (entity.getStatus() != STATUS_DRAFT) {
+            throw BusinessException.validateFail("仅草稿状态可撤销");
+        }
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        if (!entity.getApplicantId().equals(loginUser.getId()) && !authzService.isSuperAdmin()) {
+            throw BusinessException.forbidden("仅申请人本人可撤销草稿");
+        }
+        LambdaUpdateWrapper<BizPurchaseRequest> uw = new LambdaUpdateWrapper<>();
+        uw.eq(BizPurchaseRequest::getId, id)
+                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT)
+                .set(BizPurchaseRequest::getStatus, STATUS_REJECTED)
+                .set(BizPurchaseRequest::getRejectReason, "申请人撤销草稿");
+        int rows = bizPurchaseRequestMapper.update(null, uw);
+        if (rows != 1) {
+            throw BusinessException.validateFail("草稿状态已变更，请刷新后重试");
+        }
+        messageService.revokeUnreadByBiz("purchase_request", id);
+    }
+
     private static int ceilDeficit(java.math.BigDecimal deficit) {
         return deficit.setScale(0, java.math.RoundingMode.UP).intValue();
     }

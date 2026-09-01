@@ -333,4 +333,65 @@ class PurchaseRequestServiceTest {
 
         verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
     }
+
+    // ---------- cancelDraft 用例 1：非申请人不可撤销草稿 ----------
+    @Test
+    void cancelDraft_forbidsOtherApplicant() {
+        BizPurchaseRequest draft = new BizPurchaseRequest();
+        draft.setId(3L);
+        draft.setStatus(6);
+        draft.setApplicantId(10L);
+        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
+
+        LoginResponse.UserInfoVO other = new LoginResponse.UserInfoVO();
+        other.setId(99L);
+        when(authService.getUserInfo()).thenReturn(other);
+        when(authzService.isSuperAdmin()).thenReturn(false);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelDraft(3L));
+        assertEquals("仅申请人本人可撤销草稿", ex.getMsg());
+    }
+
+    // ---------- cancelDraft 用例 2：非草稿状态不可撤销 ----------
+    @Test
+    void cancelDraft_rejectsWhenNotDraft() {
+        BizPurchaseRequest entity = new BizPurchaseRequest();
+        entity.setId(3L);
+        entity.setStatus(1); // PENDING
+        entity.setApplicantId(10L);
+        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(entity);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelDraft(3L));
+        assertEquals("仅草稿状态可撤销", ex.getMsg());
+    }
+
+    // ---------- cancelDraft 用例 3：happy path — 草稿→已驳回 + 撤通知 ----------
+    @Test
+    void cancelDraft_setsRejected() {
+        BizPurchaseRequest draft = new BizPurchaseRequest();
+        draft.setId(3L);
+        draft.setStatus(6); // DRAFT
+        draft.setApplicantId(10L);
+        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        when(authService.getUserInfo()).thenReturn(user);
+
+        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
+
+        service.cancelDraft(3L);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(bizPurchaseRequestMapper).update(any(), captor.capture());
+        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest> uw = captor.getValue();
+        assertTrue(uw.getSqlSet().contains("status="), "sql set 应包含 status 字段");
+        java.util.Map<String, Object> params = uw.getParamNameValuePairs();
+        assertTrue(params.containsValue(4), "参数中应包含 STATUS_REJECTED=4, 实际参数: " + params);
+        assertTrue(params.containsValue("申请人撤销草稿"), "参数中应包含撤销原因, 实际参数: " + params);
+
+        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
+    }
 }

@@ -82,6 +82,15 @@ public class PurchaseRequestController {
         return Result.success();
     }
 
+    @PostMapping("/{id}/cancel-draft")
+    @RequireAdmin("仅生产研发部管理员可撤销自家补料草稿")
+    @AuditLog(module = "采购申请", action = "撤销草稿", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交撤销请求")
+    public Result<Void> cancelDraft(@PathVariable Long id) {
+        purchaseRequestService.cancelDraft(id);
+        return Result.success();
+    }
+
     @PostMapping
     @RequireAdmin("仅仓储管理员可创建采购申请单")
     @AuditLog(module = "采购申请", action = "建单", targetType = "采购申请单")
