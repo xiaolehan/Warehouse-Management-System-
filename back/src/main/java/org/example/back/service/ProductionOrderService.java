@@ -175,15 +175,6 @@ public class ProductionOrderService {
         orderMapper.insert(order);
         BizProductionOrder saved = orderMapper.selectById(order.getId());
 
-        // 有缺口即通知采购管理员补料（D42）
-        if (kit.hasShortage) {
-            messageService.sendKitShortageToPurchaseAdmins(
-                    saved.getOrderNo(),
-                    saved.getGoodsName(),
-                    kit.summary(saved.getQuantity()),
-                    saved.getId()
-            );
-        }
         ProductionOrderVO vo = toVO(saved);
         vo.setKitLines(kit.lines);
         return vo;

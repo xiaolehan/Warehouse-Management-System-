@@ -340,6 +340,28 @@ public class MessageService {
     }
 
     /**
+     * 生产缺料补料草稿生成后通知仓储管理员转正。
+     */
+    public void sendPurchaseRequestDraftToWarehouseAdmins(String requestNo, String applicantName, Long requestId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "生产管理员";
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待转正补料草稿",
+                String.format(
+                        Locale.ROOT,
+                        "缺料补料草稿 %s 由 %s 生成，请补充物料并转正。",
+                        requestNo, applicant
+                ),
+                "purchase_request",
+                requestId
+        );
+    }
+
+    /**
      * 采购到货后通知仓储管理员有待确认的采购入库。
      */
     public void sendPurchaseRequestArrivedToWarehouseAdmins(String requestNo, String operatorName, Long requestId) {
