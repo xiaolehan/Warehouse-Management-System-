@@ -1432,3 +1432,17 @@ JOIN (
 ) d ON 1=1
 WHERE b.bom_code='PTO153-BOM' AND b.is_deleted=0
 AND NOT EXISTS (SELECT 1 FROM biz_bom_detail dd WHERE dd.bom_id=b.id AND dd.sort_no=d.sort_no);
+
+-- ============================================================
+-- 8.x 生产缺料→采购申请草稿：状态6 + 来源 + 来源生产任务单
+-- ============================================================
+ALTER TABLE `biz_purchase_request`
+    MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认, 6-草稿(生产补料待仓储转正)',
+    ADD COLUMN `source_type` VARCHAR(20) DEFAULT 'warehouse' COMMENT '来源: production-生产缺料补料, warehouse-仓储手动' AFTER `status`,
+    ADD COLUMN `production_order_id` BIGINT DEFAULT NULL COMMENT '来源生产任务单id(仅production来源有值)' AFTER `source_type`,
+    ADD KEY `idx_pr_source` (`source_type`),
+    ADD KEY `idx_pr_production_order` (`production_order_id`);
+
+ALTER TABLE `biz_purchase_request_detail`
+    MODIFY COLUMN `goods_id` BIGINT DEFAULT NULL COMMENT '物料id(草稿可空, 转正时仓储补齐)',
+    ADD COLUMN `bom_detail_id` BIGINT DEFAULT NULL COMMENT '对应BOM明细id(确认入库时回挂goods_id)' AFTER `goods_id`;
