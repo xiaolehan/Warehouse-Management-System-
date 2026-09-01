@@ -326,6 +326,7 @@ public class ProductionOrderService {
             int stock = (g == null || g.getStock() == null) ? 0 : g.getStock();
 
             KitShortageVO line = new KitShortageVO();
+            line.setBomDetailId(d.getId());
             if (g != null) {
                 line.setGoodsId(g.getId());
                 line.setGoodsName(g.getGoodsName());
@@ -406,6 +407,17 @@ public class ProductionOrderService {
             detail.setSortNo(sortNo++);
             pickListDetailMapper.insert(detail);
         }
+    }
+
+    /**
+     * 供采购申请草稿：返回该任务单存在缺口(deficit>0)的物料行，含 bomDetailId 供回挂定位。
+     */
+    public List<KitShortageVO> computeShortageForOrder(Long productionOrderId) {
+        BizProductionOrder order = requireOrder(productionOrderId);
+        KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
+        return kit.lines.stream()
+                .filter(l -> l.getDeficit() != null && l.getDeficit().intValue() > 0)
+                .toList();
     }
 
     // ============================== 私有：校验与工具 ==============================
