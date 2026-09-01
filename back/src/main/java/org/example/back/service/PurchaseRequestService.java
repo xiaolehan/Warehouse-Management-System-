@@ -103,6 +103,7 @@ public class PurchaseRequestService {
         LambdaQueryWrapper<BizPurchaseRequest> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getRequestNo()), BizPurchaseRequest::getRequestNo, queryDTO.getRequestNo())
                 .eq(queryDTO.getStatus() != null, BizPurchaseRequest::getStatus, queryDTO.getStatus())
+                .eq(StringUtils.hasText(queryDTO.getSourceType()), BizPurchaseRequest::getSourceType, queryDTO.getSourceType())
                 .ge(startTime != null, BizPurchaseRequest::getCreateTime, startTime)
                 .lt(endTime != null, BizPurchaseRequest::getCreateTime, endTime)
                 .in(matchedRequestIds != null, BizPurchaseRequest::getId, matchedRequestIds)
@@ -615,6 +616,8 @@ public class PurchaseRequestService {
         vo.setRequestNo(entity.getRequestNo());
         vo.setStatus(entity.getStatus());
         vo.setStatusText(statusText(entity.getStatus()));
+        vo.setSourceType(entity.getSourceType());
+        vo.setProductionOrderId(entity.getProductionOrderId());
         vo.setApplicantId(entity.getApplicantId());
         vo.setApplicantName(entity.getApplicantName());
         vo.setOperatorId(entity.getOperatorId());
@@ -653,6 +656,7 @@ public class PurchaseRequestService {
             return null;
         }
         return switch (status) {
+            case STATUS_DRAFT -> "草稿";
             case STATUS_PENDING -> "待采购";
             case STATUS_PURCHASING -> "采购中";
             case STATUS_RECEIVED -> "已入库";

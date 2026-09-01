@@ -22,6 +22,11 @@ public class PurchaseRequestQueryDTO extends PageQuery {
      */
     private String goodsName;
 
+    /**
+     * 来源: production-生产缺料补料, warehouse-仓储手动，可空
+     */
+    private String sourceType;
+
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate;
 
