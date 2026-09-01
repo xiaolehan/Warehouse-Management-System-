@@ -10,8 +10,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * BOM 明细（D41）：一行 = 一个组件/物料 + 单台用量 + 规格/材质/备注。
- * goodsId 可空：关联即参与齐套预警；未关联(type=material 之外/不在库)为说明行，仅展示。
+ * BOM 明细（D41）：一行 = 一个组件/物料 + 单台用量 + 规格/材质/图片/备注。
+ * goodsId 可空（方案先行）：关联即按物料库存参与齐套预警；未关联的明细行仍计入真需求——
+ * 齐套时按"库存0/缺料待采购"处理，待物料在仓库建档后回挂 goodsId 即正常齐套。
  */
 @Data
 @TableName("biz_bom_detail")
@@ -42,6 +43,9 @@ public class BizBomDetail {
 
     /** 备注(含外购标记等) */
     private String remark;
+
+    /** 组件图片路径(如 /uploads/2026/09/01/uuid.png) */
+    private String image;
 
     /** 是否参考行(不参与齐套): 0-否, 1-是 */
     private Integer isReference;

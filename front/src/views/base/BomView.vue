@@ -33,9 +33,13 @@
       </el-table-column>
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
       <el-table-column prop="createTime" label="创建时间" width="170" />
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="scope">
           <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
+          <el-button
+            size="small" type="success" :icon="Download" @click="handleExport(scope.row)"
+            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          >导出</el-button>
           <el-button
             size="small" type="primary" :icon="Edit" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
@@ -61,10 +65,10 @@
     </div>
 
     <!-- 新建 / 编辑 / 查看 弹窗 -->
-    <el-dialog :title="dialogTitle" v-model="dialogVisible" width="920px" top="6vh">
+    <el-dialog :title="dialogTitle" v-model="dialogVisible" width="1040px" top="5vh">
       <el-form :model="form" :rules="rules" ref="formRef" label-width="90px" :disabled="isView">
         <el-form-item label="BOM编码" prop="bomCode">
-          <el-input v-model="form.bomCode" placeholder="如 PTO153" :disabled="!!form.id" />
+          <el-input v-model="form.bomCode" placeholder="如 PTO153-BOM" :disabled="!!form.id" />
         </el-form-item>
         <el-form-item label="成品" prop="goodsId">
           <el-select
@@ -84,7 +88,29 @@
         <el-form-item label="BOM明细" class="detail-item">
           <div class="detail-box">
             <el-table :data="form.details" border size="small">
-              <el-table-column label="组件/物料名称" min-width="160">
+              <el-table-column label="图片" width="150">
+                <template #default="scope">
+                  <div v-if="!isView" class="img-cell">
+                    <el-upload
+                      :action="uploadUrl" :headers="uploadHeaders" :show-file-list="false"
+                      accept="image/*" :on-success="(res, uf) => onImageSuccess(scope.row, res, uf)"
+                      :on-error="onImageError"
+                    >
+                      <el-button v-if="!scope.row.image" size="small" type="primary" plain :icon="Picture">上传图</el-button>
+                      <template v-else>
+                        <el-image :src="imageUrl(scope.row.image)" :preview-src-list="[imageUrl(scope.row.image)]" fit="cover" style="width:46px;height:46px;border-radius:4px;display:inline-block;vertical-align:middle;" />
+                      </template>
+                    </el-upload>
+                    <el-button v-if="scope.row.image" size="small" link type="danger" @click="scope.row.image = null">删</el-button>
+                  </div>
+                  <el-image
+                    v-else-if="scope.row.image" :src="imageUrl(scope.row.image)"
+                    :preview-src-list="[imageUrl(scope.row.image)]" fit="cover"
+                    style="width:46px;height:46px;border-radius:4px;"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="组件/物料名称" min-width="150">
                 <template #default="scope">
                   <el-input v-model="scope.row.componentName" placeholder="第{{ scope.$index + 1 }}行组件名称" :disabled="isView" />
                 </template>
@@ -99,15 +125,15 @@
                   <el-input v-model="scope.row.material" placeholder="材质" :disabled="isView" />
                 </template>
               </el-table-column>
-              <el-table-column label="单台用量" width="110">
+              <el-table-column label="单台用量" width="100">
                 <template #default="scope">
                   <el-input-number
                     v-model="scope.row.quantity" :min="0" :precision="2" :controls="false"
-                    style="width: 100px" placeholder="用量" :disabled="isView"
+                    style="width: 100%" placeholder="用量" :disabled="isView"
                   />
                 </template>
               </el-table-column>
-              <el-table-column label="关联物料" min-width="140">
+              <el-table-column label="关联物料" min-width="130">
                 <template #default="scope">
                   <el-select
                     v-model="scope.row.goodsId" filterable clearable placeholder="可关联(参与齐套)" style="width: 100%"
@@ -139,6 +165,7 @@
             <el-button v-if="!isView" type="primary" plain :icon="Plus" style="margin-top: 8px;" @click="addDetail">
               添加明细行
             </el-button>
+            <p class="tip" v-if="!isView">关联物料可选：未关联的明细行按「缺料待采购」计入齐套，待物料在仓库建档后再回挂。</p>
           </div>
         </el-form-item>
       </el-form>
@@ -148,11 +175,11 @@
       </template>
     </el-dialog>
 
-    <!-- 批量导入弹窗 -->
-    <el-dialog title="批量导入 BOM 明细" v-model="importVisible" width="640px">
+    <!-- 批量导入（真实 .xlsx） -->
+    <el-dialog title="导入 BOM 明细" v-model="importVisible" width="560px">
       <el-form label-width="90px">
         <el-form-item label="BOM编码" required>
-          <el-input v-model="importForm.bomCode" placeholder="如 PTO153" />
+          <el-input v-model="importForm.bomCode" placeholder="如 PTO153-BOM" />
         </el-form-item>
         <el-form-item label="成品" required>
           <el-select v-model="importForm.goodsId" filterable placeholder="选择成品" style="width: 100%">
@@ -162,30 +189,39 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="明细">
-          <el-input
-            v-model="importForm.text" type="textarea" :rows="10"
-            placeholder="从 Excel 复制后粘贴，每行一个组件。用 Tab 分隔：组件名称	规格	数量	材质	备注（可只填前几列）"
-          />
+        <el-form-item label="文件">
+          <el-upload
+            ref="importUploadRef" :action="importUrl" :headers="uploadHeaders"
+            :data="importData" accept=".xlsx,.xls" :show-file-list="true" :limit="1"
+            :before-upload="beforeImport" :on-success="onImportSuccess" :on-error="onImportError"
+          >
+            <el-button :icon="Upload">选择 .xlsx 文件</el-button>
+          </el-upload>
+          <p class="tip">
+            模板列：序号/图片/组件名称/规格/数量/材质/备注。图片请新建后在明细里按行上传（本导入只读文字列）。导入会<strong>整体覆盖</strong>该成品已有明细。
+            <el-link type="primary" :icon="Download" @click="downloadTemplate">下载空白模板</el-link>
+          </p>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button :icon="Close" @click="importVisible = false">取消</el-button>
-        <el-button type="primary" :icon="Check" @click="confirmImport">解析并确认</el-button>
+        <el-button :icon="Close" @click="importVisible = false">关闭</el-button>
       </template>
     </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, View, Edit, Delete, Close, Check, Remove, Upload } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, View, Edit, Delete, Close, Check, Remove, Upload, Download, Picture } from '@element-plus/icons-vue'
+import { getToken } from '@/utils/auth'
 import {
   createBomAPI,
   deleteBomAPI,
   getBomDetailAPI,
+  getBomExportAPI,
   getBomPageAPI,
+  getBomTemplateAPI,
   getGoodsMaterialOptionsAPI,
   getGoodsProductOptionsAPI,
   updateBomAPI
@@ -208,12 +244,23 @@ const formRef = ref(null)
 const form = reactive({ id: null, bomCode: '', goodsId: null, remark: '', details: [] })
 
 const importVisible = ref(false)
-const importForm = reactive({ bomCode: '', goodsId: null, text: '' })
+const importUploadRef = ref(null)
+const importForm = reactive({ bomCode: '', goodsId: null })
+
+const uploadUrl = '/api/base/bom/image'
+const importUrl = '/api/base/bom/import'
+const uploadHeaders = computed(() => {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+})
+const importData = computed(() => ({ bomCode: importForm.bomCode, goodsId: importForm.goodsId || '' }))
 
 const rules = {
   bomCode: [{ required: true, message: '请输入BOM编码', trigger: 'blur' }],
   goodsId: [{ required: true, message: '请选择成品', trigger: 'change' }]
 }
+
+const imageUrl = (path) => (path ? `/api/base/bom/image?path=${encodeURIComponent(path)}` : '')
 
 const newDetailRow = () => ({
   goodsId: null,
@@ -221,6 +268,7 @@ const newDetailRow = () => ({
   spec: '',
   quantity: null,
   material: '',
+  image: null,
   remark: '',
   isReference: false
 })
@@ -243,6 +291,17 @@ const onLinkGoods = (row, val) => {
     }
   }
 }
+
+// 明细行组件图片上传成功
+const onImageSuccess = (row, res) => {
+  if (res && res.code === 200 && res.data?.path) {
+    row.image = res.data.path
+    ElMessage.success('图片上传成功')
+  } else {
+    ElMessage.error(res?.msg || '图片上传失败')
+  }
+}
+const onImageError = () => ElMessage.error('图片上传失败')
 
 const loadList = async () => {
   loading.value = true
@@ -277,9 +336,10 @@ const loadOptions = async () => {
   }
 }
 
+// GoodsOptionVO 的显式名为 "name"（id/name/stock/unit/salePrice/type）
 const normalizeOpt = (item) => ({
   goodsId: item.id,
-  goodsName: item.goodsName,
+  goodsName: item.name || item.goodsName,
   unit: item.unit
 })
 
@@ -341,6 +401,7 @@ const openByDetail = async (row, viewMode) => {
         spec: x.spec || '',
         quantity: x.quantity == null ? null : Number(x.quantity),
         material: x.material || '',
+        image: x.image || null,
         remark: x.remark || '',
         isReference: x.isReference === 1
       }))
@@ -390,6 +451,7 @@ const buildPayload = () => {
       spec: x.spec || '',
       quantity: x.quantity,
       material: x.material || '',
+      image: x.image || null,
       remark: x.remark || '',
       isReference: !!x.isReference
     }))
@@ -426,56 +488,70 @@ const handleSave = () => {
   })
 }
 
-// ============ 批量导入 ============
+// ============ 导出 / 模板 / 导入 ============
+const downloadBlob = (blob, filename) => {
+  const url = window.URL.createObjectURL(new Blob([blob]))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
+
+const handleExport = async (row) => {
+  try {
+    const blob = await getBomExportAPI(row.id)
+    downloadBlob(blob, `${row.bomCode}.xlsx`)
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  }
+}
+
+const downloadTemplate = async () => {
+  try {
+    const blob = await getBomTemplateAPI()
+    downloadBlob(blob, 'BOM导入模板.xlsx')
+  } catch (error) {
+    ElMessage.error(error.message || '模板下载失败')
+  }
+}
+
 const openImport = () => {
   importForm.bomCode = ''
   importForm.goodsId = null
-  importForm.text = ''
+  importUploadRef.value?.clearFiles()
   importVisible.value = true
 }
 
-const confirmImport = () => {
+const beforeImport = () => {
   if (!importForm.bomCode || !String(importForm.bomCode).trim()) {
-    ElMessage.warning('请输入 BOM 编码')
-    return
+    ElMessage.warning('请先填写 BOM 编码')
+    return false
   }
   if (!importForm.goodsId) {
-    ElMessage.warning('请选择成品')
-    return
+    ElMessage.warning('请先选择成品')
+    return false
   }
-  const lines = String(importForm.text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-  if (!lines.length) {
-    ElMessage.warning('请粘贴明细内容')
-    return
+  return true
+}
+
+const onImportSuccess = (res) => {
+  if (res && res.code === 200) {
+    ElMessage.success(`导入成功，共 ${res.data?.imported || 0} 行明细（已覆盖该成品 BOM）`)
+    importVisible.value = false
+    importUploadRef.value?.clearFiles()
+    loadList()
+  } else {
+    ElMessage.error(res?.msg || '导入失败')
+    importUploadRef.value?.clearFiles()
   }
-  const details = []
-  for (const line of lines) {
-    const parts = line.split(/\t|,|、/).map((p) => (p || '').trim())
-    if (!parts[0]) continue
-    details.push({
-      goodsId: null,
-      componentName: parts[0],
-      spec: parts[1] || '',
-      quantity: parts[2] == null || parts[2] === '' ? null : Number(parts[2]),
-      material: parts[3] || '',
-      remark: parts[4] || '',
-      isReference: false
-    })
-  }
-  if (!details.length) {
-    ElMessage.warning('未解析到有效明细行')
-    return
-  }
-  // 回填到新建弹窗再让用户确认
-  isView.value = false
-  dialogTitle.value = '新建 BOM（导入待确认）'
-  initForm()
-  form.bomCode = importForm.bomCode
-  form.goodsId = importForm.goodsId
-  form.details = details
-  formRef.value?.clearValidate()
-  importVisible.value = false
-  dialogVisible.value = true
+}
+
+const onImportError = () => {
+  ElMessage.error('导入失败，请检查文件格式')
+  importUploadRef.value?.clearFiles()
 }
 
 onMounted(() => {
@@ -493,5 +569,16 @@ onMounted(() => {
 }
 .detail-box {
   width: 100%;
+}
+.tip {
+  font-size: 12px;
+  color: #909399;
+  margin: 6px 0 0;
+  line-height: 1.5;
+}
+.img-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 </style>

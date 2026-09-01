@@ -73,6 +73,29 @@ public class WorkRequirementAttachmentStorageService {
         }
     }
 
+    /**
+     * 持久化保存一张图片，直接返回可检索的 storedPath（如 /uploads/2026/09/01/uuid.png）。
+     * 供 BOM 明细等"每行一张组件图"场景使用，不走临时 token 流程。
+     */
+    public String storeImagePermanent(MultipartFile file) {
+        validateImage(file);
+        String originalFilename = sanitizeFileName(file.getOriginalFilename());
+        String ext = extractExtension(originalFilename);
+        String datePath = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+        String storedFileName = UUID.randomUUID().toString().replace("-", "") + ext;
+        Path uploadRoot = Paths.get(basePath).toAbsolutePath().normalize();
+        Path dir = uploadRoot.resolve(datePath).normalize();
+        try {
+            Files.createDirectories(dir);
+            try (InputStream inputStream = file.getInputStream()) {
+                Files.copy(inputStream, dir.resolve(storedFileName), StandardCopyOption.REPLACE_EXISTING);
+            }
+            return "/uploads/" + datePath + "/" + storedFileName;
+        } catch (IOException e) {
+            throw new BusinessException(500, "图片上传失败: " + e.getMessage());
+        }
+    }
+
     public TempUploadMeta consumeTempUpload(String token) {
         if (!StringUtils.hasText(token)) {
             throw BusinessException.validateFail("附件令牌不能为空");

@@ -303,31 +303,38 @@ public class ProductionOrderService {
         BizBom bom = requireBomOfProduct(goodsId);
         KuaiTaoResult result = new KuaiTaoResult();
 
+        // D4X（方案先行）：BOM 明细只要真需求(非参考行、有组件名)就计入齐套；未关联物料的明细行按"缺料待采购"处理(库存0)——不再丢弃。
+        // 生产研发先定 BOM 方案，物料可后补建档并回挂 goodsId；回挂并入库存后该行即正常参与齐套。
         LambdaQueryWrapper<BizBomDetail> dw = new LambdaQueryWrapper<>();
         dw.eq(BizBomDetail::getBomId, bom.getId())
                 .eq(BizBomDetail::getIsReference, 0)
-                .ne(BizBomDetail::getGoodsId, 0)
-                .isNotNull(BizBomDetail::getGoodsId)
                 .orderByAsc(BizBomDetail::getSortNo);
-        List<BizBomDetail> details = bomDetailMapper.selectList(dw);
+        List<BizBomDetail> details = bomDetailMapper.selectList(dw).stream()
+                .filter(d -> d.getComponentName() != null && !d.getComponentName().trim().isEmpty())
+                .toList();
         if (details.isEmpty()) {
             result.kitStatus = BizProductionOrder.KIT_OK;
             return result;
         }
 
         for (BizBomDetail d : details) {
-            BaseGoods g = baseGoodsMapper.selectById(d.getGoodsId());
-            if (g == null) {
-                continue;
-            }
+            String name = d.getComponentName();
+            // goodsId 空 = 物料未在仓库建档（方案先行待采购），按库存 0 的严重缺料处理
+            BaseGoods g = d.getGoodsId() == null ? null : baseGoodsMapper.selectById(d.getGoodsId());
             BigDecimal usage = d.getQuantity() == null ? BigDecimal.ONE : d.getQuantity();
             BigDecimal required = usage.multiply(BigDecimal.valueOf(quantity)).setScale(4, RoundingMode.HALF_UP);
-            int stock = g.getStock() == null ? 0 : g.getStock();
+            int stock = (g == null || g.getStock() == null) ? 0 : g.getStock();
 
             KitShortageVO line = new KitShortageVO();
-            line.setGoodsId(g.getId());
-            line.setGoodsName(g.getGoodsName());
-            line.setUnit(g.getUnit());
+            if (g != null) {
+                line.setGoodsId(g.getId());
+                line.setGoodsName(g.getGoodsName());
+                line.setUnit(g.getUnit());
+            } else {
+                line.setGoodsId(null);
+                line.setGoodsName(name);
+                line.setUnit(null);
+            }
             line.setUnitUsage(usage);
             line.setRequired(required);
             line.setStock(stock);

@@ -66,13 +66,14 @@ public class SupplierService {
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
-    // 供应商下拉供商品/进货/预警等跨部门使用，放开为仓储/采购/销售成员（对齐 GoodsService.options）
+    // 供应商下拉供商品/进货/预警等跨部门使用，放开为仓储/采购/销售/生产成员（对齐 GoodsService.options）
     public List<OptionVO> options() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
                 "仅仓储、采购或销售部门可获取供应商选项",
                 AuthzService.DEPT_WAREHOUSE,
                 AuthzService.DEPT_PURCHASE,
-                AuthzService.DEPT_SALES
+                AuthzService.DEPT_SALES,
+                AuthzService.DEPT_PRODUCTION
         );
         LambdaQueryWrapper<BaseSupplier> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseSupplier::getStatus, 1).orderByAsc(BaseSupplier::getSupplierName);

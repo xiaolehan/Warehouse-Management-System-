@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 @Data
 public class BomDetailDTO {
 
-    /** 关联物料 goods_id(type=material)，可空——空则视为说明行(仅展示) */
+    /** 关联物料 goods_id(type=material)，可空——方案先行，空行仍计入缺料需求，待物料建档后回挂 */
     private Long goodsId;
 
     /** 组件/物料名称 */
@@ -24,6 +24,9 @@ public class BomDetailDTO {
 
     /** 材质 */
     private String material;
+
+    /** 组件图片路径 */
+    private String image;
 
     private String remark;
 

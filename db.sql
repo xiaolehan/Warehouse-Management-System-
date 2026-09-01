@@ -1215,6 +1215,7 @@ CREATE TABLE IF NOT EXISTS `biz_bom_detail` (
     `quantity` DECIMAL(12,4) NOT NULL DEFAULT 1 COMMENT '单台用量',
     `material` VARCHAR(50) DEFAULT NULL COMMENT '材质',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注(含外购标记等)',
+    `image` VARCHAR(255) DEFAULT NULL COMMENT '组件图片路径(/uploads/...)',
     `is_reference` TINYINT NOT NULL DEFAULT 0 COMMENT '是否参考行(不参与齐套): 0-否, 1-是',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
@@ -1388,3 +1389,46 @@ CREATE TABLE IF NOT EXISTS `biz_production_qc` (
     KEY `idx_qc_order` (`order_id`, `is_deleted`),
     KEY `idx_qc_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产质检记录（D40 首测/成品测）';
+
+-- ============================================================
+-- 阶段9-13 追加：BOM 明细图片列 + PTO153 成品种子（方案先行）
+-- ============================================================
+-- 注：`image` 列已并入上方 biz_bom_detail 的 CREATE TABLE（mysql 8 不支持 ADD COLUMN IF NOT EXISTS）。
+--     仅升级已有库时需手工执行一次：
+--     ALTER TABLE `biz_bom_detail` ADD COLUMN `image` VARCHAR(255) DEFAULT NULL COMMENT '组件图片路径(/uploads/...)' AFTER `remark`;
+
+-- PTO153 成品（type=product）种子：BOM/生产任务单的成品实体
+INSERT INTO `base_goods` (`goods_code`,`type`,`goods_name`,`category`,`supplier_id`,`stock`,`unit`,`status`,`description`)
+SELECT 'PRD-PTO153','product','PTO153','成品',1,0,'台',1,'成品试点：手持产品 PTO153'
+WHERE NOT EXISTS (SELECT 1 FROM base_goods WHERE goods_code='PRD-PTO153' AND is_deleted=0);
+
+-- PTO153-BOM 主表（一个成品一条）
+INSERT INTO `biz_bom` (`bom_code`,`goods_id`,`goods_name`,`remark`)
+SELECT 'PTO153-BOM', g.id, 'PTO153', '方案先行：16 项物料暂不挂仓库，待采购建档后回挂'
+FROM base_goods g WHERE g.goods_code='PRD-PTO153' AND g.is_deleted=0
+AND NOT EXISTS (SELECT 1 FROM biz_bom WHERE bom_code='PTO153-BOM' AND is_deleted=0);
+
+-- 16 行物料明细（goods_id 为空 = 方案先行，不挂仓库物料）
+INSERT INTO `biz_bom_detail` (`bom_id`,`sort_no`,`goods_id`,`component_name`,`spec`,`quantity`,`material`,`remark`,`is_reference`)
+SELECT b.id, d.sort_no, NULL, d.component_name, d.spec, d.quantity, d.material, d.remark, 0
+FROM biz_bom b
+JOIN (
+  SELECT 0 AS sort_no,'PTO153 顶盖 01' AS component_name,'Ø37.5*14' AS spec,1 AS quantity,'PA66' AS material,'橙色、晒纹' AS remark UNION ALL
+  SELECT 1,'PTO153 锁定盖 01','Ø40*27.5',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 2,'PTO153 底座 01','Ø38.5*74.2',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 3,'PTO153 螺母 01','M30*1.5*6-Ø40.5*D37',1,'PA66','外购（黑色）' UNION ALL
+  SELECT 4,'PTO153 主轴 01','Ø10.8*86.3',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 5,'PTO153 主轴导向块 01','Ø23.8*35',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 6,'PTO153 PCB固定筒 01','Ø24.9*32.5-25.5',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 7,'PTO153 PCB端口 01','28.8*28*32.35',1,'PA66','黑色、晒纹' UNION ALL
+  SELECT 8,'PTO153 弹簧 01','Ø10.1*17.5-Ø0.8-6',1,'SUS304','黑色、晒纹' UNION ALL
+  SELECT 9,'PTO153 开口销钉 01','Ø2.6*12',1,'65MN锰钢','黑色（外购，实际尺寸Ø2.5*12）' UNION ALL
+  SELECT 10,'PTO153 轴承珠 01','Ø5',2,'SUS304','' UNION ALL
+  SELECT 11,'PTO153 O型圈 大','Ø20*1.2',1,'橡胶','黑色' UNION ALL
+  SELECT 12,'PTO153 O型圈 小','Ø10*1.2',1,'橡胶','黑色' UNION ALL
+  SELECT 13,'PTO153 PCB组件 01','30.8*14*1.2',1,'STD','' UNION ALL
+  SELECT 14,'PTO153 PCB端口插针','14.5*11.5*1.5-0.8',3,'铜镀银','外购（放在PCB端口啤货）' UNION ALL
+  SELECT 15,'PTO153 磁铁 01','4*2.8*1.5',1,'钕铁硼','镀镍'
+) d ON 1=1
+WHERE b.bom_code='PTO153-BOM' AND b.is_deleted=0
+AND NOT EXISTS (SELECT 1 FROM biz_bom_detail dd WHERE dd.bom_id=b.id AND dd.sort_no=d.sort_no);

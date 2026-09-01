@@ -238,7 +238,7 @@ const loadList = async () => {
 const loadOptions = async () => {
   try {
     const p = await getGoodsProductOptionsAPI()
-    productOptions.value = (p.data || []).map((it) => ({ goodsId: it.id, goodsName: it.goodsName, unit: it.unit }))
+    productOptions.value = (p.data || []).map((it) => ({ goodsId: it.id, goodsName: it.name || it.goodsName, unit: it.unit }))
   } catch (error) {
     ElMessage.error(error.message || '加载成品选项失败')
   }

@@ -32,6 +32,9 @@ public class BomDetailVO {
     /** 备注(含外购标记等) */
     private String remark;
 
+    /** 组件图片路径(如 /uploads/2026/09/01/uuid.png) */
+    private String image;
+
     /** 是否参考行(不参与齐套): 0-否, 1-是 */
     private Integer isReference;
 }
