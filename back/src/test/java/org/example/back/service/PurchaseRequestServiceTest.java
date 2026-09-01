@@ -56,6 +56,7 @@ class PurchaseRequestServiceTest {
     @Mock private MessageService messageService;
     @Mock private PurchaseService purchaseService;
     @Mock private ProductionOrderService productionOrderService;
+    @Mock private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
 
     @InjectMocks private PurchaseRequestService service;
 
@@ -393,5 +394,83 @@ class PurchaseRequestServiceTest {
         assertTrue(params.containsValue("申请人撤销草稿"), "参数中应包含撤销原因, 实际参数: " + params);
 
         verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
+    }
+
+    // ---------- confirmReceive 回挂用例 1：BOM 明细 goodsId 为 null → 回挂 ----------
+    @Test
+    void confirmReceive_backlinksBomDetailGoodsIdOnlyWhenNull() {
+        // 到货申请单（待入库确认）
+        BizPurchaseRequest req = new BizPurchaseRequest();
+        req.setId(5L);
+        req.setStatus(5); // AWAITING_CONFIRM
+        req.setRequestNo("PR-test");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(req);
+
+        org.example.back.entity.BizPurchaseRequestDetail d1 = new org.example.back.entity.BizPurchaseRequestDetail();
+        d1.setId(100L); d1.setGoodsId(66L); d1.setBomDetailId(12L);
+        d1.setArriveQuantity(3); d1.setQuantity(3); d1.setGoodsName("板1");
+        d1.setUnitPrice(new java.math.BigDecimal("1.50"));
+        when(bizPurchaseRequestDetailMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(d1));
+
+        // 仓储登录用户
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(20L);
+        user.setRealName("仓储员");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // BOM 明细原 goods_id 为 null → 应回挂 66
+        org.example.back.entity.BizBomDetail bomDetail = new org.example.back.entity.BizBomDetail();
+        bomDetail.setId(12L);
+        bomDetail.setGoodsId(null);
+        when(bizBomDetailMapper.selectById(12L)).thenReturn(bomDetail);
+        // confirmReceive 末尾对主单做乐观锁更新（set改为 RECEIVED=3），stub 返回 1 避免抛"状态已变更"
+        when(bizPurchaseRequestMapper.update(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(1);
+
+        service.confirmReceive(5L);
+
+        // 回挂：BOM 明细 goods_id 更新为 66
+        org.mockito.ArgumentCaptor<org.example.back.entity.BizBomDetail> cap =
+                org.mockito.ArgumentCaptor.forClass(org.example.back.entity.BizBomDetail.class);
+        org.mockito.Mockito.verify(bizBomDetailMapper).updateById(cap.capture());
+        assertEquals(66L, cap.getValue().getGoodsId());
+    }
+
+    // ---------- confirmReceive 回挂用例 2：BOM 明细已有 goodsId → 不覆盖 ----------
+    @Test
+    void confirmReceive_doesNotOverwriteExistingBacklink() {
+        BizPurchaseRequest req = new BizPurchaseRequest();
+        req.setId(5L);
+        req.setStatus(5); // AWAITING_CONFIRM
+        req.setRequestNo("PR-test");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(req);
+
+        org.example.back.entity.BizPurchaseRequestDetail d1 = new org.example.back.entity.BizPurchaseRequestDetail();
+        d1.setId(100L); d1.setGoodsId(66L); d1.setBomDetailId(12L);
+        d1.setArriveQuantity(3); d1.setQuantity(3); d1.setGoodsName("板1");
+        d1.setUnitPrice(new java.math.BigDecimal("1.50"));
+        when(bizPurchaseRequestDetailMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of(d1));
+
+        // 仓储登录用户
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(20L);
+        user.setRealName("仓储员");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // BOM 明细 goods_id 已为 99 → 不应覆盖
+        org.example.back.entity.BizBomDetail bomDetail = new org.example.back.entity.BizBomDetail();
+        bomDetail.setId(12L);
+        bomDetail.setGoodsId(99L);
+        when(bizBomDetailMapper.selectById(12L)).thenReturn(bomDetail);
+        when(bizPurchaseRequestMapper.update(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(1);
+
+        service.confirmReceive(5L);
+
+        // 不覆盖：updateById 不应被调用
+        org.mockito.Mockito.verify(bizBomDetailMapper, org.mockito.Mockito.never()).updateById(
+                org.mockito.ArgumentMatchers.any());
     }
 }

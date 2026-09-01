@@ -77,6 +77,9 @@ public class PurchaseRequestService {
     @Autowired
     private ProductionOrderService productionOrderService;
 
+    @Autowired
+    private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
+
     // ============================== 查询 ==============================
 
     public PageResult<PurchaseRequestVO> page(PurchaseRequestQueryDTO queryDTO) {
@@ -437,6 +440,15 @@ public class PurchaseRequestService {
             purchaseDto.setUnitPrice(detail.getUnitPrice());
             purchaseDto.setRemark("采购申请单 " + entity.getRequestNo() + " 入库");
             purchaseService.createInternal(purchaseDto, loginUser.getId(), loginUser.getRealName());
+
+            // 回挂：确认入库后把该行对应 BOM 明细 goods_id 写为物料(仅原为空才写，避免覆盖已回挂)
+            if (detail.getBomDetailId() != null) {
+                org.example.back.entity.BizBomDetail bomDetail = bizBomDetailMapper.selectById(detail.getBomDetailId());
+                if (bomDetail != null && bomDetail.getGoodsId() == null && detail.getGoodsId() != null) {
+                    bomDetail.setGoodsId(detail.getGoodsId());
+                    bizBomDetailMapper.updateById(bomDetail);
+                }
+            }
         }
 
         LocalDateTime now = LocalDateTime.now();
