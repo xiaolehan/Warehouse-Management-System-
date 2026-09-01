@@ -20,6 +20,9 @@ public class BizPurchaseRequestDetail {
 
     private Long goodsId;
 
+    /** 对应BOM明细id(确认入库时回挂goods_id) */
+    private Long bomDetailId;
+
     private String goodsName;
 
     private Integer quantity;

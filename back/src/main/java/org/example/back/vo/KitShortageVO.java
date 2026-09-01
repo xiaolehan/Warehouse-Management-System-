@@ -12,6 +12,9 @@ public class KitShortageVO {
 
     private Long goodsId;
 
+    /** 对应BOM明细id(方案先行回挂用) */
+    private Long bomDetailId;
+
     private String goodsName;
 
     private String unit;

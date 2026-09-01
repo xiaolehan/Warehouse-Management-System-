@@ -22,6 +22,12 @@ public class BizPurchaseRequest {
      */
     private Integer status;
 
+    /** 来源: production-生产缺料补料, warehouse-仓储手动 */
+    private String sourceType;
+
+    /** 来源生产任务单id(仅production来源有值) */
+    private Long productionOrderId;
+
     private Long applicantId;
 
     private String applicantName;

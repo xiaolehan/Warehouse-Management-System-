@@ -13,6 +13,9 @@ public class PurchaseRequestDetailVO {
 
     private Long goodsId;
 
+    /** 对应BOM明细id */
+    private Long bomDetailId;
+
     private String goodsName;
 
     private Integer quantity;
