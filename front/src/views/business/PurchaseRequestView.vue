@@ -593,7 +593,6 @@ function openConfirm(row) {
 
 function doConfirm() {
   const items = (confirmRow.value.details || [])
-    .filter((d) => d.goodsId == null)
     .map((d) => ({ detailId: d.id, goodsId: d.goodsId }))
   if (items.some((i) => i.goodsId == null)) {
     ElMessage.warning('请为待定物料选择关联物料')
