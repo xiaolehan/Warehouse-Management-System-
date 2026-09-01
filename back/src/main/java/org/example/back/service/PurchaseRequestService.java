@@ -7,6 +7,8 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
+import org.example.back.dto.ProductionDraftCreateDTO;
+import org.example.back.dto.ProductionDraftItemDTO;
 import org.example.back.dto.PurchaseRequestDetailDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestQueryDTO;
@@ -20,6 +22,7 @@ import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.PurchaseRequestDetailVO;
 import org.example.back.vo.PurchaseRequestVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +45,10 @@ public class PurchaseRequestService {
     public static final int STATUS_RECEIVED = 3;    // 已入库
     public static final int STATUS_REJECTED = 4;    // 已驳回
     public static final int STATUS_AWAITING_CONFIRM = 5;  // 待入库确认
+    public static final int STATUS_DRAFT = 6;    // 草稿(生产补料待仓储转正)
+
+    public static final String SOURCE_PRODUCTION = "production";
+    public static final String SOURCE_WAREHOUSE = "warehouse";
 
     @Autowired
     private BizPurchaseRequestMapper bizPurchaseRequestMapper;
@@ -63,6 +70,9 @@ public class PurchaseRequestService {
 
     @Autowired
     private PurchaseService purchaseService;
+
+    @Autowired
+    private ProductionOrderService productionOrderService;
 
     // ============================== 查询 ==============================
 
@@ -117,6 +127,85 @@ public class PurchaseRequestService {
                 .apply("stock <= warning_stock")
                 .orderByAsc(BaseGoods::getStock);
         return baseGoodsMapper.selectList(wrapper);
+    }
+
+    // ============================== 生产缺料草稿 ==============================
+
+    /**
+     * 生产一键补料：从生产任务单缺料行生成采购申请草稿(DRAFT)。幂等——同一任务单只允许一张草稿。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long createDraft(ProductionDraftCreateDTO dto) {
+        requireProductionDraftAccess();
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+
+        // 幂等：同一生产任务单已有草稿则拒绝，除非已流转
+        List<BizPurchaseRequest> existing = listDraftByProductionOrder(dto.getProductionOrderId());
+        if (!existing.isEmpty()) {
+            throw BusinessException.validateFail("该生产任务单已生成补料草稿，请先转正或驳回");
+        }
+
+        List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(dto.getProductionOrderId());
+        if (shortage.isEmpty()) {
+            throw BusinessException.validateFail("该生产任务单当前无缺料，无需补料");
+        }
+        Map<Long, Integer> override = dto.getDetails() == null ? Map.of()
+                : dto.getDetails().stream()
+                        .filter(i -> i.getBomDetailId() != null && i.getQuantity() != null && i.getQuantity() > 0)
+                        .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, ProductionDraftItemDTO::getQuantity));
+
+        BizPurchaseRequest draft = new BizPurchaseRequest();
+        draft.setRequestNo(CodeGenerator.purchaseRequestNo());
+        draft.setStatus(STATUS_DRAFT);
+        draft.setSourceType(SOURCE_PRODUCTION);
+        draft.setProductionOrderId(dto.getProductionOrderId());
+        draft.setApplicantId(loginUser.getId());
+        draft.setApplicantName(loginUser.getRealName());
+        draft.setRemark(dto.getRemark());
+        bizPurchaseRequestMapper.insert(draft);
+
+        int sortNo = 0;
+        for (KitShortageVO line : shortage) {
+            Integer qty = override.getOrDefault(line.getBomDetailId(), ceilDeficit(line.getDeficit()));
+            if (qty == null || qty <= 0) {
+                continue;
+            }
+            BizPurchaseRequestDetail det = new BizPurchaseRequestDetail();
+            det.setRequestId(draft.getId());
+            det.setGoodsId(line.getGoodsId());
+            det.setGoodsName(line.getGoodsName());
+            det.setQuantity(qty);
+            det.setBomDetailId(line.getBomDetailId());
+            det.setSortNo(sortNo++);
+            bizPurchaseRequestDetailMapper.insert(det);
+        }
+        if (sortNo == 0) {
+            throw BusinessException.validateFail("无有效缺料行可补料");
+        }
+
+        messageService.sendPurchaseRequestDraftToWarehouseAdmins(draft.getRequestNo(), loginUser.getRealName(), draft.getId());
+        return draft.getId();
+    }
+
+    /**
+     * 生产端查看某生产任务单的补料草稿（供 UI 判断是否已生成/撤销）。
+     */
+    public PurchaseRequestVO getDraftByProductionOrder(Long productionOrderId) {
+        requireProductionDraftAccess();
+        List<BizPurchaseRequest> drafts = listDraftByProductionOrder(productionOrderId);
+        return drafts.isEmpty() ? null : toVO(drafts.get(0));
+    }
+
+    private static int ceilDeficit(java.math.BigDecimal deficit) {
+        return deficit.setScale(0, java.math.RoundingMode.UP).intValue();
+    }
+
+    private List<BizPurchaseRequest> listDraftByProductionOrder(Long productionOrderId) {
+        LambdaQueryWrapper<BizPurchaseRequest> w = new LambdaQueryWrapper<>();
+        w.eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
+                .eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
+                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT);
+        return bizPurchaseRequestMapper.selectList(w);
     }
 
     // ============================== 仓储建单 ==============================
@@ -377,6 +466,11 @@ public class PurchaseRequestService {
                 AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认采购入库");
     }
 
+    private void requireProductionDraftAccess() {
+        authzService.requireDeptAdminOrSuperAdmin(
+                AuthzService.DEPT_PRODUCTION, "仅生产研发部管理员可生成/管理补料草稿");
+    }
+
     private BizPurchaseRequest requireEntity(Long id) {
         BizPurchaseRequest entity = bizPurchaseRequestMapper.selectById(id);
         if (entity == null) {
@@ -437,6 +531,7 @@ public class PurchaseRequestService {
         vo.setId(detail.getId());
         vo.setRequestId(detail.getRequestId());
         vo.setGoodsId(detail.getGoodsId());
+        vo.setBomDetailId(detail.getBomDetailId());
         vo.setGoodsName(detail.getGoodsName());
         vo.setQuantity(detail.getQuantity());
         vo.setArriveQuantity(detail.getArriveQuantity());

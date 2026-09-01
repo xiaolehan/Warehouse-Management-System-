@@ -6,6 +6,7 @@ import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
+import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestQueryDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
@@ -43,6 +44,22 @@ public class PurchaseRequestController {
     @RequireAdmin("仅管理员可查看缺货商品")
     public Result<List<BaseGoods>> shortageGoods() {
         return Result.success(purchaseRequestService.listShortageGoods());
+    }
+
+    /**
+     * 生产缺料补料草稿生成（生产研发部）。
+     */
+    @PostMapping("/draft")
+    @RequireAdmin("仅生产研发部管理员可生成补料草稿")
+    @AuditLog(module = "采购申请", action = "生成补料草稿", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交补料草稿")
+    public Result<Long> createDraft(@Valid @RequestBody ProductionDraftCreateDTO dto) {
+        return Result.success(purchaseRequestService.createDraft(dto));
+    }
+
+    @GetMapping("/draft/{productionOrderId}")
+    public Result<PurchaseRequestVO> getDraftByProductionOrder(@PathVariable Long productionOrderId) {
+        return Result.success(purchaseRequestService.getDraftByProductionOrder(productionOrderId));
     }
 
     @PostMapping
