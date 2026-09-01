@@ -151,7 +151,7 @@ public class PurchaseRequestService {
         }
         Map<Long, Integer> override = dto.getDetails() == null ? Map.of()
                 : dto.getDetails().stream()
-                        .filter(i -> i.getBomDetailId() != null && i.getQuantity() != null && i.getQuantity() > 0)
+                        .filter(i -> i.getBomDetailId() != null && i.getQuantity() != null)
                         .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, ProductionDraftItemDTO::getQuantity));
 
         BizPurchaseRequest draft = new BizPurchaseRequest();
