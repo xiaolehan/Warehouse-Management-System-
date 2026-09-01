@@ -8,6 +8,7 @@ import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.entity.BaseGoods;
+import org.example.back.common.exception.BusinessException;
 import org.example.back.vo.KitShortageVO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +20,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -68,5 +70,12 @@ class ProductionOrderServiceTest {
         assertEquals("板1", shortage.get(0).getGoodsName());
         assertEquals(12L, shortage.get(0).getBomDetailId());
         assertEquals(3, shortage.get(0).getDeficit().intValue());
+    }
+
+    @Test
+    void computeShortageForOrder_throwsWhenOrderNotFound() {
+        when(orderMapper.selectById(999L)).thenReturn(null);
+
+        assertThrows(BusinessException.class, () -> service.computeShortageForOrder(999L));
     }
 }

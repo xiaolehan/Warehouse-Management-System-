@@ -416,7 +416,7 @@ public class ProductionOrderService {
         BizProductionOrder order = requireOrder(productionOrderId);
         KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
         return kit.lines.stream()
-                .filter(l -> l.getDeficit() != null && l.getDeficit().intValue() > 0)
+                .filter(l -> l.getDeficit() != null && l.getDeficit().compareTo(BigDecimal.ZERO) > 0)
                 .toList();
     }
 
