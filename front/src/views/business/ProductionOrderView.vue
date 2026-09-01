@@ -43,6 +43,11 @@
         <template #default="scope">
           <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
           <el-button v-if="scope.row.status === 1" size="small" type="primary" :icon="VideoPlay" @click="handleStart(scope.row)">开工</el-button>
+          <el-button
+            v-if="(scope.row.status === 1) && (scope.row.kitStatus === 'partial' || scope.row.kitStatus === 'block')"
+            size="small" type="warning" link @click="openDraftDialog(scope.row)"
+            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          >补料</el-button>
           <el-button v-if="scope.row.status === 3" size="small" type="success" :icon="CircleCheck" @click="handleReceipt(scope.row)">生产入库</el-button>
           <el-button
             v-if="scope.row.status === 1 || scope.row.status === 2" size="small" type="danger" :icon="CloseBold"
@@ -165,6 +170,30 @@
         </template>
       </template>
     </el-dialog>
+
+    <!-- 补料草稿 -->
+    <el-dialog v-model="draftVisible" :title="`补料草稿 - ${draftRow.orderNo || ''}`" width="720px">
+      <el-alert v-if="draftStatusText" :title="draftStatusText" type="info" :closable="false" style="margin-bottom:12px" />
+      <el-table :data="draftLines" border>
+        <el-table-column prop="goodsName" label="物料" min-width="140" />
+        <el-table-column label="需用量" width="90">
+          <template #default="s">{{ fmtNum(s.row.required) }}</template>
+        </el-table-column>
+        <el-table-column prop="stock" label="库存" width="70" />
+        <el-table-column label="缺口" width="70">
+          <template #default="s">{{ fmtNum(s.row.deficit) }}</template>
+        </el-table-column>
+        <el-table-column label="申请数量" width="110">
+          <template #default="s">
+            <el-input-number v-model="s.row.applyQty" :min="0" size="small" />
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button v-if="existingDraftId" type="danger" @click="doCancelDraft">撤销草稿</el-button>
+        <el-button v-else type="primary" :loading="draftSubmitting" @click="doCreateDraft">生成草稿</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -183,6 +212,11 @@ import {
   voidProductionOrderAPI
 } from '@/api/business'
 import { getGoodsProductOptionsAPI } from '@/api/base'
+import {
+  createDraftPurchaseRequestAPI,
+  getDraftByProductionOrderAPI,
+  cancelDraftPurchaseRequestAPI
+} from '@/api/purchaseRequest'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -334,6 +368,76 @@ const handleVoid = (row) => {
     ElMessage.success('已作废')
     await loadList()
   }).catch((e) => { if (e === 'cancel') return; if (e && e.message) ElMessage.error(e.message) })
+}
+
+// 补料草稿
+const draftVisible = ref(false)
+const draftRow = ref({})
+const draftLines = ref([])
+const existingDraftId = ref(null)
+const draftStatusText = ref('')
+const draftSubmitting = ref(false)
+
+function openDraftDialog(row) {
+  draftRow.value = row
+  draftVisible.value = true
+  draftSubmitting.value = false
+  existingDraftId.value = null
+  draftStatusText.value = ''
+  draftLines.value = []
+  // 判断是否已有草稿
+  getDraftByProductionOrderAPI(row.id).then((res) => {
+    if (res.code !== 200) return
+    const p = res.data
+    if (p) {
+      existingDraftId.value = p.id
+      draftStatusText.value = `已生成补料草稿（单号 ${p.requestNo}）`
+    }
+  }).catch(() => {})
+  // 拉详情拿 kitLines，映射成可编辑行
+  getProductionOrderDetailAPI(row.id).then((res) => {
+    if (res.code !== 200) return
+    const vo = res.data || {}
+    draftLines.value = (vo.kitLines || [])
+      .filter((l) => (l.deficit || 0) > 0)
+      .map((l) => ({ ...l, applyQty: Math.ceil(l.deficit) }))
+  }).catch(() => {})
+}
+
+function doCreateDraft() {
+  const items = draftLines.value
+    .filter((l) => l.applyQty > 0)
+    .map((l) => ({ bomDetailId: l.bomDetailId, quantity: l.applyQty }))
+  if (!items.length) {
+    ElMessage.warning('请至少填一条申请数量')
+    return
+  }
+  draftSubmitting.value = true
+  createDraftPurchaseRequestAPI({
+    productionOrderId: draftRow.value.id,
+    details: items,
+    remark: ''
+  }).then((res) => {
+    if (res.code !== 200) throw new Error(res.msg || '生成草稿失败')
+    ElMessage.success('补料草稿已生成，待仓储转正')
+    draftVisible.value = false
+    loadList()
+  }).catch((error) => {
+    ElMessage.error(error.message || '生成草稿失败')
+  }).finally(() => {
+    draftSubmitting.value = false
+  })
+}
+
+function doCancelDraft() {
+  cancelDraftPurchaseRequestAPI(existingDraftId.value).then((res) => {
+    if (res.code !== 200) throw new Error(res.msg || '撤销草稿失败')
+    ElMessage.success('草稿已撤销')
+    draftVisible.value = false
+    loadList()
+  }).catch((error) => {
+    ElMessage.error(error.message || '撤销草稿失败')
+  })
 }
 
 // 标题格式化工具
