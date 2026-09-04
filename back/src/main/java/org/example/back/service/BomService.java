@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
+import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.BomQueryDTO;
 import org.example.back.dto.BomDetailDTO;
 import org.example.back.dto.BomSaveDTO;
@@ -60,6 +61,9 @@ public class BomService {
     private static final int COL_QTY = 4;
     private static final int COL_MATERIAL = 5;
     private static final int COL_REMARK = 6;
+
+    // 补料采购/BOM 建档：自产成品无采购供应商，统一挂缺省供应商（与 db.sql 种子 base_goods supplier_id=1 一致）
+    private static final Long DEFAULT_SUPPLIER_ID = 1L;
 
     @Autowired
     private BizBomMapper bizBomMapper;
@@ -119,12 +123,14 @@ public class BomService {
     @Transactional(rollbackFor = Exception.class)
     public void create(BomSaveDTO dto) {
         requireBomWriteAccess();
-        BaseGoods product = requireProduct(dto.getGoodsId());
-        checkBomCodeUnique(dto.getBomCode(), null);
-        checkGoodsBomUnique(dto.getGoodsId(), null);
+        String productName = dto.getGoodsName().trim();
+        BaseGoods product = resolveOrCreateProduct(productName, dto.getUnit());
+        checkGoodsBomUnique(product.getId(), null);
+        String bomCode = resolveBomCode(dto.getBomCode(), productName);
+        checkBomCodeUnique(bomCode, null);
 
         BizBom bom = new BizBom();
-        bom.setBomCode(dto.getBomCode());
+        bom.setBomCode(bomCode);
         bom.setGoodsId(product.getId());
         bom.setGoodsName(product.getGoodsName());
         bom.setRemark(dto.getRemark());
@@ -137,13 +143,29 @@ public class BomService {
     public void update(Long id, BomSaveDTO dto) {
         requireBomWriteAccess();
         BizBom bom = requireBom(id);
-        BaseGoods product = requireProduct(dto.getGoodsId());
-        checkBomCodeUnique(dto.getBomCode(), id);
-        checkGoodsBomUnique(dto.getGoodsId(), id);
+        String newName = dto.getGoodsName().trim();
+        BaseGoods product = baseGoodsMapper.selectById(bom.getGoodsId());
+        if (product != null) {
+            // 成品身份(goodsId)锁定；名称/单位随 BOM 编辑同步到成品主档
+            boolean nameChanged = !newName.equals(product.getGoodsName());
+            if (nameChanged) {
+                checkGoodsNameAvailable(newName, product.getId());
+            }
+            if (nameChanged || StringUtils.hasText(dto.getUnit())) {
+                BaseGoods upd = new BaseGoods();
+                upd.setId(product.getId());
+                upd.setGoodsName(newName);
+                if (StringUtils.hasText(dto.getUnit())) {
+                    upd.setUnit(dto.getUnit().trim());
+                }
+                baseGoodsMapper.updateById(upd);
+            }
+        }
 
-        bom.setBomCode(dto.getBomCode());
-        bom.setGoodsId(product.getId());
-        bom.setGoodsName(product.getGoodsName());
+        String bomCode = resolveBomCode(dto.getBomCode(), newName);
+        checkBomCodeUnique(bomCode, id);
+        bom.setBomCode(bomCode);
+        bom.setGoodsName(newName);
         bom.setRemark(dto.getRemark());
         bizBomMapper.updateById(bom);
 
@@ -209,18 +231,53 @@ public class BomService {
         }
     }
 
-    private BaseGoods requireProduct(Long goodsId) {
-        BaseGoods goods = baseGoodsMapper.selectById(goodsId);
-        if (goods == null) {
-            throw BusinessException.validateFail("成品不存在");
+    /** 一个 BOM 即一种成品：按成品名称找成品主档，不存在则自动落一条 type=product 记录 */
+    private BaseGoods resolveOrCreateProduct(String goodsName, String unit) {
+        BaseGoods existing = findByProductName(goodsName);
+        if (existing != null) {
+            return existing;
         }
-        if (!GoodsService.GOODS_TYPE_PRODUCT.equalsIgnoreCase(goods.getType())) {
-            throw BusinessException.validateFail("BOM 只能挂接在成品（type=product）上，所选货品不是成品");
+        checkGoodsNameAvailable(goodsName, null);
+        BaseGoods product = new BaseGoods();
+        product.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        product.setGoodsCode(CodeGenerator.productGoodsCode());
+        product.setGoodsName(goodsName);
+        product.setProductName(goodsName);
+        product.setCategory("成品");
+        product.setSupplierId(DEFAULT_SUPPLIER_ID);
+        product.setUnit(StringUtils.hasText(unit) ? unit.trim() : null);
+        product.setStock(0);
+        product.setWarningStock(10);
+        product.setStatus(1);
+        product.setDescription("由生产研发部 BOM 建档生成");
+        baseGoodsMapper.insert(product);
+        return baseGoodsMapper.selectById(product.getId());
+    }
+
+    private BaseGoods findByProductName(String goodsName) {
+        return baseGoodsMapper.selectOne(Wrappers.<BaseGoods>lambdaQuery()
+                .eq(BaseGoods::getGoodsName, goodsName)
+                .eq(BaseGoods::getType, GoodsService.GOODS_TYPE_PRODUCT)
+                .eq(BaseGoods::getIsDeleted, 0));
+    }
+
+    /** 成品名称全库唯一：既不能撞同名的成品，也不能撞物料 */
+    private void checkGoodsNameAvailable(String goodsName, Long excludeGoodsId) {
+        LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BaseGoods::getGoodsName, goodsName)
+                .eq(BaseGoods::getIsDeleted, 0)
+                .ne(excludeGoodsId != null, BaseGoods::getId, excludeGoodsId);
+        if (baseGoodsMapper.selectCount(wrapper) > 0) {
+            throw BusinessException.validateFail("该成品名称「" + goodsName + "」已被其他货品占用，请换一个");
         }
-        if (goods.getStatus() != null && goods.getStatus() != 1) {
-            throw BusinessException.validateFail("成品已停用，无法建立 BOM");
+    }
+
+    /** BOM 编码：优先用调用方传入，留空则按「{成品名称}-BOM」自动生成 */
+    private String resolveBomCode(String bomCode, String goodsName) {
+        if (StringUtils.hasText(bomCode)) {
+            return bomCode.trim();
         }
-        return goods;
+        return goodsName + "-BOM";
     }
 
     private void checkBomCodeUnique(String bomCode, Long excludeId) {
@@ -338,19 +395,21 @@ public class BomService {
         }
     }
 
-    /** 导入并落库：该成品已有 BOM 则整体覆盖明细，否则新建 */
+    /** 导入并落库：该成品已有 BOM 则整体覆盖明细，否则新建（BOM=成品，按成品名称匹配） */
     @Transactional(rollbackFor = Exception.class)
-    public int importBom(Long goodsId, String bomCode, List<BomDetailDTO> details) {
+    public int importBom(String goodsName, String bomCode, List<BomDetailDTO> details) {
         requireBomWriteAccess();
-        if (details == null || details.isEmpty() || !StringUtils.hasText(bomCode)) {
-            throw BusinessException.validateFail("导入数据或 BOM 编码不能为空");
+        if (details == null || details.isEmpty() || !StringUtils.hasText(goodsName)) {
+            throw BusinessException.validateFail("导入数据或成品名称不能为空");
         }
+        String name = goodsName.trim();
+        BaseGoods product = resolveOrCreateProduct(name, null);
         BomSaveDTO dto = new BomSaveDTO();
-        dto.setBomCode(bomCode.trim());
-        dto.setGoodsId(goodsId);
+        dto.setBomCode(bomCode);
+        dto.setGoodsName(name);
         dto.setRemark("xlsx 批量导入");
         dto.setDetails(details);
-        BizBom existing = bizBomMapper.selectOne(Wrappers.<BizBom>lambdaQuery().eq(BizBom::getGoodsId, goodsId));
+        BizBom existing = bizBomMapper.selectOne(Wrappers.<BizBom>lambdaQuery().eq(BizBom::getGoodsId, product.getId()));
         if (existing != null) {
             update(existing.getId(), dto);
         } else {

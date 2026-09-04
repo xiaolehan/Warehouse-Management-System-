@@ -29,6 +29,10 @@ public final class CodeGenerator {
         return "GD" + timestampSuffix();
     }
 
+    public static String productGoodsCode() {
+        return "PRD" + timestampSuffix();
+    }
+
     public static String purchaseNo() {
         return "PUR" + timestampSuffix();
     }

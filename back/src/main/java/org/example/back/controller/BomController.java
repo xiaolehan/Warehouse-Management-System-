@@ -102,15 +102,15 @@ public class BomController {
         return fileResponse(bomService.downloadTemplate(), "BOM导入模板.xlsx");
     }
 
-    /** 上传 xlsx 导入 BOM 明细（覆盖该成品已有 BOM） */
+    /** 上传 xlsx 导入 BOM 明细（按成品名称匹配，覆盖该成品已有 BOM） */
     @PostMapping("/import")
     @PreventDuplicateSubmit(message = "请勿重复提交 BOM 导入请求")
     public Result<Map<String, Integer>> importBom(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("goodsId") Long goodsId,
-            @RequestParam("bomCode") String bomCode) throws IOException {
+            @RequestParam("goodsName") String goodsName,
+            @RequestParam(value = "bomCode", required = false) String bomCode) throws IOException {
         List<BomDetailDTO> rows = bomService.parseImportRows(file.getInputStream());
-        int imported = bomService.importBom(goodsId, bomCode, rows);
+        int imported = bomService.importBom(goodsName, bomCode, rows);
         return Result.success(Map.of("imported", imported));
     }
 
