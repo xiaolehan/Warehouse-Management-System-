@@ -33,19 +33,19 @@
       </el-table-column>
       <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
       <el-table-column prop="createTime" label="创建时间" width="170" />
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="230" fixed="right">
         <template #default="scope">
-          <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
           <el-button
-            size="small" type="success" :icon="Download" @click="handleExport(scope.row)"
+            link size="small" type="warning" @click="handleExport(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >导出</el-button>
           <el-button
-            size="small" type="primary" :icon="Edit" @click="handleEdit(scope.row)"
+            link size="small" type="primary" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >编辑</el-button>
           <el-button
-            size="small" type="danger" :icon="Delete" @click="handleDelete(scope.row)"
+            link size="small" type="danger" @click="handleDelete(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >删除</el-button>
         </template>
@@ -67,19 +67,11 @@
     <!-- 新建 / 编辑 / 查看 弹窗 -->
     <el-dialog :title="dialogTitle" v-model="dialogVisible" width="1040px" top="5vh">
       <el-form :model="form" :rules="rules" ref="formRef" label-width="90px" :disabled="isView">
-        <el-form-item label="BOM编码" prop="bomCode">
-          <el-input v-model="form.bomCode" placeholder="如 PTO153-BOM" :disabled="!!form.id" />
+        <el-form-item label="成品名称" prop="goodsName">
+          <el-input v-model="form.goodsName" placeholder="如 PTO153（一个 BOM 即一种成品）" :disabled="isView" style="width: 320px" />
         </el-form-item>
-        <el-form-item label="成品" prop="goodsId">
-          <el-select
-            v-model="form.goodsId" filterable placeholder="选择成品（type=product）" style="width: 320px"
-            :disabled="!!form.id"
-          >
-            <el-option
-              v-for="opt in productOptions" :key="opt.goodsId"
-              :label="`${opt.goodsName}（${opt.unit || ''}）`" :value="opt.goodsId"
-            />
-          </el-select>
+        <el-form-item label="单位" prop="unit">
+          <el-input v-model="form.unit" placeholder="如 台（可空）" :disabled="isView" style="width: 200px" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="BOM 备注" />
@@ -92,20 +84,20 @@
                 <template #default="scope">
                   <div v-if="!isView" class="img-cell">
                     <el-upload
-                      :action="uploadUrl" :headers="uploadHeaders" :show-file-list="false"
+                      :http-request="uploadImageRequest" :show-file-list="false"
                       accept="image/*" :on-success="(res, uf) => onImageSuccess(scope.row, res, uf)"
                       :on-error="onImageError"
                     >
                       <el-button v-if="!scope.row.image" size="small" type="primary" plain :icon="Picture">上传图</el-button>
                       <template v-else>
-                        <el-image :src="imageUrl(scope.row.image)" :preview-src-list="[imageUrl(scope.row.image)]" fit="cover" style="width:46px;height:46px;border-radius:4px;display:inline-block;vertical-align:middle;" />
+                        <el-image :src="imgMap[scope.row.image] || ''" :preview-src-list="[imgMap[scope.row.image]].filter(Boolean)" fit="cover" style="width:46px;height:46px;border-radius:4px;display:inline-block;vertical-align:middle;" />
                       </template>
                     </el-upload>
                     <el-button v-if="scope.row.image" size="small" link type="danger" @click="scope.row.image = null">删</el-button>
                   </div>
                   <el-image
-                    v-else-if="scope.row.image" :src="imageUrl(scope.row.image)"
-                    :preview-src-list="[imageUrl(scope.row.image)]" fit="cover"
+                    v-else-if="scope.row.image" :src="imgMap[scope.row.image] || ''"
+                    :preview-src-list="[imgMap[scope.row.image]].filter(Boolean)" fit="cover"
                     style="width:46px;height:46px;border-radius:4px;"
                   />
                 </template>
@@ -178,21 +170,16 @@
     <!-- 批量导入（真实 .xlsx） -->
     <el-dialog title="导入 BOM 明细" v-model="importVisible" width="560px">
       <el-form label-width="90px">
-        <el-form-item label="BOM编码" required>
-          <el-input v-model="importForm.bomCode" placeholder="如 PTO153-BOM" />
+        <el-form-item label="成品名称" required>
+          <el-input v-model="importForm.goodsName" placeholder="如 PTO153（匹配已有或自动新建成品）" />
         </el-form-item>
-        <el-form-item label="成品" required>
-          <el-select v-model="importForm.goodsId" filterable placeholder="选择成品" style="width: 100%">
-            <el-option
-              v-for="opt in productOptions" :key="opt.goodsId"
-              :label="`${opt.goodsName}（${opt.unit || ''}）`" :value="opt.goodsId"
-            />
-          </el-select>
+        <el-form-item label="BOM编码">
+          <el-input v-model="importForm.bomCode" placeholder="如 PTO153-BOM（留空自动生成）" />
         </el-form-item>
         <el-form-item label="文件">
           <el-upload
-            ref="importUploadRef" :action="importUrl" :headers="uploadHeaders"
-            :data="importData" accept=".xlsx,.xls" :show-file-list="true" :limit="1"
+            ref="importUploadRef" :http-request="importRequest"
+            accept=".xlsx,.xls" :show-file-list="true" :limit="1"
             :before-upload="beforeImport" :on-success="onImportSuccess" :on-error="onImportError"
           >
             <el-button :icon="Upload">选择 .xlsx 文件</el-button>
@@ -207,14 +194,55 @@
         <el-button :icon="Close" @click="importVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 查看 BOM 详情：右抽屉 + 头部描述 + 全字段明细表 -->
+    <el-drawer v-model="detailVisible" title="BOM 详情" size="700px">
+      <template v-if="detail">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="BOM 编码">{{ detail.bomCode }}</el-descriptions-item>
+          <el-descriptions-item label="成品名称">{{ detail.goodsName }}</el-descriptions-item>
+          <el-descriptions-item label="单位">{{ detail.goodsUnit || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="创建时间">{{ detail.createTime || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="物料条目">
+            <el-tag size="small">{{ (detail.details || []).length }} 行</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="备注">{{ detail.remark || '-' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-table :data="detail.details || []" border size="small" style="margin-top: 16px">
+          <el-table-column type="index" label="序号" width="55" align="center" />
+          <el-table-column label="图片" width="90">
+            <template #default="scope">
+              <el-image
+                v-if="scope.row.image" :src="imgMap[scope.row.image] || ''"
+                :preview-src-list="[imgMap[scope.row.image]].filter(Boolean)" fit="cover"
+                style="width:46px;height:46px;border-radius:4px;"
+              />
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="componentName" label="组件/物料名称" min-width="130" />
+          <el-table-column prop="spec" label="规格" min-width="80" show-overflow-tooltip />
+          <el-table-column prop="material" label="材质" min-width="80" />
+          <el-table-column prop="quantity" label="单台用量" width="90" align="center" />
+          <el-table-column label="关联物料" min-width="110">
+            <template #default="scope">{{ materialName(scope.row.goodsId) }}</template>
+          </el-table-column>
+          <el-table-column label="参考行" width="70" align="center">
+            <template #default="scope">{{ scope.row.isReference === 1 ? '是' : '否' }}</template>
+          </el-table-column>
+          <el-table-column prop="remark" label="备注" min-width="90" show-overflow-tooltip />
+          <el-table-column prop="createTime" label="明细创建时间" width="160" />
+        </el-table>
+      </template>
+    </el-drawer>
   </el-card>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, View, Edit, Delete, Close, Check, Remove, Upload, Download, Picture } from '@element-plus/icons-vue'
-import { getToken } from '@/utils/auth'
+import { Search, Refresh, Plus, Close, Check, Remove, Upload, Download, Picture } from '@element-plus/icons-vue'
+import request from '@/utils/request'
 import {
   createBomAPI,
   deleteBomAPI,
@@ -223,7 +251,6 @@ import {
   getBomPageAPI,
   getBomTemplateAPI,
   getGoodsMaterialOptionsAPI,
-  getGoodsProductOptionsAPI,
   updateBomAPI
 } from '@/api/base'
 
@@ -234,33 +261,44 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 
-const productOptions = ref([])
 const materialOptions = ref([])
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const isView = ref(false)
 const formRef = ref(null)
-const form = reactive({ id: null, bomCode: '', goodsId: null, remark: '', details: [] })
+const form = reactive({ id: null, goodsName: '', unit: '', remark: '', details: [] })
+
+const detailVisible = ref(false)
+const detail = ref(null)
 
 const importVisible = ref(false)
 const importUploadRef = ref(null)
-const importForm = reactive({ bomCode: '', goodsId: null })
+const importForm = reactive({ bomCode: '', goodsName: '' })
 
-const uploadUrl = '/api/base/bom/image'
-const importUrl = '/api/base/bom/import'
-const uploadHeaders = computed(() => {
-  const token = getToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
-})
-const importData = computed(() => ({ bomCode: importForm.bomCode, goodsId: importForm.goodsId || '' }))
+// 图片/导入上传均走应用 axios（request.js 自动带 Bearer 头），见 uploadImageRequest / importRequest
 
 const rules = {
-  bomCode: [{ required: true, message: '请输入BOM编码', trigger: 'blur' }],
-  goodsId: [{ required: true, message: '请选择成品', trigger: 'change' }]
+  goodsName: [{ required: true, message: '请输入成品名称', trigger: 'blur' }]
 }
 
-const imageUrl = (path) => (path ? `/api/base/bom/image?path=${encodeURIComponent(path)}` : '')
+// 受保护图片：经 axios 拉 blob 建 objectURL 再展示（<img> 直连带不了 Bearer 头，会拿到 401 JSON）
+const imgMap = reactive({})
+const loadImg = async (path) => {
+  if (!path || imgMap[path]) return
+  try {
+    const blob = await request.get('/base/bom/image', { params: { path }, responseType: 'blob' })
+    // 鉴权失败时后端是 HTTP 200 + JSON body，依 content-type 识别
+    if (blob && blob.type === 'application/json') {
+      imgMap[path] = ''
+      return
+    }
+    imgMap[path] = URL.createObjectURL(blob)
+  } catch (e) {
+    /* 视图仍为空，不打断流程 */
+  }
+}
+const preloadImgs = (list) => (list || []).forEach((d) => { if (d && d.image) loadImg(d.image) })
 
 const newDetailRow = () => ({
   goodsId: null,
@@ -292,10 +330,22 @@ const onLinkGoods = (row, val) => {
   }
 }
 
+// 明细行组件图片上传：走应用 axios（自动带 Bearer 头）
+// 注意：不要 async（async 必返回 Promise）——el-upload 拿到 Promise 会再自动调一次
+// onSuccess/onError（options.then），导致「又提示成功又提示失败」。这里自身只调一次回调。
+const uploadImageRequest = (options) => {
+  const fd = new FormData()
+  fd.append('file', options.file)
+  request.post('/base/bom/image', fd)
+    .then((body) => options.onSuccess(body))
+    .catch((e) => options.onError(e))
+}
+
 // 明细行组件图片上传成功
 const onImageSuccess = (row, res) => {
   if (res && res.code === 200 && res.data?.path) {
     row.image = res.data.path
+    loadImg(res.data.path)
     ElMessage.success('图片上传成功')
   } else {
     ElMessage.error(res?.msg || '图片上传失败')
@@ -328,12 +378,18 @@ const loadList = async () => {
 
 const loadOptions = async () => {
   try {
-    const [p, m] = await Promise.all([getGoodsProductOptionsAPI(), getGoodsMaterialOptionsAPI()])
-    productOptions.value = (p.data || []).map(normalizeOpt)
+    const m = await getGoodsMaterialOptionsAPI()
     materialOptions.value = (m.data || []).map(normalizeOpt)
   } catch (error) {
-    ElMessage.error(error.message || '加载成品/物料选项失败')
+    ElMessage.error(error.message || '加载物料选项失败')
   }
+}
+
+// 明细行关联物料名称（查看抽屉用）
+const materialName = (goodsId) => {
+  if (goodsId == null || goodsId === '') return '-'
+  const opt = materialOptions.value.find((o) => o.goodsId === goodsId)
+  return opt ? opt.goodsName : '-'
 }
 
 // GoodsOptionVO 的显式名为 "name"（id/name/stock/unit/salePrice/type）
@@ -368,8 +424,8 @@ const handleCurrentChange = (val) => {
 
 const initForm = () => {
   form.id = null
-  form.bomCode = ''
-  form.goodsId = null
+  form.goodsName = ''
+  form.unit = ''
   form.remark = ''
   form.details = [newDetailRow()]
 }
@@ -382,45 +438,51 @@ const handleAdd = () => {
   dialogVisible.value = true
 }
 
-const openByDetail = async (row, viewMode) => {
+const loadBom = async (row) => {
   const res = await getBomDetailAPI(row.id)
   if (res.code !== 200) {
     throw new Error(res.msg || 'BOM 详情查询失败')
   }
-  const d = res.data || {}
-  isView.value = viewMode
-  dialogTitle.value = viewMode ? 'BOM 详情（仅查看）' : '编辑 BOM'
-  form.id = d.id
-  form.bomCode = d.bomCode || ''
-  form.goodsId = d.goodsId || null
-  form.remark = d.remark || ''
-  form.details = (d.details && d.details.length)
-    ? d.details.map((x) => ({
-        goodsId: x.goodsId || null,
-        componentName: x.componentName || '',
-        spec: x.spec || '',
-        quantity: x.quantity == null ? null : Number(x.quantity),
-        material: x.material || '',
-        image: x.image || null,
-        remark: x.remark || '',
-        isReference: x.isReference === 1
-      }))
-    : [newDetailRow()]
-  formRef.value?.clearValidate()
-  dialogVisible.value = true
+  return res.data || {}
 }
 
+// 查看详情：填充到右抽屉
 const handleView = async (row) => {
   try {
-    await openByDetail(row, true)
+    const d = await loadBom(row)
+    detail.value = d
+    detailVisible.value = true
+    preloadImgs(d.details)
   } catch (error) {
     ElMessage.error(error.message || '加载 BOM 详情失败')
   }
 }
 
+// 编辑：填充新建/编辑弹窗
 const handleEdit = async (row) => {
   try {
-    await openByDetail(row, false)
+    const d = await loadBom(row)
+    isView.value = false
+    dialogTitle.value = '编辑 BOM'
+    form.id = d.id
+    form.goodsName = d.goodsName || ''
+    form.unit = d.goodsUnit || ''
+    form.remark = d.remark || ''
+    form.details = (d.details && d.details.length)
+      ? d.details.map((x) => ({
+          goodsId: x.goodsId || null,
+          componentName: x.componentName || '',
+          spec: x.spec || '',
+          quantity: x.quantity == null ? null : Number(x.quantity),
+          material: x.material || '',
+          image: x.image || null,
+          remark: x.remark || '',
+          isReference: x.isReference === 1
+        }))
+      : [newDetailRow()]
+    preloadImgs(form.details)
+    formRef.value?.clearValidate()
+    dialogVisible.value = true
   } catch (error) {
     ElMessage.error(error.message || '加载 BOM 详情失败')
   }
@@ -442,8 +504,8 @@ const handleDelete = (row) => {
 const buildPayload = () => {
   const validDetails = form.details.filter((x) => x.componentName && String(x.componentName).trim())
   return {
-    bomCode: form.bomCode,
-    goodsId: form.goodsId,
+    goodsName: form.goodsName,
+    unit: form.unit || '',
     remark: form.remark || '',
     details: validDetails.map((x) => ({
       goodsId: x.goodsId || null,
@@ -520,21 +582,28 @@ const downloadTemplate = async () => {
 
 const openImport = () => {
   importForm.bomCode = ''
-  importForm.goodsId = null
+  importForm.goodsName = ''
   importUploadRef.value?.clearFiles()
   importVisible.value = true
 }
 
 const beforeImport = () => {
-  if (!importForm.bomCode || !String(importForm.bomCode).trim()) {
-    ElMessage.warning('请先填写 BOM 编码')
-    return false
-  }
-  if (!importForm.goodsId) {
-    ElMessage.warning('请先选择成品')
+  if (!importForm.goodsName || !String(importForm.goodsName).trim()) {
+    ElMessage.warning('请先填写成品名称')
     return false
   }
   return true
+}
+
+// xlsx 导入：走应用 axios，自动带表单参数与 Bearer 头（同样不要 async，见上方注释）
+const importRequest = (options) => {
+  const fd = new FormData()
+  fd.append('file', options.file)
+  fd.append('goodsName', String(importForm.goodsName).trim())
+  if (importForm.bomCode) fd.append('bomCode', String(importForm.bomCode).trim())
+  request.post('/base/bom/import', fd)
+    .then((body) => options.onSuccess(body))
+    .catch((e) => options.onError(e))
 }
 
 const onImportSuccess = (res) => {
