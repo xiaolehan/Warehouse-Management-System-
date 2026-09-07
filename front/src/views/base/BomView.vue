@@ -133,7 +133,7 @@
                   >
                     <el-option
                       v-for="opt in materialOptions" :key="opt.goodsId"
-                      :label="`${opt.goodsName}（${opt.unit || ''}）`" :value="opt.goodsId"
+                      :label="optionLabel(opt)" :value="opt.goodsId"
                     />
                   </el-select>
                 </template>
@@ -320,12 +320,15 @@ const removeDetail = (index) => {
   form.details.splice(index, 1)
 }
 
-// 选择关联物料时自动带出组件名/规格
+// 选择关联物料时自动带出组件名/规格/材质
 const onLinkGoods = (row, val) => {
   if (val) {
     const opt = materialOptions.value.find((o) => o.goodsId === val)
     if (opt) {
       row.componentName = row.componentName || opt.goodsName
+      // D60/ADR-0003：物料按「名称+规格」唯一，选中后预填规格/材质（为空时）防同名混选
+      if (!row.spec && opt.spec) row.spec = opt.spec
+      if (!row.material && opt.material) row.material = opt.material
     }
   }
 }
@@ -392,12 +395,20 @@ const materialName = (goodsId) => {
   return opt ? opt.goodsName : '-'
 }
 
-// GoodsOptionVO 的显式名为 "name"（id/name/stock/unit/salePrice/type）
+// GoodsOptionVO 的显式名为 "name"（id/name/stock/unit/spec/material/salePrice/type）
 const normalizeOpt = (item) => ({
   goodsId: item.id,
   goodsName: item.name || item.goodsName,
-  unit: item.unit
+  unit: item.unit,
+  spec: item.spec,
+  material: item.material
 })
+
+// D60/ADR-0003：下拉文案「名称(规格/材质)(单位)」，防同名不同规格混选
+const optionLabel = (opt) => {
+  const detail = [opt.spec, opt.material].filter(Boolean).join('/')
+  return opt.goodsName + (detail ? `（${detail}）` : '') + (opt.unit ? `（${opt.unit}）` : '')
+}
 
 const handleSearch = () => {
   currentPage.value = 1

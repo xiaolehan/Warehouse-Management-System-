@@ -70,7 +70,7 @@
     </div>
 
     <!-- 下达生产任务单 -->
-    <el-dialog :title="'下达生产任务单' + (createResult ? '（已下达，齐套结果如下）' : '')" v-model="createVisible" width="620px">
+    <el-dialog :title="'下达生产任务单' + (createResult ? '（已下达，齐套结果如下）' : '')" v-model="createVisible" width="920px">
       <el-form :model="createForm" :rules="createRules" ref="createFormRef" label-width="90px" :disabled="!!createResult">
         <el-form-item label="成品" prop="goodsId">
           <el-select v-model="createForm.goodsId" filterable placeholder="选择成品（type=product）" style="width: 100%">
@@ -95,7 +95,7 @@
         </el-divider>
         <el-alert
           v-if="createResult.kitStatus === 'block'"
-          title="存在严重缺料，开工将被阻断，请采购补齐后重试。" type="error" :closable="false" style="margin-bottom: 8px"
+          title="存在严重缺料或未知物料（新物料），开工将被阻断，请采购补齐后重试。" type="error" :closable="false" style="margin-bottom: 8px"
         />
         <el-alert
           v-else-if="createResult.kitStatus === 'partial'"
@@ -104,15 +104,23 @@
         <el-alert v-else title="物料齐套，可正常开工。" type="success" :closable="false" style="margin-bottom: 8px" />
         <el-table :data="createResult.kitLines || []" border size="small">
           <el-table-column prop="goodsName" label="物料" min-width="120" />
+          <el-table-column label="规格/材质" min-width="110">
+            <template #default="s">{{ [s.row.spec, s.row.material].filter(Boolean).join(' / ') || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="备注" min-width="100">
+            <template #default="s">{{ s.row.remark || '—' }}</template>
+          </el-table-column>
           <el-table-column prop="unit" label="单位" width="60" />
-          <el-table-column label="用量" width="80">
+          <el-table-column label="用量" width="70">
             <template #default="s">{{ fmtNum(s.row.unitUsage) }}</template>
           </el-table-column>
-          <el-table-column label="需用量" width="90">
+          <el-table-column label="需用量" width="80">
             <template #default="s">{{ fmtNum(s.row.required) }}</template>
           </el-table-column>
-          <el-table-column prop="stock" label="库存" width="80" />
-          <el-table-column label="缺口" width="90">
+          <el-table-column label="库存" width="70">
+            <template #default="s">{{ s.row.goodsId ? s.row.stock : '—' }}</template>
+          </el-table-column>
+          <el-table-column label="缺口" width="80">
             <template #default="s">
               <span :class="s.row.deficit > 0 ? 'deficit-red' : ''">{{ fmtNum(s.row.deficit) }}</span>
             </template>
@@ -132,7 +140,7 @@
     </el-dialog>
 
     <!-- 查看详情 -->
-    <el-dialog title="生产任务单详情" v-model="detailVisible" width="720px" top="6vh">
+    <el-dialog title="生产任务单详情" v-model="detailVisible" width="920px" top="6vh">
       <template v-if="detail">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="任务单号">{{ detail.orderNo }}</el-descriptions-item>
@@ -156,10 +164,18 @@
           <el-divider content-position="left">齐套明细</el-divider>
           <el-table :data="detail.kitLines" border size="small">
             <el-table-column prop="goodsName" label="物料" min-width="120" />
-            <el-table-column label="需用量" width="100">
+            <el-table-column label="规格/材质" min-width="110">
+              <template #default="s">{{ [s.row.spec, s.row.material].filter(Boolean).join(' / ') || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="100">
+              <template #default="s">{{ s.row.remark || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="需用量" width="90">
               <template #default="s">{{ fmtNum(s.row.required) }}</template>
             </el-table-column>
-            <el-table-column prop="stock" label="库存" width="80" />
+            <el-table-column label="库存" width="80">
+              <template #default="s">{{ s.row.goodsId ? s.row.stock : '—' }}</template>
+            </el-table-column>
             <el-table-column label="缺口" width="90">
               <template #default="s"><span :class="s.row.deficit > 0 ? 'deficit-red' : ''">{{ fmtNum(s.row.deficit) }}</span></template>
             </el-table-column>
@@ -202,7 +218,7 @@
                 <el-select v-model="row.goodsId" placeholder="选择物料" filterable style="width: 100%">
                   <el-option
                     v-for="opt in returnMaterialOptions" :key="opt.id"
-                    :label="`${opt.name}（${opt.unit || ''}）`" :value="opt.id"
+                    :label="goodsOptionLabel(opt)" :value="opt.id"
                   />
                 </el-select>
               </template>
@@ -228,32 +244,92 @@
     </el-dialog>
 
     <!-- 补料 -->
-    <el-dialog v-model="draftVisible" :title="`补料 - ${draftRow.orderNo || ''}`" width="760px">
-      <el-table :data="draftLines" border>
-        <el-table-column prop="goodsName" label="物料" min-width="140">
-          <template #default="s">
-            <span v-if="s.row.goodsId">{{ s.row.goodsName || '-' }}</span>
-            <el-select v-else v-model="s.row.goodsId" filterable placeholder="请选择物料" size="small" style="width: 100%">
-              <el-option
-                v-for="opt in materialOptions" :key="opt.id"
-                :label="`${opt.name}（${opt.unit || ''}）`" :value="opt.id"
-              />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="需用量" width="90">
-          <template #default="s">{{ fmtNum(s.row.required) }}</template>
-        </el-table-column>
-        <el-table-column prop="stock" label="库存" width="70" />
-        <el-table-column label="缺口" width="70">
-          <template #default="s">{{ fmtNum(s.row.deficit) }}</template>
-        </el-table-column>
-        <el-table-column label="申请数量" width="110">
-          <template #default="s">
-            <el-input-number v-model="s.row.applyQty" :min="0" size="small" />
-          </template>
-        </el-table-column>
-      </el-table>
+    <el-dialog v-model="draftVisible" :title="`补料 - ${draftRow.orderNo || ''}`" width="920px" top="6vh">
+      <template v-if="boundDraftLines.length">
+        <el-divider content-position="left">已有物料缺口（{{ boundDraftLines.length }}）</el-divider>
+        <el-table :data="boundDraftLines" border size="small">
+          <el-table-column prop="goodsName" label="物料" min-width="130" />
+          <el-table-column label="规格/材质" min-width="110">
+            <template #default="s">{{ [s.row.spec, s.row.material].filter(Boolean).join(' / ') || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="备注" min-width="100">
+            <template #default="s">{{ s.row.remark || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="需用量" width="75">
+            <template #default="s">{{ fmtNum(s.row.required) }}</template>
+          </el-table-column>
+          <el-table-column label="库存" width="60">
+            <template #default="s">{{ s.row.stock }}</template>
+          </el-table-column>
+          <el-table-column label="缺口" width="70">
+            <template #default="s">{{ fmtNum(s.row.deficit) }}</template>
+          </el-table-column>
+          <el-table-column label="申请数量" width="115">
+            <template #default="s">
+              <el-input-number v-model="s.row.applyQty" :min="0" size="small" style="width: 100px" />
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <template v-if="unknownDraftLines.length">
+        <el-divider content-position="left">
+          未知物料（新物料，首次出现需建档）
+          <el-tag size="small" type="info" style="margin-left: 8px">{{ unknownDraftLines.length }}</el-tag>
+        </el-divider>
+        <el-alert
+          title="以下物料仓库从未有过：请补全信息，提交后自动建档（挂缺省供应商，进价由采购维护）；也可改绑为已有物料。"
+          type="info" :closable="false" style="margin-bottom: 8px"
+        />
+        <el-table :data="unknownDraftLines" border size="small">
+          <el-table-column label="名称" min-width="120">
+            <template #default="s">
+              <el-input v-if="!s.row.rebindMode" v-model="s.row.newGoodsName" placeholder="物料名称" size="small" />
+              <el-select v-else v-model="s.row.goodsId" filterable placeholder="改绑已有物料" size="small" style="width: 100%">
+                <el-option v-for="opt in materialOptions" :key="opt.id" :label="goodsOptionLabel(opt)" :value="opt.id" />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="规格" min-width="95">
+            <template #default="s">
+              <el-input v-if="!s.row.rebindMode" v-model="s.row.spec" placeholder="规格" size="small" />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="材质" min-width="95">
+            <template #default="s">
+              <el-input v-if="!s.row.rebindMode" v-model="s.row.material" placeholder="材质" size="small" />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="备注" min-width="105">
+            <template #default="s">
+              <el-input v-if="!s.row.rebindMode" v-model="s.row.remark" placeholder="备注" size="small" />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="单位" width="85">
+            <template #default="s">
+              <el-input v-if="!s.row.rebindMode" v-model="s.row.unit" placeholder="单位" size="small" />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="缺口" width="65">
+            <template #default="s">{{ fmtNum(s.row.deficit) }}</template>
+          </el-table-column>
+          <el-table-column label="申请数量" width="115">
+            <template #default="s">
+              <el-input-number v-model="s.row.applyQty" :min="0" size="small" style="width: 100px" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="100" align="center">
+            <template #default="s">
+              <el-button v-if="!s.row.rebindMode" link type="primary" size="small" @click="s.row.rebindMode = true">改绑已有</el-button>
+              <el-button v-else link type="primary" size="small" @click="switchBackToNew(s.row)">改为建档</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
       <template #footer>
         <el-button @click="draftVisible = false">取消</el-button>
         <el-button type="primary" :loading="draftSubmitting" @click="doCreateDraft">提交补料</el-button>
@@ -571,6 +647,16 @@ const draftLines = ref([])
 const draftSubmitting = ref(false)
 const materialOptions = ref([])
 
+// D60：按未知物料拆两组——已有物料缺口 / 未知物料（新物料）
+const boundDraftLines = computed(() => draftLines.value.filter((l) => l.lineStatus !== 'unknown'))
+const unknownDraftLines = computed(() => draftLines.value.filter((l) => l.lineStatus === 'unknown'))
+
+// D60/ADR-0003：物料下拉文案统一「名称(规格/材质)(单位)」，防同名不同规格混选
+const goodsOptionLabel = (opt) => {
+  const detail = [opt.spec, opt.material].filter(Boolean).join('/')
+  return opt.name + (detail ? `（${detail}）` : '') + (opt.unit ? `（${opt.unit}）` : '')
+}
+
 async function loadMaterialOptions() {
   if (materialOptions.value.length) return
   try {
@@ -587,27 +673,63 @@ function openDraftDialog(row) {
   draftSubmitting.value = false
   draftLines.value = []
   loadMaterialOptions()
-  // 拉详情拿 kitLines，映射成可编辑行
+  // 拉详情拿 kitLines，映射成可编辑行；未知物料行预填 BOM 行信息（名称/规格/材质/备注），单位由生产现填
   getProductionOrderDetailAPI(row.id).then((res) => {
     if (res.code !== 200) return
     const vo = res.data || {}
     draftLines.value = (vo.kitLines || [])
       .filter((l) => (l.deficit || 0) > 0)
-      .map((l) => ({ ...l, applyQty: Math.ceil(l.deficit) }))
+      .map((l) => ({
+        ...l,
+        applyQty: Math.ceil(l.deficit),
+        rebindMode: false,
+        newGoodsName: l.goodsId ? '' : (l.goodsName || ''),
+        spec: l.spec || '',
+        material: l.material || '',
+        remark: l.remark || '',
+        unit: ''
+      }))
   }).catch(() => {})
 }
 
+// 改绑回建档：清掉所选物料，回到内联建档表单
+function switchBackToNew(row) {
+  row.rebindMode = false
+  row.goodsId = null
+}
+
 function doCreateDraft() {
-  const items = draftLines.value
-    .filter((l) => l.applyQty > 0)
-    .map((l) => ({ bomDetailId: l.bomDetailId, goodsId: l.goodsId, quantity: l.applyQty }))
+  const items = []
+  for (const l of draftLines.value) {
+    if (!l.applyQty || l.applyQty <= 0) continue
+    if (l.lineStatus === 'unknown' && !l.goodsId) {
+      if (l.rebindMode) {
+        if (!l.goodsId) {
+          ElMessage.warning('存在改绑行尚未选择物料，请选择或改回建档')
+          return
+        }
+        items.push({ bomDetailId: l.bomDetailId, goodsId: l.goodsId, quantity: l.applyQty })
+      } else {
+        if (!l.newGoodsName || !l.newGoodsName.trim()) {
+          ElMessage.warning('存在未知物料行未填写物料名称，请补全或改绑已有物料')
+          return
+        }
+        items.push({
+          bomDetailId: l.bomDetailId,
+          quantity: l.applyQty,
+          newGoodsName: l.newGoodsName.trim(),
+          spec: l.spec || '',
+          material: l.material || '',
+          remark: l.remark || '',
+          unit: l.unit || ''
+        })
+      }
+    } else {
+      items.push({ bomDetailId: l.bomDetailId, goodsId: l.goodsId, quantity: l.applyQty })
+    }
+  }
   if (!items.length) {
     ElMessage.warning('请至少填一条申请数量')
-    return
-  }
-  const missing = items.find((i) => !i.goodsId)
-  if (missing) {
-    ElMessage.warning('存在未关联物料的缺口行，请先选择物料')
     return
   }
   draftSubmitting.value = true
@@ -631,7 +753,8 @@ function doCreateDraft() {
 const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
 const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
 const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : 'danger')
-const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : 'danger')
+// D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红
+const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : l === 'unknown' ? 'info' : 'danger')
 
 onMounted(() => {
   loadList()

@@ -116,7 +116,7 @@ public class GoodsService {
                 .eq(StringUtils.hasText(type) && !"all".equals(type), BaseGoods::getType, normalizeType(type))
                 .orderByAsc(BaseGoods::getGoodsName);
         return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSalePrice(), item.getType()))
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getType()))
                 .toList();
     }
 
@@ -130,7 +130,12 @@ public class GoodsService {
     // 建物料仅仓储 admin；仓储建时不含进价/售价（价格由采购补录）
     public void create(GoodsSaveDTO dto) {
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料");
-        checkGoodsNameUnique(dto.getGoodsName(), null);
+        if (GOODS_TYPE_MATERIAL.equals(normalizeType(dto.getType()))) {
+            // D60/ADR-0003：物料按「名称+规格」唯一，同名不同规格各自成条
+            checkMaterialNameSpecUnique(dto.getGoodsName(), dto.getSpec(), null);
+        } else {
+            checkGoodsNameUnique(dto.getGoodsName(), null);
+        }
         requireSupplier(dto.getSupplierId());
         validateStock(dto.getStock());
         validateWarningStock(dto.getWarningStock());
@@ -163,7 +168,12 @@ public class GoodsService {
 
         // 仓储(或超管)：改基本字段(名称/产品名/种类/供应商/单位/描述/状态) + 库存/预警阈值，价格字段不动
         requireSupplier(dto.getSupplierId());
-        checkGoodsNameUnique(dto.getGoodsName(), id);
+        String targetType = StringUtils.hasText(dto.getType()) ? normalizeType(dto.getType()) : goods.getType();
+        if (GOODS_TYPE_MATERIAL.equalsIgnoreCase(targetType)) {
+            checkMaterialNameSpecUnique(dto.getGoodsName(), dto.getSpec(), id);
+        } else {
+            checkGoodsNameUnique(dto.getGoodsName(), id);
+        }
         validateStock(dto.getStock());
         validateWarningStock(dto.getWarningStock());
         goods.setGoodsName(dto.getGoodsName());
@@ -173,6 +183,8 @@ public class GoodsService {
         goods.setType(StringUtils.hasText(dto.getType()) ? normalizeType(dto.getType()) : goods.getType());
         goods.setSupplierId(dto.getSupplierId());
         goods.setUnit(dto.getUnit());
+        goods.setSpec(dto.getSpec());
+        goods.setMaterial(dto.getMaterial());
         goods.setDescription(dto.getDescription());
         goods.setStatus(dto.getStatus() == null ? goods.getStatus() : dto.getStatus());
         goods.setStock(dto.getStock() == null ? goods.getStock() : dto.getStock());
@@ -193,6 +205,54 @@ public class GoodsService {
         if (baseGoodsMapper.selectCount(wrapper) > 0) {
             throw BusinessException.validateFail("商品名称已存在");
         }
+    }
+
+    /** D60/ADR-0003：自动建档挂缺省供应商（与 db.sql 种子 base_goods supplier_id=1 一致） */
+    public static final Long DEFAULT_SUPPLIER_ID = 1L;
+
+    /**
+     * D60/ADR-0003：物料按「名称+规格」唯一——同名不同规格各自成条；名称与规格均相同时视为重复。
+     * 空规格统一归一为 NULL（与空串等价处理）。
+     */
+    private void checkMaterialNameSpecUnique(String goodsName, String spec, Long excludeId) {
+        String normalizedSpec = StringUtils.hasText(spec) ? spec.trim() : null;
+        LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BaseGoods::getGoodsName, goodsName)
+                .eq(BaseGoods::getType, GOODS_TYPE_MATERIAL)
+                .ne(excludeId != null, BaseGoods::getId, excludeId)
+                .and(w -> {
+                    if (normalizedSpec != null) {
+                        w.eq(BaseGoods::getSpec, normalizedSpec);
+                    } else {
+                        w.isNull(BaseGoods::getSpec).or().eq(BaseGoods::getSpec, "");
+                    }
+                });
+        if (baseGoodsMapper.selectCount(wrapper) > 0) {
+            throw BusinessException.validateFail(
+                    "物料[" + goodsName + "]（规格：" + (normalizedSpec == null ? "无" : normalizedSpec) + "）已存在，请改绑已有物料");
+        }
+    }
+
+    /**
+     * D60/ADR-0002：生产补料「未知物料」自动建档——挂缺省供应商、进价留空由采购维护、零库存启用。
+     * 返回新物料 id；名称+规格与既有物料重复时抛错（调用方引导改绑已有物料）。
+     */
+    public Long createMaterialFromProduction(String goodsName, String spec, String material, String unit) {
+        checkMaterialNameSpecUnique(goodsName, spec, null);
+        BaseGoods goods = new BaseGoods();
+        goods.setType(GOODS_TYPE_MATERIAL);
+        goods.setGoodsCode(CodeGenerator.goodsCode());
+        goods.setGoodsName(goodsName);
+        goods.setSpec(StringUtils.hasText(spec) ? spec.trim() : null);
+        goods.setMaterial(StringUtils.hasText(material) ? material.trim() : null);
+        goods.setSupplierId(DEFAULT_SUPPLIER_ID);
+        goods.setUnit(StringUtils.hasText(unit) ? unit.trim() : null);
+        goods.setStock(0);
+        goods.setWarningStock(10);
+        goods.setStatus(1);
+        goods.setDescription("生产补料自动建档");
+        baseGoodsMapper.insert(goods);
+        return goods.getId();
     }
 
     private BaseGoods requireGoods(Long id) {

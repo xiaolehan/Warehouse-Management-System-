@@ -73,7 +73,7 @@ mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 ## 关键约束
 
 - 客户需求唯一来源：`document/wms_v1.docx`（不考虑上一轮其他文档）。
-- 商品资料管理 = 主数据（每种商品一条，名称唯一）；补库存走入库交易（进货/采购申请/生产入库），**不在商品资料管理重复添加**。
+- 商品资料管理 = 主数据；物料（type=material）按「名称+规格」唯一，同名不同规格各自成条，规格/材质是主数据字段（ADR-0003）；成品仍名称唯一。补库存走入库交易（进货/采购申请/生产入库），**不在商品资料管理重复添加**。
 - 库存变更的唯一入口是各业务 Service 的 `increaseStock`/`decreaseStock`，每个业务模块各有一份私有助手（非公共 StockService）。
 - 站内消息生命周期绑定（D21 范式）：业务单据发消息必须带 `biz_type`/`biz_id`（用 `sendToDeptAdminsWithBiz`，**不要**用无 biz 的 `sendToDeptAdmins`），并在单据撤销/作废/终态时调 `MessageService.revokeUnreadByBiz(bizType, bizId)` 撤未读消息，避免"有通知无单据"悬挂。新增业务模块发消息务必接全（销售单 D21、销售退货 D22、采购申请 D25 均已接，新模块照此）。
 

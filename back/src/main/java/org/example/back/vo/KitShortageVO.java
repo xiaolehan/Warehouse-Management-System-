@@ -17,6 +17,13 @@ public class KitShortageVO {
 
     private String goodsName;
 
+    /** 规格/材质/备注快照（自 BOM 明细行，ADR-0003；补料明细快照与齐套展示共用） */
+    private String spec;
+
+    private String material;
+
+    private String remark;
+
     private String unit;
 
     /** 单台用量 */

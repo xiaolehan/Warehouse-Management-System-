@@ -41,6 +41,12 @@ public class BaseGoods {
 
     private String unit;
 
+    /** 规格（物料固有属性，ADR-0003；物料按「名称+规格」唯一） */
+    private String spec;
+
+    /** 材质（物料固有属性，ADR-0003） */
+    private String material;
+
     private Integer status;
 
     private String description;

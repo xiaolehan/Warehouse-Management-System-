@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 17 — 2026-09-07
+
+### 阶段 14 补料链路物料详情 + 未知物料自动建档（D60/ADR-0002/0003，已完成 + E2E 全绿）
+
+- **设计（/grill-with-docs 三轮共识，详见 task_plan 阶段14 决策）：** ① 匹配行级四态 ok/partial/block/unknown（goods_id 空=未知物料，软删视同未知，unknown 仍阻断开工）；② 未知物料补料=内联录入（BOM 预填可改、单位现填）+ 提交时自动建档（挂缺省供应商1、进价留空采购维护、「名称+规格」冲突则整单退回提示改绑），建档后回绑 BOM 行（goodsId/名称/规格/材质/备注回写）；③ 主数据 base_goods 加 spec/material（ADR-0003：公司 BOM 存在同名不同规格，物料唯一性 α1=「名称+规格」、空规格归一 NULL，成品仍名称唯一）；④ 补料明细快照 BOM 行规格/材质/备注 + is_new_material 标记，申请单详情按【已有物料缺口】【未知物料(新物料)】两组展示；⑤ 接通建单齐套预警 sendKitShortageToPurchaseAdmins（原先死代码），voidOrder 撤未读。
+- **后端：** db.sql 10.x DDL（base_goods.spec/material、biz_purchase_request_detail.spec/material/remark/is_new_material，已执行实库）；GoodsService（类型感知唯一性 checkMaterialNameSpecUnique + createMaterialFromProduction + options 8 参带规格材质）；ProductionOrderService（computeKit unknown 态、summary 带规格+【新物料】、create() block 时发预警）；PurchaseRequestService（createDraft 未知行自动建档/改绑快照取主数据、bindBomDetail 回绑、明细快照+isNewMaterial；删除 confirmReceive 回挂残留块与旧单测）；ProductionDraftItemDTO 加 newGoodsName/spec/material/remark/unit；PurchaseRequestDetailVO 加快照字段。
+- **前端：** ProductionOrderView（三处齐套表加规格/材质/备注列、unknown 灰 tag、未知行库存「—」、补料弹窗两组分区+未知行内联表单/改绑切换、goodsOptionLabel 统一「名称(规格/材质)(单位)」）；PurchaseRequestView 详情两组分区（production 来源）；GoodsView 列表+表单加规格/材质/备注（仓储可编辑）；BomView 下拉带规格材质+选中预填行 spec/material。
+- **测试：** 新建 GoodsServiceTest（自动建档字段/名称+规格冲突/建档入口唯一）、ProductionOrderServiceTest 加 unknown/block 四态与建单预警 verify、PurchaseRequestServiceTest 换掉回挂旧用例改自动建档/未填名称整单退回/绑定行快照；`./mvnw test` 全绿。
+- **E2E（curl，production/purchase/warehouse_admin + superadmin）：** 仓储建 M8 物料(库存0)→生产建 BOM(绑定行+未绑定"M6 垫片")→建任务单 qty1→**kitStatus=block**、行1 block/行2 unknown（带规格材质备注）→采购收到预警"E2E螺栓B（M8）…E2E未知垫片（M6）【新物料】"→createDraft（绑定行+内联建档行）→自动建档 goods 57（M6/尼龙/个/供应商1/库存0/生产补料自动建档）、申请单详情 isNew 0/1+快照正确、BOM 行 286 回绑 goods 57→仓储重复建"E2E未知垫片/M6" 400"已存在，请改绑已有物料"→作废订单后预警消息撤销。测试数据全清理（含硬删 order 25）。
+
+### 下一步
+
+- 用户确认后 commit（阶段 14 未提交）；BOM 明细图片列/批量导入文案含规格模板可后续对齐。
+
+---
+
 ## 会话 16 — 2026-08-31
 
 ### 阶段 13 生产入库/生产领料迁到生产端（已完成 + E2E 全绿）

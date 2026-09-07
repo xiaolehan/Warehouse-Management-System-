@@ -171,6 +171,12 @@ public class ProductionOrderService {
         orderMapper.insert(order);
         BizProductionOrder saved = orderMapper.selectById(order.getId());
 
+        // D60：建单即齐套预警——存在严重缺料/未知物料时通知采购管理员（作废时由 voidOrder 撤未读）
+        if (BizProductionOrder.KIT_BLOCK.equals(kit.kitStatus)) {
+            messageService.sendKitShortageToPurchaseAdmins(
+                    saved.getOrderNo(), product.getGoodsName(), kit.summary(dto.getQuantity()), saved.getId());
+        }
+
         ProductionOrderVO vo = toVO(saved);
         vo.setKitLines(kit.lines);
         return vo;
@@ -278,8 +284,14 @@ public class ProductionOrderService {
         String summary(int quantity) {
             return lines.stream()
                     .filter(l -> !"ok".equals(l.getLineStatus()))
-                    .map(l -> l.getGoodsName() + " 需" + l.getRequired().stripTrailingZeros().toPlainString()
-                            + " 库" + l.getStock() + " 缺" + l.getDeficit().stripTrailingZeros().toPlainString())
+                    .map(l -> {
+                        // D60：缺口明细带规格防同名歧义，未知物料行加【新物料】标注
+                        String specPart = StringUtils.hasText(l.getSpec()) ? "（" + l.getSpec() + "）" : "";
+                        String newPart = "unknown".equals(l.getLineStatus()) ? "【新物料】" : "";
+                        return l.getGoodsName() + specPart + newPart
+                                + " 需" + l.getRequired().stripTrailingZeros().toPlainString()
+                                + " 库" + l.getStock() + " 缺" + l.getDeficit().stripTrailingZeros().toPlainString();
+                    })
                     .collect(Collectors.joining("；"));
         }
     }
@@ -313,6 +325,9 @@ public class ProductionOrderService {
 
             KitShortageVO line = new KitShortageVO();
             line.setBomDetailId(d.getId());
+            line.setSpec(d.getSpec());
+            line.setMaterial(d.getMaterial());
+            line.setRemark(d.getRemark());
             if (g != null) {
                 line.setGoodsId(g.getId());
                 line.setGoodsName(g.getGoodsName());
@@ -327,7 +342,12 @@ public class ProductionOrderService {
             line.setStock(stock);
             line.setDeficit(required.subtract(BigDecimal.valueOf(stock)).setScale(4, RoundingMode.HALF_UP));
 
-            if (stock >= required.intValue()) {
+            if (g == null) {
+                // D60：未绑定物料=未知物料（首次出现，不应从已有物料下拉就近选）
+                line.setLineStatus("unknown");
+                line.setLineStatusText("未知物料");
+                result.hasShortage = true;
+            } else if (stock >= required.intValue()) {
                 line.setLineStatus("ok");
                 line.setLineStatusText("齐套");
             } else if (stock > 0) {
@@ -341,8 +361,9 @@ public class ProductionOrderService {
             }
             result.lines.add(line);
         }
-        // 汇总等级：有严重缺 → block；否则有部分缺 → partial
-        boolean anyBlock = result.lines.stream().anyMatch(l -> "block".equals(l.getLineStatus()));
+        // 汇总等级：有严重缺/未知物料 → block；否则有部分缺 → partial
+        boolean anyBlock = result.lines.stream()
+                .anyMatch(l -> "block".equals(l.getLineStatus()) || "unknown".equals(l.getLineStatus()));
         if (anyBlock) {
             result.kitStatus = BizProductionOrder.KIT_BLOCK;
         } else if (result.hasShortage) {

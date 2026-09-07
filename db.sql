@@ -1460,3 +1460,18 @@ ALTER TABLE `biz_pick_list`
 ALTER TABLE biz_pick_list
     ADD COLUMN pick_prod_key BIGINT AS (CASE WHEN pick_type='PICK' THEN production_order_id END) STORED,
     ADD UNIQUE KEY uk_pick_prod_key (pick_prod_key);
+
+-- ============================================================
+-- 10.x D60 补料链路物料详情 + 未知物料自动建档（ADR-0002/0003）
+-- 1) 主数据 base_goods 增加规格/材质（物料固有属性；物料唯一性改「名称+规格」）
+-- 2) 采购申请明细快照 BOM 行规格/材质/备注 + 新物料标记（申请单详情两组展示）
+-- ============================================================
+ALTER TABLE `base_goods`
+    ADD COLUMN `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格(物料固有属性,ADR-0003;物料按名称+规格唯一)' AFTER `unit`,
+    ADD COLUMN `material` VARCHAR(100) DEFAULT NULL COMMENT '材质(物料固有属性,ADR-0003)' AFTER `spec`;
+
+ALTER TABLE `biz_purchase_request_detail`
+    ADD COLUMN `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格快照(生产补料提交时自BOM行带入)' AFTER `goods_name`,
+    ADD COLUMN `material` VARCHAR(100) DEFAULT NULL COMMENT '材质快照(生产补料提交时自BOM行带入)' AFTER `spec`,
+    ADD COLUMN `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注快照(生产补料提交时自BOM行带入)' AFTER `material`,
+    ADD COLUMN `is_new_material` TINYINT NOT NULL DEFAULT 0 COMMENT '新物料标记: 0-已有物料缺口, 1-未知物料自动建档(详情分组展示用)' AFTER `remark`;

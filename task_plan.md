@@ -410,6 +410,25 @@
 - [ ] F1 菜单从仓储端移到生产端；仓储端仅留查询入口；路由/按钮 deptCodes 调整
 - [ ] F2 build + Vite E2E
 
+### 阶段 14：补料链路物料详情 + 未知物料自动建档（D60/ADR-0002/0003，2026-09-07 会话 10）
+
+**决策：** ① 匹配行级四态：齐套/部分缺料/严重缺料(已绑定库存0)/未知物料(goods_id空,软删视同未知)；② 未知物料补料=内联录入(BOM预填可改)+提交时自动建档(挂缺省供应商1、进价留空、名称+规格唯一冲突则退回改绑)；③ 补料明细快照 BOM 行规格/材质/备注并带新物料标记，申请单详情按【已有物料缺口】【未知物料(新物料)】两组展示；④ 主数据 base_goods 加 spec/material 字段，物料唯一性改「名称+规格」(α1)，成品仍名称唯一；⑤ 接通建单齐套预警通知采购(死代码 sendKitShortageToPurchaseAdmins)；⑥ 采购看申请单详情快照，不开生产任务单读权限；⑦ 清理 confirmReceive 回挂 BOM 残留机制。详见 docs/adr/0002、0003 与 CONTEXT.md。
+
+#### 后端
+- [x] P1 db.sql 追加 10.x DDL：base_goods 加 spec/material；biz_purchase_request_detail 加 spec/material/remark/is_new_material；本地执行
+- [x] P2 主数据：BaseGoods/GoodsSaveDTO/GoodsVO/GoodsOptionVO 加字段；GoodsService 唯一性改类型感知(物料=名称+规格 checkMaterialNameSpecUnique，成品=名称) + 新增 createMaterialFromProduction(自动建档)；BomView 预填依赖 options 返回 spec/material
+- [x] P3 齐套四态：KitShortageVO 加 spec/material/remark；computeKit 未绑定行→unknown/未知物料(汇总仍算 block)；summary 缺口明细带规格+【新物料】标注
+- [x] P4 建单接通齐套预警：create() 在 kitStatus=block 时调 sendKitShortageToPurchaseAdmins(voidOrder 已有 revoke)
+- [x] P5 补料自动建档+快照：ProductionDraftItemDTO 加 newGoodsName/spec/material/remark/unit；createDraft 未知行→自动建档回绑 BOM 行(含规格材质回写)、明细快照+isNewMaterial；PurchaseRequestDetailVO 加字段；删除 confirmReceive 回挂块与 bizBomDetailMapper
+- [x] P6 单测：ProductionOrderServiceTest(unknown 四态/summary/spec)、GoodsServiceTest(名称+规格唯一/自动建档)、PurchaseRequestServiceTest(自动建档/冲突退回/快照)；./mvnw compile + test
+
+#### 前端
+- [x] F1 ProductionOrderView：齐套三处表格加规格/材质/备注列；lineTagType 加 unknown(info)；补料弹窗两组分区，未知行=内联表单(预填可改+单位+申请数量默认缺口)，去掉强制下拉；doCreateDraft 按行类型组包；下拉文案带规格/材质
+- [x] F2 PurchaseRequestView：详情弹窗 production 来源按两组分区展示(商品/规格/材质/备注/数量/单价)，warehouse 来源维持原样；列表摘要列不动
+- [x] F3 GoodsView：列表加规格/材质/备注列；表单加规格/材质/备注(仓储可编辑，采购不动)；payload/openByDetail/initForm 同步
+- [x] F4 BomView：物料下拉文案带规格/材质；选中物料预填行 spec/material(为空时)
+- [x] F5 npm run build + 重启两端 + Vite 代理 E2E（建单预警消息→补料自动建档→申请单两组→冲突退回提示→清理测试数据）
+
 ---
 
 ## ✅ 关键决策记录

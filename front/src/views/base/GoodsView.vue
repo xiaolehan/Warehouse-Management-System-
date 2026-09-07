@@ -26,8 +26,17 @@
     <el-table :data="tableData" border style="width: 100%" v-loading="loading">
       <el-table-column type="index" label="序号" width="60" />
       <el-table-column prop="goodsName" label="物料名称" min-width="130" />
-      <el-table-column prop="productName" label="产品名称" min-width="120" />
-      <el-table-column prop="category" label="物料种类" min-width="100" />
+      <el-table-column prop="spec" label="规格" min-width="100">
+        <template #default="scope">{{ scope.row.spec || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="material" label="材质" min-width="100">
+        <template #default="scope">{{ scope.row.material || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="productName" label="产品名称" min-width="110" />
+      <el-table-column prop="category" label="物料种类" min-width="90" />
+      <el-table-column prop="description" label="备注" min-width="110">
+        <template #default="scope">{{ scope.row.description || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="supplierName" label="所属供应商" min-width="140" />
       <!-- 进价：仅供采购/超管可见，仓储隐藏 -->
       <el-table-column v-if="showPrice" prop="price" label="进价" width="100">
@@ -82,6 +91,16 @@
         </el-form-item>
         <el-form-item label="单位">
           <el-input v-model="form.unit" :disabled="isView || isPurchase"></el-input>
+        </el-form-item>
+        <!-- 规格/材质：物料固有属性(ADR-0003)，物料按「名称+规格」唯一，防同名不同规格混选 -->
+        <el-form-item label="规格">
+          <el-input v-model="form.spec" :disabled="isView || isPurchase"></el-input>
+        </el-form-item>
+        <el-form-item label="材质">
+          <el-input v-model="form.material" :disabled="isView || isPurchase"></el-input>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="form.description" type="textarea" :rows="2" :disabled="isView || isPurchase"></el-input>
         </el-form-item>
         <!-- 进价(采购管)：仓储新增/编辑一律不显示；采购编辑/查看可见可改 -->
         <el-form-item v-if="showPrice && !isWarehouse" label="进价" required>
@@ -151,6 +170,9 @@ const form = reactive({
   supplierId: null,
   purchasePrice: null,
   unit: '',
+  spec: '',
+  material: '',
+  description: '',
   stock: 0,
   warningStock: 10
 })
@@ -231,6 +253,9 @@ const initForm = () => {
   form.supplierId = null
   form.purchasePrice = null
   form.unit = ''
+  form.spec = ''
+  form.material = ''
+  form.description = ''
   form.stock = 0
   form.warningStock = 10
 }
@@ -261,6 +286,9 @@ const openByDetail = async (row, viewMode) => {
     supplierId: detail.supplierId || null,
     purchasePrice: detail.purchasePrice ?? null,
     unit: detail.unit || '',
+    spec: detail.spec || '',
+    material: detail.material || '',
+    description: detail.description || '',
     stock: detail.stock || 0,
     warningStock: detail.warningStock ?? 10
   })
@@ -313,6 +341,9 @@ const handleSave = () => {
             category: form.category,
             supplierId: form.supplierId,
             unit: form.unit,
+            spec: form.spec,
+            material: form.material,
+            description: form.description,
             stock: form.stock,
             warningStock: form.warningStock,
             status: 1
@@ -326,6 +357,9 @@ const handleSave = () => {
           category: form.category,
           supplierId: form.supplierId,
           unit: form.unit,
+          spec: form.spec,
+          material: form.material,
+          description: form.description,
           stock: form.stock,
           warningStock: form.warningStock,
           status: 1

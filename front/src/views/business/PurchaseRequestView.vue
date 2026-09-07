@@ -157,7 +157,7 @@
     </el-dialog>
 
     <!-- 详情对话框 -->
-    <el-dialog v-model="viewVisible" title="采购申请单详情" width="680px">
+    <el-dialog v-model="viewVisible" title="采购申请单详情" width="860px">
       <el-descriptions :column="2" border v-if="viewData">
         <el-descriptions-item label="单号">{{ viewData.requestNo }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{ viewData.statusText }}</el-descriptions-item>
@@ -172,7 +172,49 @@
         <el-descriptions-item label="备注">{{ viewData.remark || '—' }}</el-descriptions-item>
         <el-descriptions-item label="驳回原因" :span="2" v-if="viewData.rejectReason">{{ viewData.rejectReason }}</el-descriptions-item>
       </el-descriptions>
-      <el-table :data="viewData?.details || []" border size="small" style="margin-top: 12px">
+      <!-- D60：生产补料单按「已有物料缺口 / 未知物料(新物料)」两组展示 -->
+      <template v-if="viewData?.sourceType === 'production'">
+        <template v-if="productionBoundDetails.length">
+          <el-divider content-position="left">已有物料缺口（{{ productionBoundDetails.length }}）</el-divider>
+          <el-table :data="productionBoundDetails" border size="small">
+            <el-table-column label="序号" width="60" type="index" />
+            <el-table-column prop="goodsName" label="商品" min-width="130" />
+            <el-table-column label="规格/材质" min-width="120">
+              <template #default="{ row }">{{ [row.spec, row.material].filter(Boolean).join(' / ') || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="100">
+              <template #default="{ row }">{{ row.remark || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="quantity" label="数量" width="90" />
+            <el-table-column v-if="showPrice" label="采购单价" width="110">
+              <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+        <template v-if="productionNewDetails.length">
+          <el-divider content-position="left">未知物料（新物料，{{ productionNewDetails.length }}）</el-divider>
+          <el-table :data="productionNewDetails" border size="small">
+            <el-table-column label="序号" width="60" type="index" />
+            <el-table-column label="商品" min-width="130">
+              <template #default="{ row }">
+                {{ row.goodsName }}
+                <el-tag type="info" size="small" style="margin-left: 4px">自动建档</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="规格/材质" min-width="120">
+              <template #default="{ row }">{{ [row.spec, row.material].filter(Boolean).join(' / ') || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="备注" min-width="100">
+              <template #default="{ row }">{{ row.remark || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="quantity" label="数量" width="90" />
+            <el-table-column v-if="showPrice" label="采购单价" width="110">
+              <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </template>
+      <el-table v-else :data="viewData?.details || []" border size="small" style="margin-top: 12px">
         <el-table-column label="序号" width="60" type="index" />
         <el-table-column prop="goodsName" label="商品" />
         <el-table-column prop="quantity" label="数量" width="100" />
@@ -241,7 +283,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -278,6 +320,10 @@ const manualForm = reactive({ remark: '', details: [] })
 
 const viewVisible = ref(false)
 const viewData = ref(null)
+
+// D60：生产补料单详情按新物料标记两组展示
+const productionBoundDetails = computed(() => (viewData.value?.details || []).filter((d) => !d.isNewMaterial))
+const productionNewDetails = computed(() => (viewData.value?.details || []).filter((d) => !!d.isNewMaterial))
 
 const receiveVisible = ref(false)
 const receiveForm = reactive({ id: null, items: [] })

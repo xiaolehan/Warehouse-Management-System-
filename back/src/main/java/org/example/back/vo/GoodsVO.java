@@ -39,6 +39,11 @@ public class GoodsVO {
 
     private String unit;
 
+    /** 规格/材质（物料固有属性，ADR-0003） */
+    private String spec;
+
+    private String material;
+
     private Integer status;
 
     private String description;

@@ -4,6 +4,7 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
+import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
@@ -53,6 +54,7 @@ class PurchaseRequestServiceTest {
     @Mock private MessageService messageService;
     @Mock private PurchaseService purchaseService;
     @Mock private ProductionOrderService productionOrderService;
+    @Mock private GoodsService goodsService;
     @Mock private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
 
     @InjectMocks private PurchaseRequestService service;
@@ -270,81 +272,131 @@ class PurchaseRequestServiceTest {
         assertEquals("无有效缺料行可补料", ex.getMessage());
     }
 
-    // ---------- confirmReceive 回挂用例 1：BOM 明细 goodsId 为 null → 回挂 ----------
+    // ---------- D60/ADR-0002：未知物料行自动建档 + 回绑 BOM 行 + 明细快照 ----------
     @Test
-    void confirmReceive_backlinksBomDetailGoodsIdOnlyWhenNull() {
-        // 到货申请单（待入库确认）
-        BizPurchaseRequest req = new BizPurchaseRequest();
-        req.setId(5L);
-        req.setStatus(5); // AWAITING_CONFIRM
-        req.setRequestNo("PR-test");
-        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(req);
-
-        org.example.back.entity.BizPurchaseRequestDetail d1 = new org.example.back.entity.BizPurchaseRequestDetail();
-        d1.setId(100L); d1.setGoodsId(66L); d1.setBomDetailId(12L);
-        d1.setArriveQuantity(3); d1.setQuantity(3); d1.setGoodsName("板1");
-        d1.setUnitPrice(new java.math.BigDecimal("1.50"));
-        when(bizPurchaseRequestDetailMapper.selectList(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(List.of(d1));
-
-        // 仓储登录用户
+    void createDraft_unknownRow_autoRegistersBindsBomAndSnapshots() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
-        user.setId(20L);
-        user.setRealName("仓储员");
+        user.setId(10L);
+        user.setRealName("生产甲");
         when(authService.getUserInfo()).thenReturn(user);
 
-        // BOM 明细原 goods_id 为 null → 应回挂 66
-        org.example.back.entity.BizBomDetail bomDetail = new org.example.back.entity.BizBomDetail();
-        bomDetail.setId(12L);
-        bomDetail.setGoodsId(null);
-        when(bizBomDetailMapper.selectById(12L)).thenReturn(bomDetail);
-        // confirmReceive 末尾对主单做乐观锁更新（set改为 RECEIVED=3），stub 返回 1 避免抛"状态已变更"
-        when(bizPurchaseRequestMapper.update(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(1);
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
 
-        service.confirmReceive(5L);
+        KitShortageVO line = new KitShortageVO();
+        line.setBomDetailId(12L);
+        line.setGoodsId(null); // 未知物料
+        line.setGoodsName("新轴承");
+        line.setDeficit(BigDecimal.valueOf(3));
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of(line));
 
-        // 回挂：BOM 明细 goods_id 更新为 66
-        org.mockito.ArgumentCaptor<org.example.back.entity.BizBomDetail> cap =
-                org.mockito.ArgumentCaptor.forClass(org.example.back.entity.BizBomDetail.class);
-        org.mockito.Mockito.verify(bizBomDetailMapper).updateById(cap.capture());
-        assertEquals(66L, cap.getValue().getGoodsId());
+        ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
+        dto.setProductionOrderId(7L);
+        ProductionDraftItemDTO item = new ProductionDraftItemDTO();
+        item.setBomDetailId(12L);
+        item.setNewGoodsName("新轴承");
+        item.setSpec(" M8 ");
+        item.setMaterial("不锈钢");
+        item.setRemark("急件");
+        item.setUnit("个");
+        dto.setDetails(List.of(item));
+
+        // 自动建档（规格原样传，建档方法内部 trim）→ 新物料 id=88
+        when(goodsService.createMaterialFromProduction("新轴承", " M8 ", "不锈钢", "个")).thenReturn(88L);
+
+        // BOM 行原为未绑定 → 提交后回绑
+        BizBomDetail bomRow = new BizBomDetail();
+        bomRow.setId(12L);
+        bomRow.setGoodsId(null);
+        bomRow.setComponentName("新轴承");
+        when(bizBomDetailMapper.selectById(12L)).thenReturn(bomRow);
+
+        service.createDraft(dto);
+
+        // 明细快照：goodsId=自动建档 id、规格/材质/备注已 trim、isNewMaterial=1、名称取建档名
+        ArgumentCaptor<BizPurchaseRequestDetail> detCap =
+                ArgumentCaptor.forClass(BizPurchaseRequestDetail.class);
+        verify(bizPurchaseRequestDetailMapper).insert(detCap.capture());
+        BizPurchaseRequestDetail detail = detCap.getValue();
+        assertEquals(88L, detail.getGoodsId());
+        assertEquals("新轴承", detail.getGoodsName());
+        assertEquals("M8", detail.getSpec());
+        assertEquals("不锈钢", detail.getMaterial());
+        assertEquals("急件", detail.getRemark());
+        assertEquals(1, detail.getIsNewMaterial());
+
+        // 回绑：BOM 行 goodsId/规格/材质/备注与建档信息对齐
+        ArgumentCaptor<BizBomDetail> bomCap = ArgumentCaptor.forClass(BizBomDetail.class);
+        verify(bizBomDetailMapper).updateById(bomCap.capture());
+        BizBomDetail bound = bomCap.getValue();
+        assertEquals(88L, bound.getGoodsId());
+        assertEquals("M8", bound.getSpec());
+        assertEquals("不锈钢", bound.getMaterial());
+        assertEquals("急件", bound.getRemark());
     }
 
-    // ---------- confirmReceive 回挂用例 2：BOM 明细已有 goodsId → 不覆盖 ----------
+    // ---------- D60/ADR-0002：未知行未填新物料信息 → 整单退回，不建档不发通知 ----------
     @Test
-    void confirmReceive_doesNotOverwriteExistingBacklink() {
-        BizPurchaseRequest req = new BizPurchaseRequest();
-        req.setId(5L);
-        req.setStatus(5); // AWAITING_CONFIRM
-        req.setRequestNo("PR-test");
-        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(req);
-
-        org.example.back.entity.BizPurchaseRequestDetail d1 = new org.example.back.entity.BizPurchaseRequestDetail();
-        d1.setId(100L); d1.setGoodsId(66L); d1.setBomDetailId(12L);
-        d1.setArriveQuantity(3); d1.setQuantity(3); d1.setGoodsName("板1");
-        d1.setUnitPrice(new java.math.BigDecimal("1.50"));
-        when(bizPurchaseRequestDetailMapper.selectList(org.mockito.ArgumentMatchers.any()))
-                .thenReturn(List.of(d1));
-
-        // 仓储登录用户
+    void createDraft_unknownRowWithoutName_throwsWholeOrder() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
-        user.setId(20L);
-        user.setRealName("仓储员");
+        user.setId(10L);
+        user.setRealName("生产甲");
         when(authService.getUserInfo()).thenReturn(user);
 
-        // BOM 明细 goods_id 已为 99 → 不应覆盖
-        org.example.back.entity.BizBomDetail bomDetail = new org.example.back.entity.BizBomDetail();
-        bomDetail.setId(12L);
-        bomDetail.setGoodsId(99L);
-        when(bizBomDetailMapper.selectById(12L)).thenReturn(bomDetail);
-        when(bizPurchaseRequestMapper.update(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(1);
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
 
-        service.confirmReceive(5L);
+        KitShortageVO line = new KitShortageVO();
+        line.setBomDetailId(12L);
+        line.setGoodsId(null);
+        line.setGoodsName("新轴承");
+        line.setDeficit(BigDecimal.valueOf(3));
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of(line));
 
-        // 不覆盖：updateById 不应被调用
-        org.mockito.Mockito.verify(bizBomDetailMapper, org.mockito.Mockito.never()).updateById(
-                org.mockito.ArgumentMatchers.any());
+        ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
+        dto.setProductionOrderId(7L);
+        // 未传明细行（没有 newGoodsName 也没有改绑 goodsId）
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createDraft(dto));
+        assertTrue(ex.getMessage().contains("未在仓库建档"), "错误消息应提示建档/改绑, 实际: " + ex.getMessage());
+        verify(goodsService, never()).createMaterialFromProduction(any(), any(), any(), any());
+        verify(bizPurchaseRequestDetailMapper, never()).insert(any(BizPurchaseRequestDetail.class));
+        verify(messageService, never()).sendPurchaseRequestToPurchaseAdmins(any(), any(), any());
+    }
+
+    // ---------- D60：已绑定行快照——规格/材质/备注来自 BOM 缺口行，isNewMaterial=0 ----------
+    @Test
+    void createDraft_boundRowSnapshotsSpecFromLine() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
+
+        KitShortageVO line = new KitShortageVO();
+        line.setBomDetailId(12L);
+        line.setGoodsId(51L);
+        line.setGoodsName("板1");
+        line.setSpec("M8");
+        line.setMaterial("不锈钢");
+        line.setRemark("急件");
+        line.setDeficit(BigDecimal.valueOf(3));
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of(line));
+
+        ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
+        dto.setProductionOrderId(7L);
+
+        service.createDraft(dto);
+
+        ArgumentCaptor<BizPurchaseRequestDetail> detCap =
+                ArgumentCaptor.forClass(BizPurchaseRequestDetail.class);
+        verify(bizPurchaseRequestDetailMapper).insert(detCap.capture());
+        BizPurchaseRequestDetail detail = detCap.getValue();
+        assertEquals(51L, detail.getGoodsId());
+        assertEquals("板1", detail.getGoodsName());
+        assertEquals("M8", detail.getSpec());
+        assertEquals("不锈钢", detail.getMaterial());
+        assertEquals("急件", detail.getRemark());
+        assertEquals(0, detail.getIsNewMaterial());
+        verify(goodsService, never()).createMaterialFromProduction(any(), any(), any(), any());
     }
 }

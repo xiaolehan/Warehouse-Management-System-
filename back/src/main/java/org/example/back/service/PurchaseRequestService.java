@@ -17,9 +17,11 @@ import org.example.back.dto.PurchaseRequestRejectDTO;
 import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseGoods;
+import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.KitShortageVO;
@@ -75,7 +77,10 @@ public class PurchaseRequestService {
     private ProductionOrderService productionOrderService;
 
     @Autowired
-    private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
+    private GoodsService goodsService;
+
+    @Autowired
+    private BizBomDetailMapper bizBomDetailMapper;
 
     // ============================== 查询 ==============================
 
@@ -163,6 +168,10 @@ public class PurchaseRequestService {
                 : dto.getDetails().stream()
                         .filter(i -> i.getBomDetailId() != null && i.getGoodsId() != null)
                         .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, ProductionDraftItemDTO::getGoodsId, (a, b) -> b));
+        Map<Long, ProductionDraftItemDTO> itemByBomDetail = dto.getDetails() == null ? Map.of()
+                : dto.getDetails().stream()
+                        .filter(i -> i.getBomDetailId() != null)
+                        .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, Function.identity(), (a, b) -> b));
 
         BizPurchaseRequest request = new BizPurchaseRequest();
         request.setRequestNo(CodeGenerator.purchaseRequestNo());
@@ -180,12 +189,50 @@ public class PurchaseRequestService {
             if (qty == null || qty <= 0) {
                 continue;
             }
+            // D60/ADR-0002：改绑已有物料优先；未绑定的未知物料行内联建档并回绑 BOM 行
+            Long goodsId = overrideGoods.getOrDefault(line.getBomDetailId(), line.getGoodsId());
+            boolean isNewMaterial = false;
+            BaseGoods reboundGoods = null;
+            ProductionDraftItemDTO item = itemByBomDetail.get(line.getBomDetailId());
+            if (goodsId == null) {
+                if (item == null || !StringUtils.hasText(item.getNewGoodsName())) {
+                    throw BusinessException.validateFail(
+                            "物料[" + line.getGoodsName() + "]未在仓库建档，请填写新物料信息或改绑已有物料");
+                }
+                isNewMaterial = true;
+                goodsId = goodsService.createMaterialFromProduction(
+                        item.getNewGoodsName(), item.getSpec(), item.getMaterial(), item.getUnit());
+                bindBomDetail(line.getBomDetailId(), goodsId, item);
+            } else if (overrideGoods.containsKey(line.getBomDetailId())) {
+                // D60：改绑已有物料——快照取改绑目标物料档案（名称/规格/材质以主数据为准，避免沿用旧 BOM 行信息）
+                reboundGoods = requireGoods(goodsId);
+            }
+
             BizPurchaseRequestDetail det = new BizPurchaseRequestDetail();
             det.setRequestId(request.getId());
-            det.setGoodsId(overrideGoods.getOrDefault(line.getBomDetailId(), line.getGoodsId()));
-            det.setGoodsName(line.getGoodsName());
+            det.setGoodsId(goodsId);
             det.setQuantity(qty);
             det.setBomDetailId(line.getBomDetailId());
+            if (isNewMaterial) {
+                // 快照取行内编辑后的值（与回绑 BOM 行一致）
+                det.setGoodsName(item.getNewGoodsName().trim());
+                det.setSpec(StringUtils.hasText(item.getSpec()) ? item.getSpec().trim() : null);
+                det.setMaterial(StringUtils.hasText(item.getMaterial()) ? item.getMaterial().trim() : null);
+                det.setRemark(StringUtils.hasText(item.getRemark()) ? item.getRemark().trim() : null);
+                det.setIsNewMaterial(1);
+            } else if (reboundGoods != null) {
+                det.setGoodsName(reboundGoods.getGoodsName());
+                det.setSpec(reboundGoods.getSpec());
+                det.setMaterial(reboundGoods.getMaterial());
+                det.setRemark(line.getRemark());
+                det.setIsNewMaterial(0);
+            } else {
+                det.setGoodsName(line.getGoodsName());
+                det.setSpec(line.getSpec());
+                det.setMaterial(line.getMaterial());
+                det.setRemark(line.getRemark());
+                det.setIsNewMaterial(0);
+            }
             det.setSortNo(sortNo++);
             bizPurchaseRequestDetailMapper.insert(det);
         }
@@ -199,6 +246,29 @@ public class PurchaseRequestService {
 
     private static int ceilDeficit(java.math.BigDecimal deficit) {
         return deficit.setScale(0, java.math.RoundingMode.UP).intValue();
+    }
+
+    /** D60/ADR-0002：未知物料自动建档后回绑 BOM 行——goodsId/名称/规格/材质/备注与建档信息对齐，保持 BOM 即时准确 */
+    private void bindBomDetail(Long bomDetailId, Long goodsId, ProductionDraftItemDTO item) {
+        BizBomDetail bomDetail = bizBomDetailMapper.selectById(bomDetailId);
+        if (bomDetail == null) {
+            return;
+        }
+        bomDetail.setGoodsId(goodsId);
+        if (StringUtils.hasText(item.getNewGoodsName())) {
+            bomDetail.setComponentName(item.getNewGoodsName().trim());
+        }
+        // null 视为未传（保持原值），空串视为用户清空（写 NULL）
+        if (item.getSpec() != null) {
+            bomDetail.setSpec(StringUtils.hasText(item.getSpec()) ? item.getSpec().trim() : null);
+        }
+        if (item.getMaterial() != null) {
+            bomDetail.setMaterial(StringUtils.hasText(item.getMaterial()) ? item.getMaterial().trim() : null);
+        }
+        if (item.getRemark() != null) {
+            bomDetail.setRemark(StringUtils.hasText(item.getRemark()) ? item.getRemark().trim() : null);
+        }
+        bizBomDetailMapper.updateById(bomDetail);
     }
 
     private List<BizPurchaseRequest> listNonFinalByProductionOrder(Long productionOrderId) {
@@ -342,15 +412,6 @@ public class PurchaseRequestService {
             purchaseDto.setUnitPrice(detail.getUnitPrice());
             purchaseDto.setRemark("采购申请单 " + entity.getRequestNo() + " 入库");
             purchaseService.createInternal(purchaseDto, loginUser.getId(), loginUser.getRealName());
-
-            // 回挂：确认入库后把该行对应 BOM 明细 goods_id 写为物料(仅原为空才写，避免覆盖已回挂)
-            if (detail.getBomDetailId() != null) {
-                org.example.back.entity.BizBomDetail bomDetail = bizBomDetailMapper.selectById(detail.getBomDetailId());
-                if (bomDetail != null && bomDetail.getGoodsId() == null && detail.getGoodsId() != null) {
-                    bomDetail.setGoodsId(detail.getGoodsId());
-                    bizBomDetailMapper.updateById(bomDetail);
-                }
-            }
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -545,6 +606,10 @@ public class PurchaseRequestService {
         vo.setGoodsId(detail.getGoodsId());
         vo.setBomDetailId(detail.getBomDetailId());
         vo.setGoodsName(detail.getGoodsName());
+        vo.setSpec(detail.getSpec());
+        vo.setMaterial(detail.getMaterial());
+        vo.setRemark(detail.getRemark());
+        vo.setIsNewMaterial(detail.getIsNewMaterial());
         vo.setQuantity(detail.getQuantity());
         vo.setArriveQuantity(detail.getArriveQuantity());
         vo.setUnitPrice(detail.getUnitPrice());

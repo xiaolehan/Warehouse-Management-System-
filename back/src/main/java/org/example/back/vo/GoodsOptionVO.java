@@ -24,6 +24,11 @@ public class GoodsOptionVO {
 
     private String unit;
 
+    /** 规格/材质（ADR-0003：下拉带规格防同名混选） */
+    private String spec;
+
+    private String material;
+
     private BigDecimal salePrice;
 
     /** D41 货品类型: material/product */
