@@ -7,3 +7,7 @@ export const issuePickListAPI = (id) => request.put(`/business/pick-lists/${id}/
 export const confirmPickListAPI = (id) => request.put(`/business/pick-lists/${id}/confirm`)
 export const rejectPickListAPI = (id, data) => request.put(`/business/pick-lists/${id}/reject`, data)
 export const deletePickListAPI = (id) => request.delete(`/business/pick-lists/${id}`)
+
+// 生产单领料
+export const createProductionPickAPI = (orderId) => request.post(`/business/production-orders/${orderId}/pick`)
+export const getProductionPickListAPI = (orderId) => request.get(`/business/production-orders/${orderId}/pick`)

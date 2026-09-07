@@ -168,14 +168,33 @@
             </el-table-column>
           </el-table>
         </template>
+
+        <div style="display:flex; gap:12px; margin:12px 0;">
+          <el-button
+            v-if="detail.status === 1 && !pickListStatus"
+            type="primary"
+            :loading="pickSubmitting"
+            @click="doApplyPick"
+          >申请领料</el-button>
+          <el-tag v-if="pickListStatus != null" :type="pickListTagType" size="medium">领料{{ pickListTagText }}</el-tag>
+        </div>
       </template>
     </el-dialog>
 
-    <!-- 补料草稿 -->
-    <el-dialog v-model="draftVisible" :title="`补料草稿 - ${draftRow.orderNo || ''}`" width="720px">
-      <el-alert v-if="draftStatusText" :title="draftStatusText" type="info" :closable="false" style="margin-bottom:12px" />
+    <!-- 补料 -->
+    <el-dialog v-model="draftVisible" :title="`补料 - ${draftRow.orderNo || ''}`" width="760px">
       <el-table :data="draftLines" border>
-        <el-table-column prop="goodsName" label="物料" min-width="140" />
+        <el-table-column prop="goodsName" label="物料" min-width="140">
+          <template #default="s">
+            <span v-if="s.row.goodsId">{{ s.row.goodsName || '-' }}</span>
+            <el-select v-else v-model="s.row.goodsId" filterable placeholder="请选择物料" size="small" style="width: 100%">
+              <el-option
+                v-for="opt in materialOptions" :key="opt.id"
+                :label="`${opt.name}（${opt.unit || ''}）`" :value="opt.id"
+              />
+            </el-select>
+          </template>
+        </el-table-column>
         <el-table-column label="需用量" width="90">
           <template #default="s">{{ fmtNum(s.row.required) }}</template>
         </el-table-column>
@@ -190,15 +209,15 @@
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button v-if="existingDraftId" type="danger" @click="doCancelDraft">撤销草稿</el-button>
-        <el-button v-else type="primary" :loading="draftSubmitting" @click="doCreateDraft">生成草稿</el-button>
+        <el-button @click="draftVisible = false">取消</el-button>
+        <el-button type="primary" :loading="draftSubmitting" @click="doCreateDraft">提交补料</el-button>
       </template>
     </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close
@@ -211,12 +230,9 @@ import {
   startProductionOrderAPI,
   voidProductionOrderAPI
 } from '@/api/business'
-import { getGoodsProductOptionsAPI } from '@/api/base'
-import {
-  createDraftPurchaseRequestAPI,
-  getDraftByProductionOrderAPI,
-  cancelDraftPurchaseRequestAPI
-} from '@/api/purchaseRequest'
+import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
+import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
+import { createProductionPickAPI, getProductionPickListAPI } from '@/api/pickList'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -246,6 +262,24 @@ const createRules = {
 
 const detailVisible = ref(false)
 const detail = ref(null)
+
+const pickListStatus = ref(null)
+const pickSubmitting = ref(false)
+const pickListTagText = computed(() => {
+  const s = pickListStatus.value
+  if (s === 1) return '待出库'
+  if (s === 2) return '已出库，可开工'
+  if (s === 3) return '已完成'
+  if (s === 4) return '已驳回'
+  return ''
+})
+const pickListTagType = computed(() => {
+  const s = pickListStatus.value
+  if (s === 1) return 'warning'
+  if (s === 2 || s === 3) return 'success'
+  if (s === 4) return 'danger'
+  return 'info'
+})
 
 const loadList = async () => {
   loading.value = true
@@ -325,6 +359,17 @@ const openDetail = async (row) => {
   const res = await getProductionOrderDetailAPI(row.id)
   if (res.code !== 200) throw new Error(res.msg || '详情查询失败')
   detail.value = res.data || {}
+  // 加载领料单状态
+  try {
+    const pickRes = await getProductionPickListAPI(row.id)
+    if (pickRes.code === 200 && pickRes.data?.length) {
+      pickListStatus.value = pickRes.data[0].status
+    } else {
+      pickListStatus.value = null
+    }
+  } catch {
+    pickListStatus.value = null
+  }
   detailVisible.value = true
 }
 
@@ -332,13 +377,52 @@ const handleView = async (row) => {
   try { await openDetail(row) } catch (error) { ElMessage.error(error.message) }
 }
 
-const handleStart = async (row) => {
+const doApplyPick = async () => {
   try {
-    ElMessageBox.confirm(`确认开工？开工将按 BOM 自动生成领料单并扣减库存。`, '开工确认', { type: 'warning' })
+    await ElMessageBox.confirm('确认申请领料？将按 BOM 生成该生产任务单的全部领料明细并提交仓储确认出库。', '申请领料', { type: 'warning' })
+  } catch {
+    return
+  }
+  pickSubmitting.value = true
+  try {
+    const res = await createProductionPickAPI(detail.value.id)
+    if (res.code !== 200) throw new Error(res.msg || '申请领料失败')
+    ElMessage.success('领料申请已提交，待仓储确认出库')
+    // 刷新领料状态与列表
+    const pickRes = await getProductionPickListAPI(detail.value.id)
+    if (pickRes.code === 200 && pickRes.data?.length) {
+      pickListStatus.value = pickRes.data[0].status
+    }
+    loadList()
+  } catch (error) {
+    ElMessage.error(error.message || '申请领料失败')
+  } finally {
+    pickSubmitting.value = false
+  }
+}
+
+const handleStart = async (row) => {
+  // 前置友好校验：领料单是否已全额出库
+  try {
+    const res = await getProductionPickListAPI(row.id)
+    const s = res.data?.[0]?.status
+    if (!s) {
+      ElMessage.warning('请先申请领料并由仓储确认出库')
+      return
+    }
+    if (s !== 2 && s !== 3) {
+      ElMessage.warning('领料单尚未全额出库，请等仓储确认')
+      return
+    }
+  } catch {
+    // 接口异常时放行，让后端网关兜底
+  }
+  try {
+    ElMessageBox.confirm('确认开工？开工需该生产任务单的领料单已由仓储确认出库。', '开工确认', { type: 'warning' })
     .then(async () => {
       const res = await startProductionOrderAPI(row.id)
       if (res.code !== 200) throw new Error(res.msg || '开工失败')
-      ElMessage.success('已开工，物料已自动领料')
+      ElMessage.success('已开工')
       await loadList()
     }).catch((e) => { if (e && e.message) ElMessage.error(e.message) })
   } catch (error) {
@@ -370,30 +454,29 @@ const handleVoid = (row) => {
   }).catch((e) => { if (e === 'cancel') return; if (e && e.message) ElMessage.error(e.message) })
 }
 
-// 补料草稿
+// 补料
 const draftVisible = ref(false)
 const draftRow = ref({})
 const draftLines = ref([])
-const existingDraftId = ref(null)
-const draftStatusText = ref('')
 const draftSubmitting = ref(false)
+const materialOptions = ref([])
+
+async function loadMaterialOptions() {
+  if (materialOptions.value.length) return
+  try {
+    const res = await getGoodsMaterialOptionsAPI()
+    materialOptions.value = res.data || []
+  } catch (error) {
+    ElMessage.error(error.message || '加载物料选项失败')
+  }
+}
 
 function openDraftDialog(row) {
   draftRow.value = row
   draftVisible.value = true
   draftSubmitting.value = false
-  existingDraftId.value = null
-  draftStatusText.value = ''
   draftLines.value = []
-  // 判断是否已有草稿
-  getDraftByProductionOrderAPI(row.id).then((res) => {
-    if (res.code !== 200) return
-    const p = res.data
-    if (p) {
-      existingDraftId.value = p.id
-      draftStatusText.value = `已生成补料草稿（单号 ${p.requestNo}）`
-    }
-  }).catch(() => {})
+  loadMaterialOptions()
   // 拉详情拿 kitLines，映射成可编辑行
   getProductionOrderDetailAPI(row.id).then((res) => {
     if (res.code !== 200) return
@@ -407,9 +490,14 @@ function openDraftDialog(row) {
 function doCreateDraft() {
   const items = draftLines.value
     .filter((l) => l.applyQty > 0)
-    .map((l) => ({ bomDetailId: l.bomDetailId, quantity: l.applyQty }))
+    .map((l) => ({ bomDetailId: l.bomDetailId, goodsId: l.goodsId, quantity: l.applyQty }))
   if (!items.length) {
     ElMessage.warning('请至少填一条申请数量')
+    return
+  }
+  const missing = items.find((i) => !i.goodsId)
+  if (missing) {
+    ElMessage.warning('存在未关联物料的缺口行，请先选择物料')
     return
   }
   draftSubmitting.value = true
@@ -418,25 +506,14 @@ function doCreateDraft() {
     details: items,
     remark: ''
   }).then((res) => {
-    if (res.code !== 200) throw new Error(res.msg || '生成草稿失败')
-    ElMessage.success('补料草稿已生成，待仓储转正')
+    if (res.code !== 200) throw new Error(res.msg || '补料失败')
+    ElMessage.success('补料已提交，待采购')
     draftVisible.value = false
     loadList()
   }).catch((error) => {
-    ElMessage.error(error.message || '生成草稿失败')
+    ElMessage.error(error.message || '补料失败')
   }).finally(() => {
     draftSubmitting.value = false
-  })
-}
-
-function doCancelDraft() {
-  cancelDraftPurchaseRequestAPI(existingDraftId.value).then((res) => {
-    if (res.code !== 200) throw new Error(res.msg || '撤销草稿失败')
-    ElMessage.success('草稿已撤销')
-    draftVisible.value = false
-    loadList()
-  }).catch((error) => {
-    ElMessage.error(error.message || '撤销草稿失败')
   })
 }
 
