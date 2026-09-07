@@ -14,9 +14,11 @@ import org.example.back.dto.PickListSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
+import org.example.back.entity.BizProductionOrder;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
+import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.PickListDetailVO;
 import org.example.back.vo.PickListVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,6 +60,9 @@ public class PickListService {
 
     @Autowired
     private MessageService messageService;
+
+    @Autowired
+    private BizProductionOrderMapper bizProductionOrderMapper;
 
     // ============================== 查询 ==============================
 
@@ -174,10 +179,15 @@ public class PickListService {
                 }
             }
         } catch (BusinessException e) {
-            // 缺料失败：反馈销售（REQUIRES_NEW 独立提交，不随本事务回滚），去重避免重试刷屏
+            // 缺料失败：按来源分流通知（REQUIRES_NEW 独立提交，不随本事务回滚），去重避免重试刷屏
             if (!messageService.hasUnreadBizMessage("pick_list", id)) {
-                messageService.sendPickListFailureToSalesAdmins(
-                        entity.getPickNo(), "发料缺料，库存不足，发料失败", id);
+                if (entity.getProductionOrderId() != null) {
+                    messageService.sendPickIssueFailedToProductionAdmins(
+                            entity.getPickNo(), e.getMessage(), id);
+                } else {
+                    messageService.sendPickListFailureToSalesAdmins(
+                            entity.getPickNo(), "发料缺料，库存不足，发料失败", id);
+                }
             }
             throw e;
         }
@@ -196,6 +206,15 @@ public class PickListService {
         }
         // 发料成功：撤销之前可能存在的缺料反馈待办（已不再缺料）
         messageService.revokeUnreadByBiz("pick_list", id);
+        // 发料成功：生产来源领料单通知生产端可开工
+        if (entity.getProductionOrderId() != null) {
+            String orderNo = null;
+            BizProductionOrder productionOrder = bizProductionOrderMapper.selectById(entity.getProductionOrderId());
+            if (productionOrder != null) {
+                orderNo = productionOrder.getOrderNo();
+            }
+            messageService.sendPickIssuedToProductionAdmins(entity.getPickNo(), orderNo, id);
+        }
     }
 
     // ============================== 确认收货 ==============================

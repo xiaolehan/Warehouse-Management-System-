@@ -318,6 +318,42 @@ public class MessageService {
     }
 
     /**
+     * 仓储确认出库成功 → 通知生产端已可开工（绑 biz_type=pick_list，对齐 D21 范式）。
+     */
+    public void sendPickIssuedToProductionAdmins(String pickNo, String orderNo, Long pickId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "生产领料已出库",
+                String.format(Locale.ROOT,
+                        "领料单 %s（生产任务单 %s）已由仓储确认出库，现可开工。",
+                        pickNo, orderNo == null ? "-" : orderNo),
+                "pick_list",
+                pickId);
+    }
+
+    /**
+     * 生产领料出库失败(缺料/驳回) → 通知生产端（绑 biz_type=pick_list，对齐 D21 范式）。
+     * REQUIRES_NEW：发料缺料场景下领料事务将回滚，反馈消息需独立提交以免丢失。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void sendPickIssueFailedToProductionAdmins(String pickNo, String reason, Long pickId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "生产领料出库失败",
+                String.format(Locale.ROOT, "领料单 %s 出库失败：%s", pickNo, reason),
+                "pick_list",
+                pickId);
+    }
+
+    /**
      * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
      */
     public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName, Long requestId) {
