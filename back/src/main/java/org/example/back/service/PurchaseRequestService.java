@@ -143,10 +143,10 @@ public class PurchaseRequestService {
         requireProductionDraftAccess();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
-        // 幂等：同一生产任务单已有草稿则拒绝，除非已流转
-        List<BizPurchaseRequest> existing = listDraftByProductionOrder(dto.getProductionOrderId());
+        // 幂等：同一生产任务单已有进行中/已入库的补料单则拒绝（仅 rejected 可重新补料）
+        List<BizPurchaseRequest> existing = listNonFinalByProductionOrder(dto.getProductionOrderId());
         if (!existing.isEmpty()) {
-            throw BusinessException.validateFail("该生产任务单已生成补料草稿，请先转正或驳回");
+            throw BusinessException.validateFail("该生产任务单已补料（单号 " + existing.get(0).getRequestNo() + "），请勿重复");
         }
 
         List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(dto.getProductionOrderId());
@@ -213,6 +213,14 @@ public class PurchaseRequestService {
         w.eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
                 .eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
                 .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT);
+        return bizPurchaseRequestMapper.selectList(w);
+    }
+
+    private List<BizPurchaseRequest> listNonFinalByProductionOrder(Long productionOrderId) {
+        LambdaQueryWrapper<BizPurchaseRequest> w = new LambdaQueryWrapper<>();
+        w.eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
+                .eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
+                .ne(BizPurchaseRequest::getStatus, STATUS_REJECTED);
         return bizPurchaseRequestMapper.selectList(w);
     }
 

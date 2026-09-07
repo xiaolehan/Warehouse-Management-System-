@@ -137,29 +137,57 @@ class PurchaseRequestServiceTest {
         assertEquals(draft.getId(), detail.getRequestId());
     }
 
-    // ---------- 用例 3：幂等——已有草稿拒绝 ----------
+    // ---------- 用例 3：幂等——已有非终态补料单拒绝 ----------
     @Test
-    void createDraft_rejectsWhenDraftAlreadyExists() {
+    void createDraft_rejectsWhenNonFinalRequestAlreadyExists() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
         user.setId(10L);
         user.setRealName("生产甲");
         when(authService.getUserInfo()).thenReturn(user);
 
-        BizPurchaseRequest existingDraft = new BizPurchaseRequest();
-        existingDraft.setId(99L);
-        existingDraft.setStatus(6);
-        existingDraft.setSourceType("production");
-        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of(existingDraft));
+        BizPurchaseRequest existing = new BizPurchaseRequest();
+        existing.setId(99L);
+        existing.setStatus(1); // PENDING（非终态）
+        existing.setSourceType("production");
+        existing.setRequestNo("PR-001");
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of(existing));
 
         ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
         dto.setProductionOrderId(7L);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.createDraft(dto));
-        assertEquals("该生产任务单已生成补料草稿，请先转正或驳回", ex.getMessage());
+        assertTrue(ex.getMessage().contains("请勿重复"), "错误消息应包含请勿重复, 实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("PR-001"), "错误消息应包含已有单号, 实际: " + ex.getMessage());
 
         // 幂等检查在前，不会进入缺料计算
         verify(productionOrderService, never()).computeShortageForOrder(anyLong());
+    }
+
+    // ---------- 用例 3b：幂等——已驳回的补料单可重新发起 ----------
+    @Test
+    void createDraft_allowsResubmissionAfterRejected() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // listNonFinal 返回空（已有补料单是 REJECTED，被过滤掉）
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
+
+        KitShortageVO line = new KitShortageVO();
+        line.setBomDetailId(12L);
+        line.setGoodsId(51L);
+        line.setGoodsName("板1");
+        line.setDeficit(BigDecimal.valueOf(3));
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of(line));
+
+        ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
+        dto.setProductionOrderId(7L);
+
+        // 不应抛异常：已驳回后可重新发起
+        assertDoesNotThrow(() -> service.createDraft(dto));
+        verify(bizPurchaseRequestMapper).insert(any(BizPurchaseRequest.class));
     }
 
     // ---------- 用例 4：无缺料拒绝 ----------
