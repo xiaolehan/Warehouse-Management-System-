@@ -6,8 +6,6 @@ import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
-import org.example.back.dto.DraftConfirmDTO;
-import org.example.back.dto.DraftRejectDTO;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestQueryDTO;
@@ -62,33 +60,6 @@ public class PurchaseRequestController {
     @GetMapping("/draft/{productionOrderId}")
     public Result<PurchaseRequestVO> getDraftByProductionOrder(@PathVariable Long productionOrderId) {
         return Result.success(purchaseRequestService.getDraftByProductionOrder(productionOrderId));
-    }
-
-    @PutMapping("/{id}/confirm-draft")
-    @RequireAdmin("仅仓储管理员可转正补料草稿")
-    @AuditLog(module = "采购申请", action = "转正草稿", targetType = "采购申请单")
-    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交转正请求")
-    public Result<Void> confirmDraft(@PathVariable Long id, @Valid @RequestBody DraftConfirmDTO dto) {
-        purchaseRequestService.confirmDraft(id, dto);
-        return Result.success();
-    }
-
-    @PutMapping("/{id}/reject-draft")
-    @RequireAdmin("仅仓储管理员可驳回补料草稿")
-    @AuditLog(module = "采购申请", action = "驳回草稿", targetType = "采购申请单")
-    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交驳回请求")
-    public Result<Void> rejectDraft(@PathVariable Long id, @RequestBody DraftRejectDTO dto) {
-        purchaseRequestService.rejectDraft(id, dto);
-        return Result.success();
-    }
-
-    @PostMapping("/{id}/cancel-draft")
-    @RequireAdmin("仅生产研发部管理员可撤销自家补料草稿")
-    @AuditLog(module = "采购申请", action = "撤销草稿", targetType = "采购申请单")
-    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交撤销请求")
-    public Result<Void> cancelDraft(@PathVariable Long id) {
-        purchaseRequestService.cancelDraft(id);
-        return Result.success();
     }
 
     @PostMapping

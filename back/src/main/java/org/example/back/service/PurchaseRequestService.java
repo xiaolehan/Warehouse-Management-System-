@@ -6,9 +6,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
-import org.example.back.dto.DraftConfirmDTO;
-import org.example.back.dto.DraftConfirmItemDTO;
-import org.example.back.dto.DraftRejectDTO;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
@@ -160,16 +157,20 @@ public class PurchaseRequestService {
                 : dto.getDetails().stream()
                         .filter(i -> i.getBomDetailId() != null && i.getQuantity() != null)
                         .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, ProductionDraftItemDTO::getQuantity));
+        Map<Long, Long> overrideGoods = dto.getDetails() == null ? Map.of()
+                : dto.getDetails().stream()
+                        .filter(i -> i.getBomDetailId() != null && i.getGoodsId() != null)
+                        .collect(Collectors.toMap(ProductionDraftItemDTO::getBomDetailId, ProductionDraftItemDTO::getGoodsId, (a, b) -> b));
 
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setRequestNo(CodeGenerator.purchaseRequestNo());
-        draft.setStatus(STATUS_DRAFT);
-        draft.setSourceType(SOURCE_PRODUCTION);
-        draft.setProductionOrderId(dto.getProductionOrderId());
-        draft.setApplicantId(loginUser.getId());
-        draft.setApplicantName(loginUser.getRealName());
-        draft.setRemark(dto.getRemark());
-        bizPurchaseRequestMapper.insert(draft);
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setRequestNo(CodeGenerator.purchaseRequestNo());
+        request.setStatus(STATUS_PENDING);
+        request.setSourceType(SOURCE_PRODUCTION);
+        request.setProductionOrderId(dto.getProductionOrderId());
+        request.setApplicantId(loginUser.getId());
+        request.setApplicantName(loginUser.getRealName());
+        request.setRemark(dto.getRemark());
+        bizPurchaseRequestMapper.insert(request);
 
         int sortNo = 0;
         for (KitShortageVO line : shortage) {
@@ -178,8 +179,8 @@ public class PurchaseRequestService {
                 continue;
             }
             BizPurchaseRequestDetail det = new BizPurchaseRequestDetail();
-            det.setRequestId(draft.getId());
-            det.setGoodsId(line.getGoodsId());
+            det.setRequestId(request.getId());
+            det.setGoodsId(overrideGoods.getOrDefault(line.getBomDetailId(), line.getGoodsId()));
             det.setGoodsName(line.getGoodsName());
             det.setQuantity(qty);
             det.setBomDetailId(line.getBomDetailId());
@@ -190,8 +191,8 @@ public class PurchaseRequestService {
             throw BusinessException.validateFail("无有效缺料行可补料");
         }
 
-        messageService.sendPurchaseRequestDraftToWarehouseAdmins(draft.getRequestNo(), loginUser.getRealName(), draft.getId());
-        return draft.getId();
+        messageService.sendPurchaseRequestToPurchaseAdmins(request.getRequestNo(), loginUser.getRealName(), request.getId());
+        return request.getId();
     }
 
     /**
@@ -201,99 +202,6 @@ public class PurchaseRequestService {
         requireProductionDraftAccess();
         List<BizPurchaseRequest> drafts = listDraftByProductionOrder(productionOrderId);
         return drafts.isEmpty() ? null : toVO(drafts.get(0));
-    }
-
-    /**
-     * 仓储转正：给草稿中 goods_id 为空的行补物料，全部齐备后置 PENDING 进入采购链。此步不回挂。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void confirmDraft(Long id, DraftConfirmDTO dto) {
-        requireWarehouseAccess();
-        BizPurchaseRequest entity = requireEntity(id);
-        if (entity.getStatus() != STATUS_DRAFT) {
-            throw BusinessException.validateFail("仅草稿状态可转正");
-        }
-
-        Map<Long, Long> assign = dto.getItems().stream()
-                .collect(Collectors.toMap(DraftConfirmItemDTO::getDetailId, DraftConfirmItemDTO::getGoodsId,
-                        (a, b) -> b));
-        List<BizPurchaseRequestDetail> details = listDetails(id);
-        if (details.isEmpty()) {
-            throw BusinessException.validateFail("草稿明细为空，无法转正");
-        }
-
-        for (BizPurchaseRequestDetail detail : details) {
-            Long newGoodsId = assign.get(detail.getId());
-            if (newGoodsId == null && detail.getGoodsId() == null) {
-                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]未关联物料，无法转正");
-            }
-            if (newGoodsId != null && !newGoodsId.equals(detail.getGoodsId())) {
-                LambdaUpdateWrapper<BizPurchaseRequestDetail> dw = new LambdaUpdateWrapper<>();
-                dw.eq(BizPurchaseRequestDetail::getId, detail.getId())
-                        .set(BizPurchaseRequestDetail::getGoodsId, newGoodsId);
-                bizPurchaseRequestDetailMapper.update(null, dw);
-            }
-        }
-
-        LambdaUpdateWrapper<BizPurchaseRequest> uw = new LambdaUpdateWrapper<>();
-        uw.eq(BizPurchaseRequest::getId, id)
-                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT)
-                .set(BizPurchaseRequest::getStatus, STATUS_PENDING);
-        int rows = bizPurchaseRequestMapper.update(null, uw);
-        if (rows != 1) {
-            throw BusinessException.validateFail("草稿状态已变更，请刷新后重试");
-        }
-        messageService.revokeUnreadByBiz("purchase_request", id);
-        messageService.sendPurchaseRequestToPurchaseAdmins(entity.getRequestNo(), entity.getApplicantName(), id);
-    }
-
-    /**
-     * 仓储驳回草稿：置 rejected 保留审计。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void rejectDraft(Long id, DraftRejectDTO dto) {
-        requireWarehouseAccess();
-        BizPurchaseRequest entity = requireEntity(id);
-        if (entity.getStatus() != STATUS_DRAFT) {
-            throw BusinessException.validateFail("仅草稿状态可驳回");
-        }
-        LambdaUpdateWrapper<BizPurchaseRequest> uw = new LambdaUpdateWrapper<>();
-        uw.eq(BizPurchaseRequest::getId, id)
-                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT)
-                .set(BizPurchaseRequest::getStatus, STATUS_REJECTED)
-                .set(BizPurchaseRequest::getRejectReason,
-                        StringUtils.hasText(dto == null ? null : dto.getReason()) ? dto.getReason() : "仓储驳回草稿");
-        int rows = bizPurchaseRequestMapper.update(null, uw);
-        if (rows != 1) {
-            throw BusinessException.validateFail("草稿状态已变更，请刷新后重试");
-        }
-        messageService.revokeUnreadByBiz("purchase_request", id);
-    }
-
-    /**
-     * 生产申请人撤销自家草稿：置 rejected 保留审计。
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void cancelDraft(Long id) {
-        requireProductionDraftAccess();
-        BizPurchaseRequest entity = requireEntity(id);
-        if (entity.getStatus() != STATUS_DRAFT) {
-            throw BusinessException.validateFail("仅草稿状态可撤销");
-        }
-        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        if (!entity.getApplicantId().equals(loginUser.getId()) && !authzService.isSuperAdmin()) {
-            throw BusinessException.forbidden("仅申请人本人可撤销草稿");
-        }
-        LambdaUpdateWrapper<BizPurchaseRequest> uw = new LambdaUpdateWrapper<>();
-        uw.eq(BizPurchaseRequest::getId, id)
-                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT)
-                .set(BizPurchaseRequest::getStatus, STATUS_REJECTED)
-                .set(BizPurchaseRequest::getRejectReason, "申请人撤销草稿");
-        int rows = bizPurchaseRequestMapper.update(null, uw);
-        if (rows != 1) {
-            throw BusinessException.validateFail("草稿状态已变更，请刷新后重试");
-        }
-        messageService.revokeUnreadByBiz("purchase_request", id);
     }
 
     private static int ceilDeficit(java.math.BigDecimal deficit) {

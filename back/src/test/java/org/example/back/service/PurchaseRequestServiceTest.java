@@ -1,9 +1,6 @@
 package org.example.back.service;
 
 import org.example.back.common.exception.BusinessException;
-import org.example.back.dto.DraftConfirmDTO;
-import org.example.back.dto.DraftConfirmItemDTO;
-import org.example.back.dto.DraftRejectDTO;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
@@ -61,7 +58,7 @@ class PurchaseRequestServiceTest {
     @InjectMocks private PurchaseRequestService service;
 
     @Test
-    void createDraft_setsDraftStatusAndSendsWarehouseNotice() {
+    void createDraft_setsPendingStatusAndSendsPurchaseNotice() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
         user.setId(10L);
         user.setRealName("生产甲");
@@ -82,20 +79,21 @@ class PurchaseRequestServiceTest {
 
         Long draftId = service.createDraft(dto);
 
-        // 主单应为草稿状态 + 生产来源
+        // 主单应为待采购状态 + 生产来源 + 通知采购管理员
         ArgumentCaptor<BizPurchaseRequest> captor =
                 ArgumentCaptor.forClass(BizPurchaseRequest.class);
         verify(bizPurchaseRequestMapper).insert(captor.capture());
         BizPurchaseRequest draft = captor.getValue();
-        assertEquals(6, draft.getStatus());
+        assertEquals(1, draft.getStatus());
         assertEquals("production", draft.getSourceType());
         assertEquals(7L, draft.getProductionOrderId());
         assertEquals(user.getId(), draft.getApplicantId());
+        verify(messageService).sendPurchaseRequestToPurchaseAdmins(anyString(), eq("生产甲"), any());
     }
 
     // ---------- 用例 2：通知 + 明细行校验 ----------
     @Test
-    void createDraft_sendsWarehouseNotice_andInsertsDetailRow() {
+    void createDraft_sendsPurchaseNotice_andInsertsDetailRow() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
         user.setId(10L);
         user.setRealName("生产甲");
@@ -115,9 +113,9 @@ class PurchaseRequestServiceTest {
 
         service.createDraft(dto);
 
-        // 1. 通知发给仓储管理员，申请人是"生产甲"
+        // 1. 通知发给采购管理员，申请人是"生产甲"
         //    注意：mock insert 不回填 id，第三参为 null，用 any() 匹配
-        verify(messageService).sendPurchaseRequestDraftToWarehouseAdmins(
+        verify(messageService).sendPurchaseRequestToPurchaseAdmins(
                 anyString(), eq("生产甲"), any());
 
         // 2. 明细行字段校验
@@ -242,195 +240,6 @@ class PurchaseRequestServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.createDraft(dto));
         assertEquals("无有效缺料行可补料", ex.getMessage());
-    }
-
-    // ---------- confirmDraft 用例 1：有明细行缺物料则拒绝 ----------
-    @Test
-    void confirmDraft_rejectsWhenAGoodsIdIsMissing() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6); // DRAFT
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        // 两行，仅给其中一行传了物料
-        org.example.back.entity.BizPurchaseRequestDetail d1 = new org.example.back.entity.BizPurchaseRequestDetail();
-        d1.setId(100L); d1.setRequestId(3L); d1.setGoodsId(null); d1.setGoodsName("板1");
-        org.example.back.entity.BizPurchaseRequestDetail d2 = new org.example.back.entity.BizPurchaseRequestDetail();
-        d2.setId(101L); d2.setRequestId(3L); d2.setGoodsId(null); d2.setGoodsName("螺丝");
-        when(bizPurchaseRequestDetailMapper.selectList(ArgumentMatchers.any()))
-                .thenReturn(List.of(d1, d2));
-
-        DraftConfirmDTO dto = new DraftConfirmDTO();
-        DraftConfirmItemDTO item = new DraftConfirmItemDTO();
-        item.setDetailId(100L);
-        item.setGoodsId(66L);
-        dto.setItems(List.of(item));
-
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.confirmDraft(3L, dto));
-        assertEquals("明细[螺丝]未关联物料，无法转正", ex.getMsg());
-    }
-
-    // ---------- confirmDraft 用例 2：全部齐备 → PENDING + 撤草稿通知 + 发采购通知 ----------
-    @Test
-    void confirmDraft_transposesToPendingAndSendsPurchaseNotice() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6); // DRAFT
-        draft.setRequestNo("CG-2026-0001");
-        draft.setApplicantName("生产甲");
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
-        d1.setId(100L); d1.setRequestId(3L); d1.setGoodsId(51L); d1.setGoodsName("板1");
-        when(bizPurchaseRequestDetailMapper.selectList(ArgumentMatchers.any()))
-                .thenReturn(List.of(d1));
-
-        DraftConfirmDTO dto = new DraftConfirmDTO();
-        dto.setItems(List.of());
-
-        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
-
-        service.confirmDraft(3L, dto);
-
-        // 主单状态应从 DRAFT 更新为 PENDING：检查 set 的值为 1
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest>> captor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
-        verify(bizPurchaseRequestMapper).update(any(), captor.capture());
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest> uw = captor.getValue();
-        // sql set 中 status 是第一个 set 项，其值在 paramNameValuePairs 的 MPGENVAL1
-        assertTrue(uw.getSqlSet().contains("status="), "sql set 应包含 status 字段");
-        java.util.Map<String, Object> params = uw.getParamNameValuePairs();
-        assertTrue(params.containsValue(1), "参数中应包含 STATUS_PENDING=1, 实际参数: " + params);
-
-        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
-        verify(messageService).sendPurchaseRequestToPurchaseAdmins(anyString(), any(), eq(3L));
-    }
-
-    // ---------- confirmDraft 用例 3：方案先行行(goodsId 空)由转正时补物料 → 写明细 goodsId ----------
-    @Test
-    void confirmDraft_writesGoodsIdToSchemeFirstDetail() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6); // DRAFT
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
-        d1.setId(100L); d1.setRequestId(3L); d1.setGoodsId(null); d1.setGoodsName("板1"); // 方案先行行
-        when(bizPurchaseRequestDetailMapper.selectList(ArgumentMatchers.any()))
-                .thenReturn(List.of(d1));
-
-        DraftConfirmDTO dto = new DraftConfirmDTO();
-        DraftConfirmItemDTO item = new DraftConfirmItemDTO();
-        item.setDetailId(100L);
-        item.setGoodsId(66L);
-        dto.setItems(List.of(item));
-
-        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
-
-        service.confirmDraft(3L, dto);
-
-        // 明细应按 66 回写（newGoodsId != null 且与现值不同）
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequestDetail>> captor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
-        verify(bizPurchaseRequestDetailMapper).update(any(), captor.capture());
-        assertTrue(captor.getValue().getParamNameValuePairs().containsValue(66L),
-                "明细 goods_id 参数应回写为 66, 实际: " + captor.getValue().getParamNameValuePairs());
-
-        // 主单仍应转到 PENDING 并撤草稿通知 + 发采购通知
-        verify(bizPurchaseRequestMapper).update(any(), ArgumentMatchers.any());
-        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
-        verify(messageService).sendPurchaseRequestToPurchaseAdmins(any(), any(), eq(3L));
-    }
-
-    // ---------- rejectDraft 用例：草稿驳回 → REJECTED + 撤通知 ----------
-    @Test
-    void rejectDraft_setsRejectedAndRevokesNotice() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6); // DRAFT
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        DraftRejectDTO dto = new DraftRejectDTO();
-        dto.setReason("物料信息不全");
-
-        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
-
-        service.rejectDraft(3L, dto);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest>> captor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
-        verify(bizPurchaseRequestMapper).update(any(), captor.capture());
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest> uw = captor.getValue();
-        assertTrue(uw.getSqlSet().contains("status="), "sql set 应包含 status 字段");
-        java.util.Map<String, Object> params = uw.getParamNameValuePairs();
-        assertTrue(params.containsValue(4), "参数中应包含 STATUS_REJECTED=4, 实际参数: " + params);
-        assertTrue(params.containsValue("物料信息不全"), "参数中应包含驳回原因, 实际参数: " + params);
-
-        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
-    }
-
-    // ---------- cancelDraft 用例 1：非申请人不可撤销草稿 ----------
-    @Test
-    void cancelDraft_forbidsOtherApplicant() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6);
-        draft.setApplicantId(10L);
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        LoginResponse.UserInfoVO other = new LoginResponse.UserInfoVO();
-        other.setId(99L);
-        when(authService.getUserInfo()).thenReturn(other);
-        when(authzService.isSuperAdmin()).thenReturn(false);
-
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelDraft(3L));
-        assertEquals("仅申请人本人可撤销草稿", ex.getMsg());
-    }
-
-    // ---------- cancelDraft 用例 2：非草稿状态不可撤销 ----------
-    @Test
-    void cancelDraft_rejectsWhenNotDraft() {
-        BizPurchaseRequest entity = new BizPurchaseRequest();
-        entity.setId(3L);
-        entity.setStatus(1); // PENDING
-        entity.setApplicantId(10L);
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(entity);
-
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelDraft(3L));
-        assertEquals("仅草稿状态可撤销", ex.getMsg());
-    }
-
-    // ---------- cancelDraft 用例 3：happy path — 草稿→已驳回 + 撤通知 ----------
-    @Test
-    void cancelDraft_setsRejected() {
-        BizPurchaseRequest draft = new BizPurchaseRequest();
-        draft.setId(3L);
-        draft.setStatus(6); // DRAFT
-        draft.setApplicantId(10L);
-        when(bizPurchaseRequestMapper.selectById(3L)).thenReturn(draft);
-
-        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
-        user.setId(10L);
-        when(authService.getUserInfo()).thenReturn(user);
-
-        when(bizPurchaseRequestMapper.update(any(), ArgumentMatchers.any())).thenReturn(1);
-
-        service.cancelDraft(3L);
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest>> captor =
-                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
-        verify(bizPurchaseRequestMapper).update(any(), captor.capture());
-        com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequest> uw = captor.getValue();
-        assertTrue(uw.getSqlSet().contains("status="), "sql set 应包含 status 字段");
-        java.util.Map<String, Object> params = uw.getParamNameValuePairs();
-        assertTrue(params.containsValue(4), "参数中应包含 STATUS_REJECTED=4, 实际参数: " + params);
-        assertTrue(params.containsValue("申请人撤销草稿"), "参数中应包含撤销原因, 实际参数: " + params);
-
-        verify(messageService).revokeUnreadByBiz("purchase_request", 3L);
     }
 
     // ---------- confirmReceive 回挂用例 1：BOM 明细 goodsId 为 null → 回挂 ----------
