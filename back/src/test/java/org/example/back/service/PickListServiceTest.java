@@ -314,8 +314,9 @@ class PickListServiceTest {
 
         service.reject(8L, dto);
 
-        // 1. 撤销未读的待出库通知
-        verify(messageService).revokeUnreadByBiz("pick_list", 8L);
+        // 1. 仅撤销仓储部未读的待出库通知（保留生产端驳回反馈）
+        verify(messageService).revokeUnreadByBizAndDeptCode("pick_list", 8L, AuthzService.DEPT_WAREHOUSE);
+        verify(messageService, never()).revokeUnreadByBiz("pick_list", 8L);
         // 2. 驳回通知发给生产端
         verify(messageService).sendPickIssueFailedToProductionAdmins(eq("PK-008"), anyString(), eq(8L));
         verify(messageService, never()).sendPickListFailureToSalesAdmins(anyString(), anyString(), anyLong());
@@ -338,8 +339,9 @@ class PickListServiceTest {
 
         service.reject(9L, dto);
 
-        // 1. 撤销未读
-        verify(messageService).revokeUnreadByBiz("pick_list", 9L);
+        // 1. 仅撤销仓储部未读（保留销售端驳回反馈）
+        verify(messageService).revokeUnreadByBizAndDeptCode("pick_list", 9L, AuthzService.DEPT_WAREHOUSE);
+        verify(messageService, never()).revokeUnreadByBiz("pick_list", 9L);
         // 2. 驳回通知发给销售端
         verify(messageService).sendPickListFailureToSalesAdmins(eq("PK-009"), anyString(), eq(9L));
         verify(messageService, never()).sendPickIssueFailedToProductionAdmins(anyString(), anyString(), anyLong());

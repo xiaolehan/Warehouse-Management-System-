@@ -224,9 +224,8 @@ public class PickListService {
         if (rows != 1) {
             throw BusinessException.validateFail("领料单已被处理，禁止重复驳回");
         }
-        // 驳回终态：撤销未读的"待出库"通知（避免悬挂）
-        messageService.revokeUnreadByBiz("pick_list", id);
-        // 驳回反馈：按来源分流（REQUIRES_NEW 独立提交）
+        // 驳回反馈：按来源分流（REQUIRES_NEW 独立提交）。先发通知再撤销未读——
+        // 若先 revoke(父事务对 sys_message 加锁)，独立子事务的 INSERT 会等父锁而超时。
         String reason = "仓储驳回领料：" + dto.getReason();
         if (entity.getProductionOrderId() != null) {
             messageService.sendPickIssueFailedToProductionAdmins(
@@ -235,6 +234,8 @@ public class PickListService {
             messageService.sendPickListFailureToSalesAdmins(
                     entity.getPickNo(), reason, id);
         }
+        // 驳回终态：仅撤销仓储部未读的"待出库"待办（避免悬挂），保留发给申请方(生产/销售)的驳回反馈通知
+        messageService.revokeUnreadByBizAndDeptCode("pick_list", id, AuthzService.DEPT_WAREHOUSE);
     }
 
     // ============================== 撤销申请 ==============================

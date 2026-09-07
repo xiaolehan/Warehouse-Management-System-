@@ -285,8 +285,22 @@ public class MessageService {
     }
 
     /**
-     * 是否存在未读的业务待办消息（用于缺料反馈去重，避免重试刷屏）。
+     * 按收件部门+业务单据撤销未读待办消息（单据终态时，仅清除指定部门已不可操作的待办，
+     * 保留发给其他部门（如生产/销售）的反馈通知）。用于驳回场景：既清掉仓储"待出库"，
+     * 又不误删刚发送给申请方的"驳回/失败"通知。
      */
+    public void revokeUnreadByBizAndDeptCode(String bizType, Long bizId, String deptCode) {
+        Long deptId = resolveDeptIdByCode(deptCode);
+        if (!StringUtils.hasText(bizType) || bizId == null || deptId == null) {
+            return;
+        }
+        LambdaQueryWrapper<SysMessage> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysMessage::getBizType, bizType)
+                .eq(SysMessage::getBizId, bizId)
+                .eq(SysMessage::getRecipientDeptId, deptId)
+                .eq(SysMessage::getIsRead, MESSAGE_UNREAD);
+        sysMessageMapper.delete(wrapper);
+    }
     public boolean hasUnreadBizMessage(String bizType, Long bizId) {
         if (!StringUtils.hasText(bizType) || bizId == null) {
             return false;
