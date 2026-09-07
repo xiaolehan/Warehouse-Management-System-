@@ -28,6 +28,11 @@ public class BizPickList {
     private Long sourceSalesId;
 
     /**
+     * 来源生产任务单id(生产端申请领料时写入, 用于开工校验)
+     */
+    private Long productionOrderId;
+
+    /**
      * 状态: 1-待发料, 2-已发料, 3-已完成, 4-已驳回
      */
     private Integer status;
