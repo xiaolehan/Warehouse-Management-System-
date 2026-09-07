@@ -56,7 +56,8 @@ public class ProductionPickService {
             throw BusinessException.validateFail("仅待生产状态可申请领料");
         }
         LambdaQueryWrapper<BizPickList> dup = new LambdaQueryWrapper<>();
-        dup.eq(BizPickList::getProductionOrderId, orderId);
+        dup.eq(BizPickList::getProductionOrderId, orderId)
+                .eq(BizPickList::getPickType, PickListService.TYPE_PICK);
         if (pickListMapper.selectCount(dup) > 0) {
             throw BusinessException.validateFail("该生产任务单已申请领料，请勿重复");
         }
