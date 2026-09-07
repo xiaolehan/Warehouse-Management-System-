@@ -57,11 +57,6 @@ public class PurchaseRequestController {
         return Result.success(purchaseRequestService.createDraft(dto));
     }
 
-    @GetMapping("/draft/{productionOrderId}")
-    public Result<PurchaseRequestVO> getDraftByProductionOrder(@PathVariable Long productionOrderId) {
-        return Result.success(purchaseRequestService.getDraftByProductionOrder(productionOrderId));
-    }
-
     @PostMapping
     @RequireAdmin("仅仓储管理员可创建采购申请单")
     @AuditLog(module = "采购申请", action = "建单", targetType = "采购申请单")

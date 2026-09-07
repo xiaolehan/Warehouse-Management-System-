@@ -175,6 +175,7 @@
             type="primary"
             :loading="pickSubmitting"
             @click="doApplyPick"
+            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >申请领料</el-button>
           <el-tag v-if="pickListStatus != null" :type="pickListTagType" size="medium">领料{{ pickListTagText }}</el-tag>
           <el-button
@@ -404,11 +405,12 @@ const openDetail = async (row) => {
   const res = await getProductionOrderDetailAPI(row.id)
   if (res.code !== 200) throw new Error(res.msg || '详情查询失败')
   detail.value = res.data || {}
-  // 加载领料单状态
+  // 加载领料单状态（优先取 PICK 类型行，用于"领料已出库"标签展示）
   try {
     const pickRes = await getProductionPickListAPI(row.id)
     if (pickRes.code === 200 && pickRes.data?.length) {
-      pickListStatus.value = pickRes.data[0].status
+      const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
+      pickListStatus.value = pickRow.status
     } else {
       pickListStatus.value = null
     }
@@ -433,10 +435,11 @@ const doApplyPick = async () => {
     const res = await createProductionPickAPI(detail.value.id)
     if (res.code !== 200) throw new Error(res.msg || '申请领料失败')
     ElMessage.success('领料申请已提交，待仓储确认出库')
-    // 刷新领料状态与列表
+    // 刷新领料状态与列表（优先取 PICK 类型行）
     const pickRes = await getProductionPickListAPI(detail.value.id)
     if (pickRes.code === 200 && pickRes.data?.length) {
-      pickListStatus.value = pickRes.data[0].status
+      const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
+      pickListStatus.value = pickRow.status
     }
     loadList()
   } catch (error) {
@@ -506,21 +509,23 @@ async function doSubmitReturn() {
 }
 
 const handleStart = async (row) => {
-  // 前置友好校验：领料单是否已全额出库
+  // 前置友好校验：领料单是否已全额出库（失败放行，由后端开工网关兜底返回准确错误）
   try {
     const res = await getProductionPickListAPI(row.id)
-    if (res.code !== 200) return // 接口异常放行，由后端网关兜底
-    const s = res.data?.[0]?.status
-    if (!s) {
-      ElMessage.warning('请先申请领料并由仓储确认出库')
-      return
+    if (res.code === 200) {
+      const s = res.data?.[0]?.status
+      if (!s) {
+        ElMessage.warning('请先申请领料并由仓储确认出库')
+        return
+      }
+      if (s !== 2 && s !== 3) {
+        ElMessage.warning('领料单尚未全额出库，请等仓储确认')
+        return
+      }
     }
-    if (s !== 2 && s !== 3) {
-      ElMessage.warning('领料单尚未全额出库，请等仓储确认')
-      return
-    }
+    // res.code !== 200 → 放行，交由后端开工网关兜底返回准确错误
   } catch {
-    // 网络异常放行，由后端网关兜底
+    // 网络异常放行，后端兜底
   }
   try {
     ElMessageBox.confirm('确认开工？开工需该生产任务单的领料单已由仓储确认出库。', '开工确认', { type: 'warning' })

@@ -14,7 +14,3 @@ export const deletePurchaseRequestAPI = (id) => request.delete(`/business/purcha
 
 // 生产缺料补料草稿
 export const createDraftPurchaseRequestAPI = (data) => request.post('/business/purchase-requests/draft', data)
-export const getDraftByProductionOrderAPI = (productionOrderId) => request.get(`/business/purchase-requests/draft/${productionOrderId}`)
-export const confirmDraftPurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/confirm-draft`, data)
-export const rejectDraftPurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/reject-draft`, data)
-export const cancelDraftPurchaseRequestAPI = (id) => request.post(`/business/purchase-requests/${id}/cancel-draft`)

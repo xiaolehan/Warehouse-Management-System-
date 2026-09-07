@@ -26,7 +26,7 @@ public class ProductionPickController {
 
     @PostMapping("/{orderId}/return")
     @PreventDuplicateSubmit(message = "请勿重复提交退料申请")
-    public Result<Void> createReturn(@PathVariable Long orderId, @Valid @RequestBody(required = false) ProductionReturnCreateDTO dto) {
+    public Result<Void> createReturn(@PathVariable Long orderId, @Valid @RequestBody ProductionReturnCreateDTO dto) {
         productionPickService.createReturn(orderId, dto);
         return Result.success();
     }

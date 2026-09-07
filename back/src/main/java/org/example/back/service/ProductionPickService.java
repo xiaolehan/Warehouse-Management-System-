@@ -17,10 +17,12 @@ import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.PickListVO;
 import org.example.back.vo.ProductionPickItemVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 生产端领料：按生产任务单 BOM 全量申请领料，生成 PICK 领料单后交仓储确认出库。
@@ -70,7 +72,11 @@ public class ProductionPickService {
         pick.setApplicantId(user.getId());
         pick.setApplicantName(user.getRealName());
         pick.setRemark("生产任务单 " + order.getOrderNo() + " 申请领料");
-        pickListMapper.insert(pick);
+        try {
+            pickListMapper.insert(pick);
+        } catch (DuplicateKeyException e) {
+            throw BusinessException.validateFail("该生产任务单已申请领料，请勿重复");
+        }
 
         int sortNo = 0;
         for (ProductionPickItemVO item : items) {
@@ -104,6 +110,15 @@ public class ProductionPickService {
             throw BusinessException.validateFail("请选择退料明细");
         }
 
+        // 防止堆叠：同一张生产任务单已有待处理的退料单则拒绝（已完成/已驳回的可重提）
+        LambdaQueryWrapper<BizPickList> pendingRet = new LambdaQueryWrapper<>();
+        pendingRet.eq(BizPickList::getProductionOrderId, orderId)
+                .eq(BizPickList::getPickType, PickListService.TYPE_RETURN)
+                .notIn(BizPickList::getStatus, PickListService.STATUS_DONE, PickListService.STATUS_REJECTED);
+        if (pickListMapper.selectCount(pendingRet) > 0) {
+            throw BusinessException.validateFail("该生产任务单已有待确认的退料单");
+        }
+
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         BizPickList pick = new BizPickList();
         pick.setPickNo(CodeGenerator.pickListNo());
@@ -126,7 +141,8 @@ public class ProductionPickService {
             }
             BaseGoods goods = baseGoodsMapper.selectById(item.getGoodsId());
             if (goods == null) {
-                throw BusinessException.validateFail("物料不存在: id=" + item.getGoodsId());
+                throw BusinessException.validateFail(
+                        String.format(Locale.ROOT, "物料不存在: id=%d", item.getGoodsId()));
             }
             BizPickListDetail det = new BizPickListDetail();
             det.setPickListId(pick.getId());
@@ -135,6 +151,9 @@ public class ProductionPickService {
             det.setQuantity(item.getQuantity());
             det.setSortNo(sortNo++);
             pickListDetailMapper.insert(det);
+        }
+        if (sortNo == 0) {
+            throw BusinessException.validateFail("无有效退料明细行");
         }
 
         messageService.sendPickReturnPendingToWarehouseAdmins(pick.getPickNo(), order.getOrderNo(), pick.getId());
@@ -172,11 +191,20 @@ public class ProductionPickService {
         vo.setId(p.getId());
         vo.setPickNo(p.getPickNo());
         vo.setPickType(p.getPickType());
-        vo.setPickTypeText("领料");
+        vo.setPickTypeText(pickTypeText(p.getPickType()));
         vo.setStatus(p.getStatus());
         vo.setStatusText(statusText(p.getStatus()));
+        vo.setApplicantId(p.getApplicantId());
+        vo.setApplicantName(p.getApplicantName());
         vo.setRemark(p.getRemark());
         vo.setCreateTime(p.getCreateTime());
         return vo;
+    }
+
+    private String pickTypeText(String pickType) {
+        if (PickListService.TYPE_PICK.equals(pickType)) return "领料";
+        if (PickListService.TYPE_SUPPLY.equals(pickType)) return "补料";
+        if (PickListService.TYPE_RETURN.equals(pickType)) return "退料";
+        return pickType;
     }
 }

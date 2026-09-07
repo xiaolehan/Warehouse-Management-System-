@@ -12,7 +12,6 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizBom;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPickList;
-import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProduction;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.mapper.BaseGoodsMapper;
@@ -20,7 +19,6 @@ import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizProductionMapper;
 import org.example.back.mapper.BizProductionQcMapper;
-import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.KitShortageVO;
@@ -43,7 +41,7 @@ import java.util.stream.Collectors;
 /**
  * 生产任务单 + 齐套预警（D42/D43）。
  * 建单选成品×数量 → 展开 BOM 算需求 vs 库存 → ok/partial/block；
- * 开工前重查，严重缺料阻断；开工自动按 BOM×数量生成领料单并扣库存（避免漏领）。
+ * 开工前校验领料单已全额出库，通过则进入生产中。
  */
 @Service
 public class ProductionOrderService {
@@ -71,9 +69,6 @@ public class ProductionOrderService {
 
     @Autowired
     private BizPickListMapper pickListMapper;
-
-    @Autowired
-    private BizPickListDetailMapper pickListDetailMapper;
 
     @Autowired
     private AuthService authService;
@@ -457,14 +452,6 @@ public class ProductionOrderService {
         return picks.stream().allMatch(p ->
                 PickListService.STATUS_ISSUED == p.getStatus()
                         || PickListService.STATUS_DONE == p.getStatus());
-    }
-
-    private void reduceStock(BaseGoods goods, int qty, String msg) {
-        if (goods.getStock() == null || goods.getStock() < qty) {
-            throw BusinessException.validateFail(msg);
-        }
-        goods.setStock(goods.getStock() - qty);
-        baseGoodsMapper.updateById(goods);
     }
 
     private void increaseStock(BaseGoods goods, int qty, String msg) {

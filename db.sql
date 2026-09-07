@@ -1451,3 +1451,12 @@ ALTER TABLE `biz_purchase_request_detail`
 ALTER TABLE `biz_pick_list`
     ADD COLUMN `production_order_id` BIGINT DEFAULT NULL COMMENT '来源生产任务单id(生产端申请领料时写入)' AFTER `source_sales_id`,
     ADD KEY `idx_pick_production_order` (`production_order_id`);
+
+-- ============================================================
+-- 9.x 生产领料幂等：PICK 类型 per 生产任务单唯一（防止重复申请重复扣库存）
+-- 生成列 pick_prod_key 仅在 pick_type='PICK' 时取 production_order_id，其余为 NULL
+-- MySQL 唯一索引允许多个 NULL，因此 RETURN/SUPPLY 不受影响，可多次创建
+-- ============================================================
+ALTER TABLE biz_pick_list
+    ADD COLUMN pick_prod_key BIGINT AS (CASE WHEN pick_type='PICK' THEN production_order_id END) STORED,
+    ADD UNIQUE KEY uk_pick_prod_key (pick_prod_key);

@@ -224,9 +224,17 @@ public class PickListService {
         if (rows != 1) {
             throw BusinessException.validateFail("领料单已被处理，禁止重复驳回");
         }
-        // 驳回反馈销售（REQUIRES_NEW 独立提交）
-        messageService.sendPickListFailureToSalesAdmins(
-                entity.getPickNo(), "仓储驳回领料：" + dto.getReason(), id);
+        // 驳回终态：撤销未读的"待出库"通知（避免悬挂）
+        messageService.revokeUnreadByBiz("pick_list", id);
+        // 驳回反馈：按来源分流（REQUIRES_NEW 独立提交）
+        String reason = "仓储驳回领料：" + dto.getReason();
+        if (entity.getProductionOrderId() != null) {
+            messageService.sendPickIssueFailedToProductionAdmins(
+                    entity.getPickNo(), reason, id);
+        } else {
+            messageService.sendPickListFailureToSalesAdmins(
+                    entity.getPickNo(), reason, id);
+        }
     }
 
     // ============================== 撤销申请 ==============================

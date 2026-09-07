@@ -32,6 +32,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -45,7 +46,6 @@ public class PurchaseRequestService {
     public static final int STATUS_RECEIVED = 3;    // 已入库
     public static final int STATUS_REJECTED = 4;    // 已驳回
     public static final int STATUS_AWAITING_CONFIRM = 5;  // 待入库确认
-    public static final int STATUS_DRAFT = 6;    // 草稿(生产补料待仓储转正)
 
     public static final String SOURCE_PRODUCTION = "production";
     public static final String SOURCE_WAREHOUSE = "warehouse";
@@ -146,7 +146,9 @@ public class PurchaseRequestService {
         // 幂等：同一生产任务单已有进行中/已入库的补料单则拒绝（仅 rejected 可重新补料）
         List<BizPurchaseRequest> existing = listNonFinalByProductionOrder(dto.getProductionOrderId());
         if (!existing.isEmpty()) {
-            throw BusinessException.validateFail("该生产任务单已补料（单号 " + existing.get(0).getRequestNo() + "），请勿重复");
+            throw BusinessException.validateFail(
+                    String.format(Locale.ROOT, "该生产任务单已补料（单号 %s），请勿重复",
+                            existing.get(0).getRequestNo()));
         }
 
         List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(dto.getProductionOrderId());
@@ -195,25 +197,8 @@ public class PurchaseRequestService {
         return request.getId();
     }
 
-    /**
-     * 生产端查看某生产任务单的补料草稿（供 UI 判断是否已生成/撤销）。
-     */
-    public PurchaseRequestVO getDraftByProductionOrder(Long productionOrderId) {
-        requireProductionDraftAccess();
-        List<BizPurchaseRequest> drafts = listDraftByProductionOrder(productionOrderId);
-        return drafts.isEmpty() ? null : toVO(drafts.get(0));
-    }
-
     private static int ceilDeficit(java.math.BigDecimal deficit) {
         return deficit.setScale(0, java.math.RoundingMode.UP).intValue();
-    }
-
-    private List<BizPurchaseRequest> listDraftByProductionOrder(Long productionOrderId) {
-        LambdaQueryWrapper<BizPurchaseRequest> w = new LambdaQueryWrapper<>();
-        w.eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
-                .eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
-                .eq(BizPurchaseRequest::getStatus, STATUS_DRAFT);
-        return bizPurchaseRequestMapper.selectList(w);
     }
 
     private List<BizPurchaseRequest> listNonFinalByProductionOrder(Long productionOrderId) {
@@ -572,7 +557,6 @@ public class PurchaseRequestService {
             return null;
         }
         return switch (status) {
-            case STATUS_DRAFT -> "草稿";
             case STATUS_PENDING -> "待采购";
             case STATUS_PURCHASING -> "采购中";
             case STATUS_RECEIVED -> "已入库";
