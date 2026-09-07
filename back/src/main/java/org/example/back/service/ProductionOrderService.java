@@ -25,6 +25,7 @@ import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionOrderVO;
+import org.example.back.vo.ProductionPickItemVO;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -409,6 +410,34 @@ public class ProductionOrderService {
         return kit.lines.stream()
                 .filter(l -> l.getDeficit() != null && l.getDeficit().compareTo(BigDecimal.ZERO) > 0)
                 .toList();
+    }
+
+    /**
+     * 生产申请领料：返回该生产单 BOM 展开后全部可领物料(需求数量锁定)，
+     * goodsId 为空或库存不足的行抛错。数量由后端按 BOM×生产数量计算并向上取整。
+     */
+    public List<ProductionPickItemVO> computePickItems(Long productionOrderId) {
+        BizProductionOrder order = requireOrder(productionOrderId);
+        KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
+        List<ProductionPickItemVO> items = new ArrayList<>();
+        for (KitShortageVO line : kit.lines) {
+            if (line.getGoodsId() == null) {
+                throw BusinessException.validateFail("物料[" + line.getGoodsName() + "]未在仓库建档，无法申请领料");
+            }
+            int requiredInt = line.getRequired().setScale(0, RoundingMode.UP).intValue();
+            if (line.getStock() == null || line.getStock() < requiredInt) {
+                throw BusinessException.validateFail("物料[" + line.getGoodsName() + "]库存不足（需" + requiredInt + "，现" + line.getStock() + "），请补料后再领");
+            }
+            ProductionPickItemVO item = new ProductionPickItemVO();
+            item.setGoodsId(line.getGoodsId());
+            item.setGoodsName(line.getGoodsName());
+            item.setQuantity(requiredInt);
+            items.add(item);
+        }
+        if (items.isEmpty()) {
+            throw BusinessException.validateFail("该生产单无可领物料（BOM 为空或全部为参考行）");
+        }
+        return items;
     }
 
     // ============================== 私有：校验与工具 ==============================

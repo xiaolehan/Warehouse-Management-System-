@@ -429,6 +429,24 @@ public class MessageService {
     }
 
     /**
+     * 生产端提交领料申请 → 通知仓储管理员确认出库。
+     */
+    public void sendPickPendingToWarehouseAdmins(String pickNo, String orderNo, Long pickId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认生产领料出库",
+                String.format(Locale.ROOT,
+                        "领料单 %s（生产任务单 %s）已由生产端提交，请确认出库。",
+                        pickNo, orderNo),
+                "pick_list",
+                pickId);
+    }
+
+    /**
      * 销售价偏离标准售价超阈值时通知超级管理员审批（绑 biz_type=sales，对齐 D21 范式）。
      * 超管 dept_id 为空，不能走部门广播，按 role=salesadmin 单点投递。
      */
