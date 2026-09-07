@@ -8,7 +8,6 @@ import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.PickListQueryDTO;
 import org.example.back.dto.PickListRejectDTO;
-import org.example.back.dto.PickListSaveDTO;
 import org.example.back.service.PickListService;
 import org.example.back.vo.PickListVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,14 +28,6 @@ public class PickListController {
     @GetMapping("/{id}")
     public Result<PickListVO> getById(@PathVariable Long id) {
         return Result.success(pickListService.getById(id));
-    }
-
-    @PostMapping
-    @RequireAdmin("仅仓储管理员可申请领料")
-    @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交领料单")
-    public Result<Void> create(@Valid @RequestBody PickListSaveDTO dto) {
-        pickListService.create(dto);
-        return Result.success();
     }
 
     @PutMapping("/{id}/issue")

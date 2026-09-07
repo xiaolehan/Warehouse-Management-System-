@@ -4,9 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
+import org.example.back.dto.ProductionReturnCreateDTO;
+import org.example.back.dto.ProductionReturnItemDTO;
+import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
@@ -28,6 +32,7 @@ public class ProductionPickService {
     @Autowired private BizPickListMapper pickListMapper;
     @Autowired private BizPickListDetailMapper pickListDetailMapper;
     @Autowired private BizProductionOrderMapper productionOrderMapper;
+    @Autowired private BaseGoodsMapper baseGoodsMapper;
     @Autowired private AuthService authService;
     @Autowired private AuthzService authzService;
     @Autowired private MessageService messageService;
@@ -80,6 +85,59 @@ public class ProductionPickService {
 
         messageService.sendPickPendingToWarehouseAdmins(pick.getPickNo(), order.getOrderNo(), pick.getId());
         return toVO(pick);
+    }
+
+    /**
+     * 生产端退料：按实际退回物料明细生成 RETURN 类型领料单，交仓储确认回流入库。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void createReturn(Long orderId, ProductionReturnCreateDTO dto) {
+        requireProductionMember();
+        BizProductionOrder order = productionOrderMapper.selectById(orderId);
+        if (order == null) {
+            throw BusinessException.notFound("生产任务单不存在");
+        }
+        if (order.getStatus() != BizProductionOrder.STATUS_IN_PROGRESS) {
+            throw BusinessException.validateFail("仅生产中状态可退料");
+        }
+        if (dto == null || dto.getItems() == null || dto.getItems().isEmpty()) {
+            throw BusinessException.validateFail("请选择退料明细");
+        }
+
+        LoginResponse.UserInfoVO user = authService.getUserInfo();
+        BizPickList pick = new BizPickList();
+        pick.setPickNo(CodeGenerator.pickListNo());
+        pick.setPickType(PickListService.TYPE_RETURN);
+        pick.setStatus(PickListService.STATUS_PENDING);
+        pick.setProductionOrderId(orderId);
+        pick.setApplicantId(user.getId());
+        pick.setApplicantName(user.getRealName());
+        String remark = "生产任务单 " + order.getOrderNo() + " 退料";
+        if (dto.getRemark() != null && !dto.getRemark().isEmpty()) {
+            remark += "：" + dto.getRemark();
+        }
+        pick.setRemark(remark);
+        pickListMapper.insert(pick);
+
+        int sortNo = 0;
+        for (ProductionReturnItemDTO item : dto.getItems()) {
+            if (item.getQuantity() == null || item.getQuantity() <= 0) {
+                continue;
+            }
+            BaseGoods goods = baseGoodsMapper.selectById(item.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("物料不存在: id=" + item.getGoodsId());
+            }
+            BizPickListDetail det = new BizPickListDetail();
+            det.setPickListId(pick.getId());
+            det.setGoodsId(goods.getId());
+            det.setGoodsName(goods.getGoodsName());
+            det.setQuantity(item.getQuantity());
+            det.setSortNo(sortNo++);
+            pickListDetailMapper.insert(det);
+        }
+
+        messageService.sendPickReturnPendingToWarehouseAdmins(pick.getPickNo(), order.getOrderNo(), pick.getId());
     }
 
     public List<PickListVO> listByOrder(Long orderId) {

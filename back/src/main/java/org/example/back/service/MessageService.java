@@ -465,6 +465,24 @@ public class MessageService {
     }
 
     /**
+     * 生产端提交退料申请 → 通知仓储管理员确认回流入库。
+     */
+    public void sendPickReturnPendingToWarehouseAdmins(String pickNo, String orderNo, Long pickId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认生产退料入库",
+                String.format(Locale.ROOT,
+                        "退料单 %s（生产任务单 %s）已由生产端提交，请确认入库。",
+                        pickNo, orderNo),
+                "pick_list",
+                pickId);
+    }
+
+    /**
      * 生产端提交领料申请 → 通知仓储管理员确认出库。
      */
     public void sendPickPendingToWarehouseAdmins(String pickNo, String orderNo, Long pickId) {

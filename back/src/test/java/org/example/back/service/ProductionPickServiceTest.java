@@ -2,9 +2,13 @@ package org.example.back.service;
 
 import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
+import org.example.back.dto.ProductionReturnCreateDTO;
+import org.example.back.dto.ProductionReturnItemDTO;
+import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
@@ -40,11 +44,16 @@ class ProductionPickServiceTest {
                 new org.apache.ibatis.builder.MapperBuilderAssistant(
                         new org.apache.ibatis.session.Configuration(), "test"),
                 BizPickListDetail.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BaseGoods.class);
     }
 
     @Mock private BizPickListMapper pickListMapper;
     @Mock private BizPickListDetailMapper pickListDetailMapper;
     @Mock private BizProductionOrderMapper productionOrderMapper;
+    @Mock private BaseGoodsMapper baseGoodsMapper;
     @Mock private AuthService authService;
     @Mock private AuthzService authzService;
     @Mock private MessageService messageService;
@@ -147,5 +156,89 @@ class ProductionPickServiceTest {
         assertEquals(50L, result.get(0).getGoodsId());
         // verify authz gate was invoked (editable endpoint 必须有生产部权限)
         verify(authzService).requireAnyDeptMemberOrSuperAdmin(anyString(), anyString());
+    }
+
+    // ========================== createReturn 测试 ==========================
+
+    @Test
+    void createReturn_happyPath_generatesReturnPickWithDetails() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("SC-0001");
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(goods);
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(3);
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setRemark("多领退回");
+        dto.setItems(List.of(item));
+
+        service.createReturn(7L, dto);
+
+        ArgumentCaptor<BizPickList> cap = ArgumentCaptor.forClass(BizPickList.class);
+        verify(pickListMapper).insert(cap.capture());
+        BizPickList pick = cap.getValue();
+        assertEquals("RETURN", pick.getPickType());
+        assertEquals(7L, pick.getProductionOrderId());
+        assertEquals(1, pick.getStatus()); // PENDING
+        assertEquals(user.getId(), pick.getApplicantId());
+        assertTrue(pick.getRemark().contains("退料"));
+        assertTrue(pick.getRemark().contains("多领退回"));
+
+        ArgumentCaptor<BizPickListDetail> dcap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(dcap.capture());
+        assertEquals(50L, dcap.getValue().getGoodsId());
+        assertEquals("螺丝", dcap.getValue().getGoodsName());
+        assertEquals(3, dcap.getValue().getQuantity());
+
+        verify(messageService).sendPickReturnPendingToWarehouseAdmins(anyString(), anyString(), any());
+    }
+
+    @Test
+    void createReturn_rejectsWhenNotInProgress() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of(new ProductionReturnItemDTO()));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createReturn(7L, dto));
+        assertTrue(ex.getMessage().contains("仅生产中状态可退料"));
+    }
+
+    @Test
+    void createReturn_rejectsWhenItemsEmpty() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createReturn(7L, dto));
+        assertTrue(ex.getMessage().contains("请选择退料明细"));
+    }
+
+    @Test
+    void createReturn_rejectsWhenOrderNotFound() {
+        when(productionOrderMapper.selectById(999L)).thenReturn(null);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createReturn(999L, null));
+        assertTrue(ex.getMessage().contains("生产任务单不存在"));
     }
 }

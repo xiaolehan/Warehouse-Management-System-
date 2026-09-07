@@ -5,12 +5,9 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
-import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
-import org.example.back.dto.PickListDetailDTO;
 import org.example.back.dto.PickListQueryDTO;
 import org.example.back.dto.PickListRejectDTO;
-import org.example.back.dto.PickListSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
@@ -116,40 +113,6 @@ public class PickListService {
         BizPickList entity = requireEntity(id);
         ensureViewAccess(entity);
         return toVO(entity);
-    }
-
-    // ============================== 申请建单 ==============================
-
-    @Transactional(rollbackFor = Exception.class)
-    public void create(PickListSaveDTO dto) {
-        requireApplyAccess();
-        validatePickType(dto.getPickType());
-
-        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-
-        BizPickList entity = new BizPickList();
-        entity.setPickNo(CodeGenerator.pickListNo());
-        entity.setPickType(dto.getPickType());
-        entity.setSourceSalesId(dto.getSourceSalesId());
-        entity.setStatus(STATUS_PENDING);
-        entity.setApplicantId(loginUser.getId());
-        entity.setApplicantName(loginUser.getRealName());
-        entity.setRemark(dto.getRemark());
-        bizPickListMapper.insert(entity);
-
-        int sortNo = 0;
-        for (PickListDetailDTO detail : dto.getDetails()) {
-            BaseGoods goods = requireGoods(detail.getGoodsId());
-            ensureGoodsEnabled(goods);
-            BizPickListDetail detailEntity = new BizPickListDetail();
-            detailEntity.setPickListId(entity.getId());
-            detailEntity.setGoodsId(goods.getId());
-            detailEntity.setGoodsName(goods.getGoodsName());
-            detailEntity.setQuantity(detail.getQuantity());
-            detailEntity.setSortNo(detail.getSortNo() == null ? sortNo : detail.getSortNo());
-            bizPickListDetailMapper.insert(detailEntity);
-            sortNo++;
-        }
     }
 
     // ============================== 发料 ==============================
@@ -295,11 +258,6 @@ public class PickListService {
                 "仅仓储/生产部门可查看领料", AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PRODUCTION);
     }
 
-    private void requireApplyAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可申请领料");
-    }
-
     private void requireWarehouseIssueAccess() {
         authzService.requireDeptAdminOrSuperAdmin(
                 AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可发料/驳回");
@@ -325,26 +283,6 @@ public class PickListService {
             throw BusinessException.notFound("领料单不存在");
         }
         return entity;
-    }
-
-    private BaseGoods requireGoods(Long goodsId) {
-        BaseGoods goods = baseGoodsMapper.selectById(goodsId);
-        if (goods == null) {
-            throw BusinessException.notFound("商品不存在");
-        }
-        return goods;
-    }
-
-    private void ensureGoodsEnabled(BaseGoods goods) {
-        if (goods.getStatus() == null || goods.getStatus() != 1) {
-            throw BusinessException.validateFail("商品[" + goods.getGoodsName() + "]已停用");
-        }
-    }
-
-    private void validatePickType(String pickType) {
-        if (!TYPE_PICK.equals(pickType) && !TYPE_SUPPLY.equals(pickType) && !TYPE_RETURN.equals(pickType)) {
-            throw BusinessException.validateFail("领料类型非法，仅支持 PICK/SUPPLY/RETURN");
-        }
     }
 
     private List<BizPickListDetail> listDetails(Long pickListId) {
