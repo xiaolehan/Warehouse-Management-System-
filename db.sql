@@ -1446,3 +1446,8 @@ ALTER TABLE `biz_purchase_request`
 ALTER TABLE `biz_purchase_request_detail`
     MODIFY COLUMN `goods_id` BIGINT DEFAULT NULL COMMENT '物料id(草稿可空, 转正时仓储补齐)',
     ADD COLUMN `bom_detail_id` BIGINT DEFAULT NULL COMMENT '对应BOM明细id(确认入库时回挂goods_id)' AFTER `goods_id`;
+
+-- 生产领料: 领料单关联生产任务单(用于开工校验"该生产单领料已全额出库")
+ALTER TABLE `biz_pick_list`
+    ADD COLUMN `production_order_id` BIGINT DEFAULT NULL COMMENT '来源生产任务单id(生产端申请领料时写入)' AFTER `source_sales_id`,
+    ADD KEY `idx_pick_production_order` (`production_order_id`);
