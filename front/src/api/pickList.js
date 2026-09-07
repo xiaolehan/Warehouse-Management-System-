@@ -11,3 +11,6 @@ export const deletePickListAPI = (id) => request.delete(`/business/pick-lists/${
 // 生产单领料
 export const createProductionPickAPI = (orderId) => request.post(`/business/production-orders/${orderId}/pick`)
 export const getProductionPickListAPI = (orderId) => request.get(`/business/production-orders/${orderId}/pick`)
+
+// 生产单退料
+export const createProductionReturnAPI = (orderId, data) => request.post(`/business/production-orders/${orderId}/return`, data)

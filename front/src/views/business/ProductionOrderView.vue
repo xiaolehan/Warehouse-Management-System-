@@ -169,7 +169,7 @@
           </el-table>
         </template>
 
-        <div style="display:flex; gap:12px; margin:12px 0;">
+        <div style="display:flex; gap:12px; margin:12px 0; flex-wrap: wrap;">
           <el-button
             v-if="detail.status === 1 && !pickListStatus"
             type="primary"
@@ -177,7 +177,52 @@
             @click="doApplyPick"
           >申请领料</el-button>
           <el-tag v-if="pickListStatus != null" :type="pickListTagType" size="medium">领料{{ pickListTagText }}</el-tag>
+          <el-button
+            v-if="detail.status === 2"
+            type="warning"
+            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            @click="doOpenReturn"
+          >生产退料</el-button>
         </div>
+      </template>
+    </el-dialog>
+
+    <!-- 生产退料 -->
+    <el-dialog v-model="returnVisible" title="生产退料" width="720px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="备注">
+          <el-input v-model="returnRemark" type="textarea" :rows="2" placeholder="备注（可选）" />
+        </el-form-item>
+        <el-form-item label="退料明细" required>
+          <el-table :data="returnItems" border size="small" style="width: 100%">
+            <el-table-column label="序号" width="60" type="index" />
+            <el-table-column label="物料" min-width="240">
+              <template #default="{ row }">
+                <el-select v-model="row.goodsId" placeholder="选择物料" filterable style="width: 100%">
+                  <el-option
+                    v-for="opt in returnMaterialOptions" :key="opt.id"
+                    :label="`${opt.name}（${opt.unit || ''}）`" :value="opt.id"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="数量" width="140">
+              <template #default="{ row }">
+                <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 130px" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80" align="center">
+              <template #default="{ $index }">
+                <el-button link type="danger" @click="removeReturnItem($index)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-button type="primary" link style="margin-top: 8px" @click="addReturnItem">+ 添加行</el-button>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="returnVisible = false">取消</el-button>
+        <el-button type="primary" :loading="returnSubmitting" @click="doSubmitReturn">提交退料</el-button>
       </template>
     </el-dialog>
 
@@ -232,7 +277,7 @@ import {
 } from '@/api/business'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
-import { createProductionPickAPI, getProductionPickListAPI } from '@/api/pickList'
+import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI } from '@/api/pickList'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -398,6 +443,65 @@ const doApplyPick = async () => {
     ElMessage.error(error.message || '申请领料失败')
   } finally {
     pickSubmitting.value = false
+  }
+}
+
+// 生产退料
+const returnVisible = ref(false)
+const returnRow = ref({})
+const returnRemark = ref('')
+const returnItems = ref([])
+const returnMaterialOptions = ref([])
+const returnSubmitting = ref(false)
+
+function addReturnItem() {
+  returnItems.value.push({ goodsId: null, quantity: 1 })
+}
+function removeReturnItem(idx) {
+  returnItems.value.splice(idx, 1)
+}
+
+async function doOpenReturn() {
+  if (!returnMaterialOptions.value.length) {
+    try {
+      const res = await getGoodsMaterialOptionsAPI()
+      returnMaterialOptions.value = res.data || []
+    } catch (e) {
+      ElMessage.error(e?.message || '加载物料选项失败')
+      return
+    }
+  }
+  returnRow.value = detail.value || {}
+  returnRemark.value = ''
+  returnItems.value = [{ goodsId: null, quantity: 1 }]
+  returnVisible.value = true
+}
+
+async function doSubmitReturn() {
+  const items = returnItems.value.filter((i) => i.goodsId && i.quantity > 0)
+  if (!items.length) {
+    ElMessage.warning('请至少填写一条退料明细')
+    return
+  }
+  const invalid = returnItems.value.find((i) => (i.goodsId && !i.quantity) || (!i.goodsId && i.quantity > 0))
+  if (invalid) {
+    ElMessage.warning('存在未补全的明细行，请完善物料与数量')
+    return
+  }
+  returnSubmitting.value = true
+  try {
+    const res = await createProductionReturnAPI(returnRow.value.id, {
+      remark: returnRemark.value || '',
+      items
+    })
+    if (res.code !== 200) throw new Error(res.msg || '退料提交失败')
+    ElMessage.success('退料已提交，待仓储确认入库')
+    returnVisible.value = false
+    loadList()
+  } catch (e) {
+    ElMessage.error(e.message || '退料提交失败')
+  } finally {
+    returnSubmitting.value = false
   }
 }
 

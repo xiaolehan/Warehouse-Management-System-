@@ -31,7 +31,6 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">查询</el-button>
           <el-button @click="resetSearch">重置</el-button>
-          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleAdd">新增领料</el-button>
         </el-form-item>
       </el-form>
 
@@ -76,52 +75,6 @@
         :page-sizes="[10, 20, 50]" @size-change="handleSizeChange" @current-change="handleCurrentChange" />
     </el-card>
 
-    <!-- 新增对话框 -->
-    <el-dialog v-model="addVisible" title="新增领料单" width="720px" :close-on-click-modal="false">
-      <el-form :model="addForm" label-width="90px">
-        <el-form-item label="类型" required>
-          <el-select v-model="addForm.pickType" placeholder="选择类型" style="width: 200px">
-            <el-option label="领料" value="PICK" />
-            <el-option label="补料" value="SUPPLY" />
-            <el-option label="退料" value="RETURN" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="关联销售单">
-          <el-input v-model="addForm.sourceSalesId" placeholder="可选，销售单ID" style="width: 200px" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="addForm.remark" placeholder="备注" />
-        </el-form-item>
-        <el-form-item label="明细" required>
-          <el-table :data="addForm.details" border size="small">
-            <el-table-column label="序号" width="60" type="index" />
-            <el-table-column label="商品" min-width="220">
-              <template #default="{ row }">
-                <el-select v-model="row.goodsId" placeholder="选择商品" filterable>
-                  <el-option v-for="g in goodsOptions" :key="g.id" :label="g.name" :value="g.id" />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="数量" width="120">
-              <template #default="{ row }">
-                <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 110px" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{ $index }">
-                <el-button link type="danger" @click="removeDetail($index)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-button class="add-detail-btn" type="primary" link @click="addDetail">+ 添加明细</el-button>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="addVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitAdd">提交</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 详情对话框 -->
     <el-dialog v-model="viewVisible" title="领料单详情" width="640px">
       <el-descriptions :column="2" border v-if="viewData">
@@ -164,10 +117,9 @@ import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import {
-  getPickListPageAPI, getPickListDetailAPI, createPickListAPI,
+  getPickListPageAPI, getPickListDetailAPI,
   issuePickListAPI, confirmPickListAPI, rejectPickListAPI, deletePickListAPI
 } from '@/api/pickList'
-import { getGoodsOptionsAPI } from '@/api/business'
 
 const userStore = useUserStore()
 
@@ -179,10 +131,7 @@ const pageSize = ref(10)
 
 const searchForm = reactive({ pickNo: '', pickType: '', status: '', goodsName: '', dateRange: [] })
 
-const addVisible = ref(false)
 const submitting = ref(false)
-const addForm = reactive({ pickType: 'PICK', sourceSalesId: '', remark: '', details: [] })
-const goodsOptions = ref([])
 
 const viewVisible = ref(false)
 const viewData = ref(null)
@@ -230,46 +179,6 @@ const resetSearch = () => {
 }
 const handleSizeChange = (v) => { pageSize.value = v; currentPage.value = 1; loadList() }
 const handleCurrentChange = (v) => { currentPage.value = v; loadList() }
-
-const loadGoodsOptions = async () => {
-  try {
-    const res = await getGoodsOptionsAPI()
-    if (res.code === 200) goodsOptions.value = res.data || []
-  } catch (e) { /* ignore */ }
-}
-
-const addDetail = () => { addForm.details.push({ goodsId: null, quantity: 1 }) }
-const removeDetail = (idx) => { addForm.details.splice(idx, 1) }
-
-const handleAdd = () => {
-  Object.assign(addForm, { pickType: 'PICK', sourceSalesId: '', remark: '', details: [{ goodsId: null, quantity: 1 }] })
-  if (!goodsOptions.value.length) loadGoodsOptions()
-  addVisible.value = true
-}
-
-const submitAdd = async () => {
-  if (!addForm.pickType) return ElMessage.warning('请选择类型')
-  if (!addForm.details.length) return ElMessage.warning('至少添加一条明细')
-  if (addForm.details.some(d => !d.goodsId || !d.quantity)) return ElMessage.warning('请补全明细')
-  const payload = {
-    pickType: addForm.pickType,
-    sourceSalesId: addForm.sourceSalesId ? Number(addForm.sourceSalesId) : undefined,
-    remark: addForm.remark || undefined,
-    details: addForm.details.map(d => ({ goodsId: d.goodsId, quantity: d.quantity }))
-  }
-  submitting.value = true
-  try {
-    const res = await createPickListAPI(payload)
-    if (res.code !== 200) throw new Error(res.msg || '创建失败')
-    ElMessage.success('领料单已提交，待发料')
-    addVisible.value = false
-    loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '创建失败')
-  } finally {
-    submitting.value = false
-  }
-}
 
 const handleView = async (row) => {
   try {
@@ -342,5 +251,4 @@ onMounted(loadList)
 .search-form { margin-bottom: 8px; }
 .detail-line { line-height: 1.6; }
 .pager { margin-top: 12px; justify-content: flex-end; }
-.add-detail-btn { margin-top: 8px; }
 </style>
