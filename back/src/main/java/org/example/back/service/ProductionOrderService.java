@@ -182,7 +182,7 @@ public class ProductionOrderService {
     }
 
     /**
-     * 开工：重查齐套，严重缺料阻断；否则自动按 BOM×数量生成领料单并扣库存，进入生产中。
+     * 开工：校验该生产单领料单已全额出库后，进入生产中（D59）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void start(Long id) {
@@ -190,11 +190,10 @@ public class ProductionOrderService {
         BizProductionOrder order = requireOrder(id);
         ensureStatus(order, BizProductionOrder.STATUS_PENDING, "仅待生产状态可开工");
 
-        KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
-        if (BizProductionOrder.KIT_BLOCK.equals(kit.kitStatus)) {
-            throw BusinessException.validateFail("存在严重缺料（库存为零/缺口物料），无法开工，请采购补齐后重试");
+        // D59：开工前置 = 该生产单已申请领料且领料单已全额出库
+        if (!isPickAllIssued(id)) {
+            throw BusinessException.validateFail("该生产任务单领料单尚未全额出库，请先申请领料并由仓储确认出库后开工");
         }
-        generatePickListAndIssue(order, kit);
 
         order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
         orderMapper.updateById(order);
@@ -357,50 +356,6 @@ public class ProductionOrderService {
         return result;
     }
 
-    /** 按成品 BOM 生成领料单并直接发料扣库存（D43 自动防漏领） */
-    private void generatePickListAndIssue(BizProductionOrder order, KuaiTaoResult kit) {
-        LoginResponse.UserInfoVO user = authService.getUserInfo();
-        // 只对有库存、需求>0 的物料发料（缺料部分留待采购补料后再补领）
-        List<KitShortageVO> issuable = kit.lines.stream()
-                .filter(l -> l.getStock() != null && l.getStock() > 0
-                        && l.getRequired().intValue() > 0)
-                .toList();
-        if (issuable.isEmpty()) {
-            throw BusinessException.validateFail("无可用物料可发料，无法开工");
-        }
-
-        BizPickList pick = new BizPickList();
-        pick.setPickNo(CodeGenerator.pickListNo());
-        pick.setPickType(PickListService.TYPE_PICK);
-        pick.setStatus(PickListService.STATUS_ISSUED);
-        pick.setApplicantId(user.getId());
-        pick.setApplicantName(user.getRealName());
-        pick.setOperatorId(user.getId());
-        pick.setOperatorName(user.getRealName());
-        pick.setOperationTime(LocalDateTime.now());
-        pick.setRemark("生产任务单 " + order.getOrderNo() + " 自动领料");
-        pickListMapper.insert(pick);
-
-        int sortNo = 0;
-        for (KitShortageVO line : issuable) {
-            int requiredInt = line.getRequired().setScale(0, RoundingMode.DOWN).intValue();
-            int issueQty = Math.min(requiredInt, line.getStock());
-            if (issueQty <= 0) {
-                continue;
-            }
-            BaseGoods g = requireGoodsNoStatus(line.getGoodsId());
-            reduceStock(g, issueQty, "生产任务单[" + order.getOrderNo() + "]自动领料");
-
-            BizPickListDetail detail = new BizPickListDetail();
-            detail.setPickListId(pick.getId());
-            detail.setGoodsId(g.getId());
-            detail.setGoodsName(g.getGoodsName());
-            detail.setQuantity(issueQty);
-            detail.setSortNo(sortNo++);
-            pickListDetailMapper.insert(detail);
-        }
-    }
-
     /**
      * 供采购申请草稿：返回该任务单存在缺口(deficit>0)的物料行，含 bomDetailId 供回挂定位。
      */
@@ -486,6 +441,22 @@ public class ProductionOrderService {
             throw BusinessException.validateFail("物料不存在");
         }
         return g;
+    }
+
+    /**
+     * 开工前置校验：该生产单存在领料单且已全额出库/完成。
+     * 用自有 pickListMapper 查询，避免反向依赖 ProductionPickService（防循环依赖）。
+     */
+    private boolean isPickAllIssued(Long productionOrderId) {
+        LambdaQueryWrapper<BizPickList> w = new LambdaQueryWrapper<>();
+        w.eq(BizPickList::getProductionOrderId, productionOrderId);
+        List<BizPickList> picks = pickListMapper.selectList(w);
+        if (picks.isEmpty()) {
+            return false;
+        }
+        return picks.stream().allMatch(p ->
+                PickListService.STATUS_ISSUED == p.getStatus()
+                        || PickListService.STATUS_DONE == p.getStatus());
     }
 
     private void reduceStock(BaseGoods goods, int qty, String msg) {

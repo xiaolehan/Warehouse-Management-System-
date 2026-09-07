@@ -6,6 +6,7 @@ import org.example.back.entity.BizProductionOrder;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.entity.BaseGoods;
 import org.example.back.common.exception.BusinessException;
@@ -21,6 +22,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -31,6 +33,8 @@ class ProductionOrderServiceTest {
     @Mock private BizBomMapper bomMapper;
     @Mock private BizBomDetailMapper bomDetailMapper;
     @Mock private BaseGoodsMapper baseGoodsMapper;
+    @Mock private BizPickListMapper pickListMapper;
+    @Mock private AuthzService authzService;
 
     @InjectMocks private ProductionOrderService service;
 
@@ -77,5 +81,60 @@ class ProductionOrderServiceTest {
         when(orderMapper.selectById(999L)).thenReturn(null);
 
         assertThrows(BusinessException.class, () -> service.computeShortageForOrder(999L));
+    }
+
+    @Test
+    void start_blocksWhenNoPick() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setGoodsId(29L);
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(pickListMapper.selectList(any())).thenReturn(List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.start(7L));
+        assertTrue(ex.getMessage().contains("尚未全额出库"));
+    }
+
+    @Test
+    void start_blocksWhenPickPending() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setGoodsId(29L);
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        org.example.back.entity.BizPickList pending = new org.example.back.entity.BizPickList();
+        pending.setId(1L);
+        pending.setStatus(PickListService.STATUS_PENDING); // 1 待发料
+        when(pickListMapper.selectList(any())).thenReturn(java.util.List.of(pending));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.start(7L));
+        assertTrue(ex.getMessage().contains("尚未全额出库"));
+    }
+
+    @Test
+    void start_setsInProgressWhenAllIssued() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setGoodsId(29L);
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        org.example.back.entity.BizPickList issued = new org.example.back.entity.BizPickList();
+        issued.setId(1L);
+        issued.setStatus(PickListService.STATUS_ISSUED); // 2 已发料
+        when(pickListMapper.selectList(any())).thenReturn(java.util.List.of(issued));
+        when(orderMapper.updateById(any())).thenReturn(1);
+
+        service.start(7L);
+
+        org.mockito.ArgumentCaptor<BizProductionOrder> captor =
+                org.mockito.ArgumentCaptor.forClass(BizProductionOrder.class);
+        org.mockito.Mockito.verify(orderMapper).updateById(captor.capture());
+        assertEquals(BizProductionOrder.STATUS_IN_PROGRESS, captor.getValue().getStatus());
     }
 }
