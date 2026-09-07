@@ -405,6 +405,7 @@ const handleStart = async (row) => {
   // 前置友好校验：领料单是否已全额出库
   try {
     const res = await getProductionPickListAPI(row.id)
+    if (res.code !== 200) return // 接口异常放行，由后端网关兜底
     const s = res.data?.[0]?.status
     if (!s) {
       ElMessage.warning('请先申请领料并由仓储确认出库')
@@ -415,7 +416,7 @@ const handleStart = async (row) => {
       return
     }
   } catch {
-    // 接口异常时放行，让后端网关兜底
+    // 网络异常放行，由后端网关兜底
   }
   try {
     ElMessageBox.confirm('确认开工？开工需该生产任务单的领料单已由仓储确认出库。', '开工确认', { type: 'warning' })
