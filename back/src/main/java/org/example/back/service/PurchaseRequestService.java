@@ -474,13 +474,14 @@ public class PurchaseRequestService {
      * D62：生产补料入库确认后重算齐套，缺口清零即通知生产部管理员可申请领料。
      * 仅 production 来源且生产单存在（未删除/未作废/未报废）时触发；仍缺料则沉默，
      * 靠生产任务单列表实时齐套状态兜底。任何守卫命中都静默返回，不影响入库事务。
+     * selectById 自带 @TableLogic 过滤，软删生产单同样返回 null。
      */
     private void notifyKitCompleteIfReady(BizPurchaseRequest request) {
         if (!SOURCE_PRODUCTION.equals(request.getSourceType()) || request.getProductionOrderId() == null) {
             return;
         }
         BizProductionOrder order = bizProductionOrderMapper.selectById(request.getProductionOrderId());
-        if (order == null || Integer.valueOf(1).equals(order.getIsDeleted())
+        if (order == null
                 || order.getStatus() == null
                 || order.getStatus() == BizProductionOrder.STATUS_VOIDED
                 || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED) {
