@@ -52,13 +52,13 @@
         </el-table-column>
         <el-table-column prop="applicantName" label="申请人" width="100" />
         <el-table-column prop="operatorName" label="采购处理人" width="110" />
-        <el-table-column label="预计到货" width="110">
-          <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+        <el-table-column label="预计到货" width="150">
+          <template #default="{ row }">{{ formatArrivalRange(row.details) }}</template>
         </el-table-column>
         <el-table-column label="申请时间" width="160">
           <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="360" fixed="right">
+        <el-table-column label="操作" width="420" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleView(row)">详情</el-button>
             <!-- 采购：待采购 → 认领 / 驳回 -->
@@ -69,6 +69,9 @@
             <!-- 采购：采购中 → 到货提交 -->
             <el-button link type="success" v-if="row.status === 2"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArrive(row)">到货提交</el-button>
+            <!-- 采购：采购中 → 修改到货计划（D61） -->
+            <el-button link type="primary" v-if="row.status === 2"
+              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleUpdatePlan(row)">修改到货计划</el-button>
             <!-- 采购：待入库确认 → 撤回到货 -->
             <el-button link type="warning" v-if="row.status === 5"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArriveCancel(row)">撤回到货</el-button>
@@ -165,7 +168,6 @@
         <el-descriptions-item label="采购处理人">{{ viewData.operatorName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="申请时间">{{ formatTime(viewData.createTime) }}</el-descriptions-item>
         <el-descriptions-item label="认领时间">{{ formatTime(viewData.operationTime) }}</el-descriptions-item>
-        <el-descriptions-item label="预计到货">{{ formatDate(viewData.expectedArrivalTime) }}</el-descriptions-item>
         <el-descriptions-item label="到货时间">{{ formatTime(viewData.arriveTime) }}</el-descriptions-item>
         <el-descriptions-item label="入库确认人">{{ viewData.confirmerName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="入库时间">{{ formatTime(viewData.confirmTime) }}</el-descriptions-item>
@@ -184,6 +186,12 @@
             </el-table-column>
             <el-table-column label="备注" min-width="100">
               <template #default="{ row }">{{ row.remark || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="预计到货" width="110">
+              <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+            </el-table-column>
+            <el-table-column label="到货备注" min-width="100">
+              <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
             </el-table-column>
             <el-table-column prop="quantity" label="数量" width="90" />
             <el-table-column v-if="showPrice" label="采购单价" width="110">
@@ -207,6 +215,12 @@
             <el-table-column label="备注" min-width="100">
               <template #default="{ row }">{{ row.remark || '—' }}</template>
             </el-table-column>
+            <el-table-column label="预计到货" width="110">
+              <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+            </el-table-column>
+            <el-table-column label="到货备注" min-width="100">
+              <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
+            </el-table-column>
             <el-table-column prop="quantity" label="数量" width="90" />
             <el-table-column v-if="showPrice" label="采购单价" width="110">
               <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
@@ -218,6 +232,12 @@
         <el-table-column label="序号" width="60" type="index" />
         <el-table-column prop="goodsName" label="商品" />
         <el-table-column prop="quantity" label="数量" width="100" />
+        <el-table-column label="预计到货" width="110">
+          <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+        </el-table-column>
+        <el-table-column label="到货备注" min-width="100">
+          <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
+        </el-table-column>
         <el-table-column v-if="showPrice" label="采购单价" width="120">
           <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
         </el-table-column>
@@ -239,6 +259,9 @@
             <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 120px" />
           </template>
         </el-table-column>
+        <el-table-column label="预计到货" width="110">
+          <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+        </el-table-column>
         <el-table-column label="采购单价" width="160">
           <template #default="{ row }">
             <el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" style="width: 140px" />
@@ -251,18 +274,38 @@
       </template>
     </el-dialog>
 
-    <!-- 认领对话框 -->
-    <el-dialog v-model="processVisible" title="认领采购申请单" width="480px" :close-on-click-modal="false">
-      <el-alert title="认领后状态变为采购中；可填写预计到货时间供仓储参考。" type="info" :closable="false" style="margin-bottom: 12px" />
-      <el-form label-width="100px">
-        <el-form-item label="预计到货时间">
-          <el-date-picker v-model="processForm.expectedArrivalTime" type="date" value-format="YYYY-MM-DDTHH:mm:ss"
-            placeholder="选择预计到货日期（可选）" style="width: 100%" />
-        </el-form-item>
-      </el-form>
+    <!-- 认领 / 修改到货计划对话框（D61 行级） -->
+    <el-dialog v-model="processVisible" :title="processForm.mode === 'process' ? '认领采购申请单' : '修改到货计划'" width="760px" :close-on-click-modal="false">
+      <el-alert :title="processForm.mode === 'process'
+        ? '认领后状态变为采购中；请按行填写预计到货时间（必填）与到货备注（不同物料厂家不同，到货时间可不同）。'
+        : '修改后立即生效，各行预计到货时间与到货备注将更新。'"
+        type="info" :closable="false" style="margin-bottom: 12px" />
+      <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px">
+        <span>统一填充：</span>
+        <el-date-picker v-model="applyAllDate" type="date" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="选择日期" style="width: 170px" />
+        <el-button @click="applyDateToAll">应用到全部行</el-button>
+      </div>
+      <el-table :data="processForm.items" border size="small">
+        <el-table-column label="商品" min-width="150">
+          <template #default="{ row }">{{ row.goodsName }}</template>
+        </el-table-column>
+        <el-table-column label="数量" width="70">
+          <template #default="{ row }">{{ row.quantity }}</template>
+        </el-table-column>
+        <el-table-column label="预计到货时间" width="185">
+          <template #default="{ row }">
+            <el-date-picker v-model="row.expectedArrivalTime" type="date" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="必选" style="width: 155px" />
+          </template>
+        </el-table-column>
+        <el-table-column label="到货备注" min-width="150">
+          <template #default="{ row }">
+            <el-input v-model="row.arrivalRemark" placeholder="供应商/发货方式等（选填）" />
+          </template>
+        </el-table-column>
+      </el-table>
       <template #footer>
         <el-button @click="processVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitProcess">确认认领</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitProcess">{{ processForm.mode === 'process' ? '确认认领' : '保存修改' }}</el-button>
       </template>
     </el-dialog>
 
@@ -290,7 +333,7 @@ import { useUserStore } from '@/stores/user'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
   getPurchaseRequestPageAPI, getPurchaseRequestDetailAPI, getShortageGoodsAPI,
-  createPurchaseRequestAPI, processPurchaseRequestAPI, arrivePurchaseRequestAPI,
+  createPurchaseRequestAPI, processPurchaseRequestAPI, updateArrivalPlanAPI, arrivePurchaseRequestAPI,
   confirmReceivePurchaseRequestAPI, arriveCancelPurchaseRequestAPI, arriveRejectPurchaseRequestAPI,
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
@@ -332,7 +375,47 @@ const rejectVisible = ref(false)
 const rejectForm = reactive({ id: null, reason: '' })
 
 const processVisible = ref(false)
-const processForm = reactive({ id: null, expectedArrivalTime: null })
+const processForm = reactive({ id: null, mode: 'process', items: [] })
+const applyAllDate = ref(null)
+
+// D61：行级到货计划——认领与修改共用；mode: process=认领(待采购), update=修改(采购中)
+const openArrivalPlanDialog = async (row, mode) => {
+  try {
+    const res = await getPurchaseRequestDetailAPI(row.id)
+    if (res.code !== 200) throw new Error(res.msg || '查询明细失败')
+    processForm.id = row.id
+    processForm.mode = mode
+    processForm.items = (res.data?.details || []).map(d => ({
+      detailId: d.id,
+      goodsName: d.goodsName,
+      quantity: d.quantity,
+      expectedArrivalTime: d.expectedArrivalTime ? String(d.expectedArrivalTime).slice(0, 19) : null,
+      arrivalRemark: d.arrivalRemark || ''
+    }))
+    applyAllDate.value = null
+    processVisible.value = true
+  } catch (e) {
+    ElMessage.error(e.message || '加载明细失败')
+  }
+}
+const handleProcess = (row) => openArrivalPlanDialog(row, 'process')
+const handleUpdatePlan = (row) => openArrivalPlanDialog(row, 'update')
+
+const applyDateToAll = () => {
+  if (!applyAllDate.value) return ElMessage.warning('请先选择统一填充的日期')
+  processForm.items.forEach(i => { i.expectedArrivalTime = applyAllDate.value })
+}
+
+// D61：列表「预计到货」聚合——各行相同显示单日期，不同显示最早~最晚
+const formatArrivalRange = (details) => {
+  const dates = [...new Set((details || [])
+    .map(d => d.expectedArrivalTime)
+    .filter(Boolean)
+    .map(t => String(t).slice(0, 10)))]
+    .sort()
+  if (!dates.length) return '—'
+  return dates.length === 1 ? dates[0] : `${dates[0]} ~ ${dates[dates.length - 1]}`
+}
 
 const isApplicant = (row) => row.applicantName && row.applicantName === userStore.realName
 
@@ -467,22 +550,30 @@ const handleView = async (row) => {
   }
 }
 
-const handleProcess = (row) => {
-  processForm.id = row.id
-  processForm.expectedArrivalTime = null
-  processVisible.value = true
-}
-
 const submitProcess = async () => {
+  if (processForm.items.some(i => !i.expectedArrivalTime)) return ElMessage.warning('请填写全部行的预计到货时间')
+  const payload = {
+    items: processForm.items.map(i => ({
+      detailId: i.detailId,
+      expectedArrivalTime: i.expectedArrivalTime,
+      arrivalRemark: i.arrivalRemark || undefined
+    }))
+  }
   submitting.value = true
   try {
-    const res = await processPurchaseRequestAPI(processForm.id, { expectedArrivalTime: processForm.expectedArrivalTime })
-    if (res.code !== 200) throw new Error(res.msg || '认领失败')
-    ElMessage.success('已认领，状态变为采购中')
+    if (processForm.mode === 'process') {
+      const res = await processPurchaseRequestAPI(processForm.id, payload)
+      if (res.code !== 200) throw new Error(res.msg || '认领失败')
+      ElMessage.success('已认领，状态变为采购中')
+    } else {
+      const res = await updateArrivalPlanAPI(processForm.id, payload)
+      if (res.code !== 200) throw new Error(res.msg || '修改失败')
+      ElMessage.success('到货计划已更新')
+    }
     processVisible.value = false
     loadList()
   } catch (e) {
-    ElMessage.error(e.message || '认领失败')
+    ElMessage.error(e.message || '提交失败')
   } finally {
     submitting.value = false
   }
@@ -498,7 +589,8 @@ const handleArrive = async (row) => {
       goodsName: d.goodsName,
       requestQuantity: d.quantity,
       quantity: d.quantity,
-      unitPrice: d.unitPrice ? Number(d.unitPrice) : null
+      unitPrice: d.unitPrice ? Number(d.unitPrice) : null,
+      expectedArrivalTime: d.expectedArrivalTime
     }))
     receiveVisible.value = true
   } catch (e) {

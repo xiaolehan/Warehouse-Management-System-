@@ -5,6 +5,7 @@ export const getPurchaseRequestDetailAPI = (id) => request.get(`/business/purcha
 export const getShortageGoodsAPI = () => request.get('/business/purchase-requests/shortage-goods')
 export const createPurchaseRequestAPI = (data) => request.post('/business/purchase-requests', data)
 export const processPurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/process`, data)
+export const updateArrivalPlanAPI = (id, data) => request.put(`/business/purchase-requests/${id}/arrival-plan`, data)
 export const arrivePurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/arrive`, data)
 export const confirmReceivePurchaseRequestAPI = (id) => request.put(`/business/purchase-requests/${id}/confirm-receive`)
 export const arriveCancelPurchaseRequestAPI = (id) => request.put(`/business/purchase-requests/${id}/arrive-cancel`)
