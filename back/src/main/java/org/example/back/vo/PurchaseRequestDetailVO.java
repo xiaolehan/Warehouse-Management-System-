@@ -3,6 +3,7 @@ package org.example.back.vo;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Data
 public class PurchaseRequestDetailVO {
@@ -29,6 +30,12 @@ public class PurchaseRequestDetailVO {
     private Integer isNewMaterial;
 
     private Integer quantity;
+
+    /** 预计到货时间（采购认领时按行填写，采购中可改；D61） */
+    private LocalDateTime expectedArrivalTime;
+
+    /** 到货备注（供应商/发货方式等采购口径，与 remark 物料描述快照独立；D61） */
+    private String arrivalRemark;
 
     private Integer arriveQuantity;
 

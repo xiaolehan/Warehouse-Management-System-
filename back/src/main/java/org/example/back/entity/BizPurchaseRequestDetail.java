@@ -38,6 +38,16 @@ public class BizPurchaseRequestDetail {
     private Integer quantity;
 
     /**
+     * 预计到货时间(采购认领时按行填写,采购中可改;D61)
+     */
+    private LocalDateTime expectedArrivalTime;
+
+    /**
+     * 到货备注(供应商/发货方式等采购口径,与remark物料描述快照独立;D61)
+     */
+    private String arrivalRemark;
+
+    /**
      * 到货数量(采购到货提交时填写，确认入库按此数量加库存)
      */
     private Integer arriveQuantity;

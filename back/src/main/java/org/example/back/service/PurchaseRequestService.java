@@ -611,6 +611,8 @@ public class PurchaseRequestService {
         vo.setRemark(detail.getRemark());
         vo.setIsNewMaterial(detail.getIsNewMaterial());
         vo.setQuantity(detail.getQuantity());
+        vo.setExpectedArrivalTime(detail.getExpectedArrivalTime());
+        vo.setArrivalRemark(detail.getArrivalRemark());
         vo.setArriveQuantity(detail.getArriveQuantity());
         vo.setUnitPrice(detail.getUnitPrice());
         vo.setSortNo(detail.getSortNo());
