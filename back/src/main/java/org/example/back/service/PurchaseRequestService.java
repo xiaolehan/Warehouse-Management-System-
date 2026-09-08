@@ -353,6 +353,25 @@ public class PurchaseRequestService {
                 buildArrivalSummary(details, itemMap), id);
     }
 
+    // ============================== 修改到货计划（采购中可改，D61） ==============================
+
+    @Transactional(rollbackFor = Exception.class)
+    public void updateArrivalPlan(Long id, PurchaseRequestProcessDTO dto) {
+        requirePurchaseAccess();
+        BizPurchaseRequest entity = requireEntity(id);
+        if (entity.getStatus() != STATUS_PURCHASING) {
+            throw BusinessException.validateFail("仅采购中状态可修改到货计划");
+        }
+        List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
+        Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> itemMap = toValidatedItemMap(dto, details);
+        for (BizPurchaseRequestDetail detail : details) {
+            PurchaseRequestProcessDTO.ProcessItemDTO item = itemMap.get(detail.getId());
+            detail.setExpectedArrivalTime(item.getExpectedArrivalTime());
+            detail.setArrivalRemark(trimToNull(item.getArrivalRemark()));
+            bizPurchaseRequestDetailMapper.updateById(detail);
+        }
+    }
+
     // ============================== 采购到货（提交入库申请，不加库存） ==============================
 
     @Transactional(rollbackFor = Exception.class)

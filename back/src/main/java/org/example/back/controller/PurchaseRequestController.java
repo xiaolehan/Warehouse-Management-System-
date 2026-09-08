@@ -75,6 +75,18 @@ public class PurchaseRequestController {
         return Result.success();
     }
 
+    /**
+     * D61 修改到货计划：采购中状态可按行调整预计到货时间与到货备注（厂家延期/换厂家）。
+     */
+    @PutMapping("/{id}/arrival-plan")
+    @RequireAdmin("仅采购管理员可修改到货计划")
+    @AuditLog(module = "采购申请", action = "修改到货计划", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交修改请求")
+    public Result<Void> updateArrivalPlan(@PathVariable Long id, @Valid @RequestBody PurchaseRequestProcessDTO dto) {
+        purchaseRequestService.updateArrivalPlan(id, dto);
+        return Result.success();
+    }
+
     @PutMapping("/{id}/arrive")
     @RequireAdmin("仅采购管理员可提交采购到货")
     @AuditLog(module = "采购申请", action = "到货", targetType = "采购申请单")

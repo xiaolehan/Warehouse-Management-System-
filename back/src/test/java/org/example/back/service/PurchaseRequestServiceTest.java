@@ -526,4 +526,65 @@ class PurchaseRequestServiceTest {
                 eq("PR-1"), eq("采购乙"), eq("production"),
                 Mockito.contains("轴承 2026-09-15"), eq(5L));
     }
+
+    // ---------- D61：修改到货计划（仅采购中） ----------
+    @Test
+    void updateArrivalPlan_updatesDetailRowsInPurchasingStatus() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(2);
+        request.setRequestNo("PR-1");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1));
+
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        dto.setItems(List.of(processItem(101L, LocalDateTime.of(2026, 9, 25, 0, 0), "改发厂家B")));
+
+        service.updateArrivalPlan(5L, dto);
+
+        ArgumentCaptor<BizPurchaseRequestDetail> detCap =
+                ArgumentCaptor.forClass(BizPurchaseRequestDetail.class);
+        verify(bizPurchaseRequestDetailMapper).updateById(detCap.capture());
+        assertEquals(LocalDateTime.of(2026, 9, 25, 0, 0), detCap.getValue().getExpectedArrivalTime());
+        assertEquals("改发厂家B", detCap.getValue().getArrivalRemark());
+        // 修改不触发任何消息与撤销
+        verify(messageService, never()).sendPurchaseRequestClaimedToSourceApplicant(any(), any(), any(), any(), any());
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    @Test
+    void updateArrivalPlan_rejectsWhenNotPurchasing() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(5); // 待入库确认，锁定
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateArrivalPlan(5L, new PurchaseRequestProcessDTO()));
+        assertEquals("仅采购中状态可修改到货计划", ex.getMessage());
+    }
+
+    @Test
+    void updateArrivalPlan_rejectsUnknownDetailId() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(2);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1));
+
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        dto.setItems(List.of(processItem(999L, LocalDateTime.of(2026, 9, 25, 0, 0), null)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.updateArrivalPlan(5L, dto));
+        assertTrue(ex.getMessage().contains("缺少预计到货时间"), "未知 detailId 应视为缺行, 实际: " + ex.getMessage());
+        verify(bizPurchaseRequestDetailMapper, never()).updateById(any(BizPurchaseRequestDetail.class));
+    }
 }
