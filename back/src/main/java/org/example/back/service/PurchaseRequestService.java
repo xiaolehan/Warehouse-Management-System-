@@ -482,7 +482,7 @@ public class PurchaseRequestService {
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
         }
-        messageService.revokeUnreadByBiz("purchase_request", id);
+        messageService.revokeUnreadByBizAndDeptCode("purchase_request", id, AuthzService.DEPT_WAREHOUSE);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -501,7 +501,7 @@ public class PurchaseRequestService {
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
         }
-        messageService.revokeUnreadByBiz("purchase_request", id);
+        messageService.revokeUnreadByBizAndDeptCode("purchase_request", id, AuthzService.DEPT_WAREHOUSE);
     }
 
     // ============================== 驳回 ==============================
@@ -556,7 +556,10 @@ public class PurchaseRequestService {
         }
         Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> itemMap = new java.util.HashMap<>();
         for (PurchaseRequestProcessDTO.ProcessItemDTO item : dto.getItems()) {
-            if (item.getDetailId() == null || item.getExpectedArrivalTime() == null) {
+            if (item.getDetailId() == null) {
+                throw BusinessException.validateFail("明细ID不能为空");
+            }
+            if (item.getExpectedArrivalTime() == null) {
                 throw BusinessException.validateFail("预计到货时间必填");
             }
             itemMap.put(item.getDetailId(), item);

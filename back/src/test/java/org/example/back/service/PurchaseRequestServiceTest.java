@@ -568,6 +568,62 @@ class PurchaseRequestServiceTest {
         assertEquals("仅采购中状态可修改到货计划", ex.getMessage());
     }
 
+    // ---------- D61：到货撤回仅撤销仓储部未读消息，保留认领通知 ----------
+    @Test
+    void arriveCancel_revokesOnlyWarehouseDeptUnread() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(5); // AWAITING_CONFIRM
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+
+        service.arriveCancel(5L);
+
+        verify(messageService).revokeUnreadByBizAndDeptCode(
+                eq("purchase_request"), eq(5L), eq(AuthzService.DEPT_WAREHOUSE));
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    // ---------- D61：入库驳回仅撤销仓储部未读消息，保留认领通知 ----------
+    @Test
+    void arriveReject_revokesOnlyWarehouseDeptUnread() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(5); // AWAITING_CONFIRM
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+
+        service.arriveReject(5L);
+
+        verify(messageService).revokeUnreadByBizAndDeptCode(
+                eq("purchase_request"), eq(5L), eq(AuthzService.DEPT_WAREHOUSE));
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    // ---------- D61：明细ID为空时单独报错 ----------
+    @Test
+    void updateArrivalPlan_rejectsNullDetailId() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(2);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1));
+
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        PurchaseRequestProcessDTO.ProcessItemDTO item = new PurchaseRequestProcessDTO.ProcessItemDTO();
+        item.setDetailId(null);
+        item.setExpectedArrivalTime(LocalDateTime.of(2026, 9, 25, 0, 0));
+        dto.setItems(List.of(item));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.updateArrivalPlan(5L, dto));
+        assertEquals("明细ID不能为空", ex.getMessage());
+        verify(bizPurchaseRequestDetailMapper, never()).updateById(any(BizPurchaseRequestDetail.class));
+    }
+
     @Test
     void updateArrivalPlan_rejectsUnknownDetailId() {
         BizPurchaseRequest request = new BizPurchaseRequest();
