@@ -350,6 +350,28 @@ public class MessageService {
     }
 
     /**
+     * D62：生产单物料齐套（补料入库确认后缺口清零）→ 通知生产部管理员可申请领料。
+     * 绑 biz_type=production_order；作废/报废单由调用方守卫不发，作废时随 D60 预警一并撤回未读。
+     */
+    public void sendKitCompleteToProductionAdmins(String orderNo, String goodsName, Integer quantity, String requestNo, Long orderId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "物料已齐套可领料",
+                String.format(Locale.ROOT,
+                        "生产任务单 %s（成品 %s×%d）所需物料已全部入库齐套（补料单 %s 已入库），请前往生产任务单详情申请领料。",
+                        orderNo == null ? "-" : orderNo,
+                        goodsName == null ? "-" : goodsName,
+                        quantity == null ? 0 : quantity,
+                        requestNo == null ? "-" : requestNo),
+                "production_order",
+                orderId);
+    }
+
+    /**
      * 生产领料出库失败(缺料/驳回) → 通知生产端（绑 biz_type=pick_list，对齐 D21 范式）。
      * REQUIRES_NEW：发料缺料场景下领料事务将回滚，反馈消息需独立提交以免丢失。
      */

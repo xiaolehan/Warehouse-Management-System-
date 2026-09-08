@@ -18,10 +18,12 @@ import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizBomDetail;
+import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
+import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.KitShortageVO;
@@ -81,6 +83,9 @@ public class PurchaseRequestService {
 
     @Autowired
     private BizBomDetailMapper bizBomDetailMapper;
+
+    @Autowired
+    private BizProductionOrderMapper bizProductionOrderMapper;
 
     // ============================== 查询 ==============================
 
@@ -462,6 +467,32 @@ public class PurchaseRequestService {
             throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
         }
         messageService.revokeUnreadByBiz("purchase_request", id);
+        notifyKitCompleteIfReady(entity);
+    }
+
+    /**
+     * D62：生产补料入库确认后重算齐套，缺口清零即通知生产部管理员可申请领料。
+     * 仅 production 来源且生产单存在（未删除/未作废/未报废）时触发；仍缺料则沉默，
+     * 靠生产任务单列表实时齐套状态兜底。任何守卫命中都静默返回，不影响入库事务。
+     */
+    private void notifyKitCompleteIfReady(BizPurchaseRequest request) {
+        if (!SOURCE_PRODUCTION.equals(request.getSourceType()) || request.getProductionOrderId() == null) {
+            return;
+        }
+        BizProductionOrder order = bizProductionOrderMapper.selectById(request.getProductionOrderId());
+        if (order == null || Integer.valueOf(1).equals(order.getIsDeleted())
+                || order.getStatus() == null
+                || order.getStatus() == BizProductionOrder.STATUS_VOIDED
+                || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED) {
+            return;
+        }
+        List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(order.getId());
+        if (!shortage.isEmpty()) {
+            return;
+        }
+        messageService.sendKitCompleteToProductionAdmins(
+                order.getOrderNo(), order.getGoodsName(), order.getQuantity(),
+                request.getRequestNo(), order.getId());
     }
 
     // ============================== 到货退回（撤回/驳回 → 采购中） ==============================

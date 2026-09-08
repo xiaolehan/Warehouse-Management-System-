@@ -11,6 +11,8 @@ import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.KitShortageVO;
+import org.example.back.entity.BizProductionOrder;
+import org.example.back.mapper.BizProductionOrderMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,6 +62,7 @@ class PurchaseRequestServiceTest {
     @Mock private ProductionOrderService productionOrderService;
     @Mock private GoodsService goodsService;
     @Mock private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
+    @Mock private BizProductionOrderMapper bizProductionOrderMapper;
 
     @InjectMocks private PurchaseRequestService service;
 
@@ -642,5 +645,109 @@ class PurchaseRequestServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.updateArrivalPlan(5L, dto));
         assertTrue(ex.getMessage().contains("缺少预计到货时间"), "未知 detailId 应视为缺行, 实际: " + ex.getMessage());
         verify(bizPurchaseRequestDetailMapper, never()).updateById(any(BizPurchaseRequestDetail.class));
+    }
+
+    // ============================== D62：确认入库齐套通知 ==============================
+
+    private BizPurchaseRequest awaitingConfirmRequest(String sourceType) {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(30L);
+        request.setRequestNo("PR-D62-TEST");
+        request.setStatus(PurchaseRequestService.STATUS_AWAITING_CONFIRM);
+        request.setSourceType(sourceType);
+        if (PurchaseRequestService.SOURCE_PRODUCTION.equals(sourceType)) {
+            request.setProductionOrderId(7L);
+        }
+        return request;
+    }
+
+    private BizPurchaseRequestDetail arrivedDetail() {
+        BizPurchaseRequestDetail detail = new BizPurchaseRequestDetail();
+        detail.setId(301L);
+        detail.setRequestId(30L);
+        detail.setGoodsId(51L);
+        detail.setGoodsName("轴承珠");
+        detail.setQuantity(10);
+        detail.setArriveQuantity(10);
+        detail.setUnitPrice(BigDecimal.ONE);
+        return detail;
+    }
+
+    private void stubConfirmReceive(BizPurchaseRequest request, BizPurchaseRequestDetail detail) {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(3L);
+        user.setRealName("仓储管理员");
+        when(authService.getUserInfo()).thenReturn(user);
+        when(bizPurchaseRequestMapper.selectById(30L)).thenReturn(request);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(detail));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+    }
+
+    @Test
+    void confirmReceive_notifiesProductionAdminsWhenKitComplete() {
+        BizPurchaseRequest request = awaitingConfirmRequest(PurchaseRequestService.SOURCE_PRODUCTION);
+        stubConfirmReceive(request, arrivedDetail());
+
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO-D62");
+        order.setGoodsName("PTO153");
+        order.setQuantity(5);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of());
+
+        service.confirmReceive(30L);
+
+        verify(messageService).sendKitCompleteToProductionAdmins("PO-D62", "PTO153", 5, "PR-D62-TEST", 7L);
+    }
+
+    @Test
+    void confirmReceive_skipsNotifyWhenShortageRemains() {
+        BizPurchaseRequest request = awaitingConfirmRequest(PurchaseRequestService.SOURCE_PRODUCTION);
+        stubConfirmReceive(request, arrivedDetail());
+
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO-D62");
+        order.setGoodsName("PTO153");
+        order.setQuantity(5);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+        KitShortageVO shortage = new KitShortageVO();
+        shortage.setGoodsName("电阻10K");
+        shortage.setDeficit(BigDecimal.valueOf(2));
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of(shortage));
+
+        service.confirmReceive(30L);
+
+        verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void confirmReceive_skipsNotifyForWarehouseSource() {
+        BizPurchaseRequest request = awaitingConfirmRequest("warehouse");
+        stubConfirmReceive(request, arrivedDetail());
+
+        service.confirmReceive(30L);
+
+        verify(productionOrderService, never()).computeShortageForOrder(anyLong());
+        verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void confirmReceive_skipsNotifyWhenOrderVoided() {
+        BizPurchaseRequest request = awaitingConfirmRequest(PurchaseRequestService.SOURCE_PRODUCTION);
+        stubConfirmReceive(request, arrivedDetail());
+
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_VOIDED);
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+
+        service.confirmReceive(30L);
+
+        verify(productionOrderService, never()).computeShortageForOrder(anyLong());
+        verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
     }
 }
