@@ -412,6 +412,31 @@ public class MessageService {
     }
 
     /**
+     * D61 采购认领后向来源申请人推送行级到货摘要（生产补料→生产部管理员，仓储建单→仓储部管理员）。
+     * biz 绑定 purchase_request/requestId：认领时 process() 先 revoke 旧待处理消息再发本条，
+     * 后续终态（入库/驳回/撤销）由既有 revokeUnreadByBiz 调用点统一回收未读。
+     */
+    public void sendPurchaseRequestClaimedToSourceApplicant(String requestNo, String operatorName,
+                                                            String sourceType, String arrivalSummary, Long requestId) {
+        String deptCode = PurchaseRequestService.SOURCE_PRODUCTION.equals(sourceType)
+                ? AuthzService.DEPT_PRODUCTION : AuthzService.DEPT_WAREHOUSE;
+        Long deptId = resolveDeptIdByCode(deptCode);
+        if (deptId == null) {
+            return;
+        }
+        String operator = StringUtils.hasText(operatorName) ? operatorName : "采购管理员";
+        sendToDeptAdminsWithBiz(
+                deptId,
+                "采购申请单已认领",
+                String.format(Locale.ROOT,
+                        "采购申请单 %s 已由 %s 认领，预计到货：%s",
+                        requestNo, operator, arrivalSummary == null ? "-" : arrivalSummary),
+                "purchase_request",
+                requestId
+        );
+    }
+
+    /**
      * D42 生产任务单齐套预警：确认任务单时若发现物料缺口，通知采购管理员采购补料。
      */
     public void sendKitShortageToPurchaseAdmins(String orderNo, String goodsName, String shortageSummary, Long orderId) {

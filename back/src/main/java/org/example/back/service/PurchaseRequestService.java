@@ -312,7 +312,7 @@ public class PurchaseRequestService {
         messageService.sendPurchaseRequestToPurchaseAdmins(entity.getRequestNo(), loginUser.getRealName(), entity.getId());
     }
 
-    // ============================== 采购认领（转采购中） ==============================
+    // ============================== 采购认领（转采购中，行级到货计划 D61） ==============================
 
     @Transactional(rollbackFor = Exception.class)
     public void process(Long id, PurchaseRequestProcessDTO dto) {
@@ -322,6 +322,12 @@ public class PurchaseRequestService {
             throw BusinessException.validateFail("仅待采购状态可认领");
         }
 
+        List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
+        if (details.isEmpty()) {
+            throw BusinessException.validateFail("采购申请明细为空，无法认领");
+        }
+        Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> itemMap = toValidatedItemMap(dto, details);
+
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(BizPurchaseRequest::getId, entity.getId())
@@ -329,13 +335,22 @@ public class PurchaseRequestService {
                 .set(BizPurchaseRequest::getStatus, STATUS_PURCHASING)
                 .set(BizPurchaseRequest::getOperatorId, loginUser.getId())
                 .set(BizPurchaseRequest::getOperatorName, loginUser.getRealName())
-                .set(BizPurchaseRequest::getOperationTime, LocalDateTime.now())
-                .set(BizPurchaseRequest::getExpectedArrivalTime, dto == null ? null : dto.getExpectedArrivalTime());
+                .set(BizPurchaseRequest::getOperationTime, LocalDateTime.now());
         int rows = bizPurchaseRequestMapper.update(null, updateWrapper);
         if (rows != 1) {
             throw BusinessException.validateFail("采购申请单已被处理，禁止重复认领");
         }
+        // 行级写入预计到货时间+到货备注
+        for (BizPurchaseRequestDetail detail : details) {
+            PurchaseRequestProcessDTO.ProcessItemDTO item = itemMap.get(detail.getId());
+            detail.setExpectedArrivalTime(item.getExpectedArrivalTime());
+            detail.setArrivalRemark(trimToNull(item.getArrivalRemark()));
+            bizPurchaseRequestDetailMapper.updateById(detail);
+        }
         messageService.revokeUnreadByBiz("purchase_request", id);
+        messageService.sendPurchaseRequestClaimedToSourceApplicant(
+                entity.getRequestNo(), loginUser.getRealName(), entity.getSourceType(),
+                buildArrivalSummary(details, itemMap), id);
     }
 
     // ============================== 采购到货（提交入库申请，不加库存） ==============================
@@ -514,6 +529,39 @@ public class PurchaseRequestService {
 
     // ============================== 私有辅助 ==============================
 
+    /** D61：校验认领/修改到货计划的行级 items——逐行必填时间、detailId 必须与单据明细一一对应 */
+    private Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> toValidatedItemMap(
+            PurchaseRequestProcessDTO dto, List<BizPurchaseRequestDetail> details) {
+        if (dto == null || dto.getItems() == null || dto.getItems().isEmpty()) {
+            throw BusinessException.validateFail("请填写各行预计到货时间");
+        }
+        Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> itemMap = new java.util.HashMap<>();
+        for (PurchaseRequestProcessDTO.ProcessItemDTO item : dto.getItems()) {
+            if (item.getDetailId() == null || item.getExpectedArrivalTime() == null) {
+                throw BusinessException.validateFail("预计到货时间必填");
+            }
+            itemMap.put(item.getDetailId(), item);
+        }
+        for (BizPurchaseRequestDetail detail : details) {
+            if (!itemMap.containsKey(detail.getId())) {
+                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少预计到货时间");
+            }
+        }
+        return itemMap;
+    }
+
+    /** D61：行级到货摘要（消息用），格式「轴承 2026-09-15；钢板 2026-09-20」 */
+    private String buildArrivalSummary(List<BizPurchaseRequestDetail> details,
+                                       Map<Long, PurchaseRequestProcessDTO.ProcessItemDTO> itemMap) {
+        return details.stream()
+                .map(d -> d.getGoodsName() + " " + itemMap.get(d.getId()).getExpectedArrivalTime().toLocalDate())
+                .collect(Collectors.joining("；"));
+    }
+
+    private String trimToNull(String text) {
+        return StringUtils.hasText(text) ? text.trim() : null;
+    }
+
     /**
      * 读权限：仓储 + 采购 均可查看采购申请单（仓储看自己建的，采购看流转来的）。
      */
@@ -585,7 +633,6 @@ public class PurchaseRequestService {
         vo.setOperatorId(entity.getOperatorId());
         vo.setOperatorName(entity.getOperatorName());
         vo.setOperationTime(entity.getOperationTime());
-        vo.setExpectedArrivalTime(entity.getExpectedArrivalTime());
         vo.setArriveTime(entity.getArriveTime());
         vo.setReceiveTime(entity.getReceiveTime());
         vo.setConfirmerId(entity.getConfirmerId());

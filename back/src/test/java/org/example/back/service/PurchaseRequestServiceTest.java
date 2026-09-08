@@ -4,6 +4,7 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
+import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
@@ -17,9 +18,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -398,5 +402,128 @@ class PurchaseRequestServiceTest {
         assertEquals("急件", detail.getRemark());
         assertEquals(0, detail.getIsNewMaterial());
         verify(goodsService, never()).createMaterialFromProduction(any(), any(), any(), any());
+    }
+
+    // ---------- D61：认领按行写预计到货时间+到货备注 ----------
+    @Test
+    void process_writesPerLineArrivalInfo() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(20L);
+        user.setRealName("采购乙");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(1);
+        request.setRequestNo("PR-1");
+        request.setSourceType("production");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        BizPurchaseRequestDetail d2 = new BizPurchaseRequestDetail();
+        d2.setId(102L);
+        d2.setGoodsName("钢板");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1, d2));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+
+        LocalDateTime t1 = LocalDateTime.of(2026, 9, 15, 0, 0);
+        LocalDateTime t2 = LocalDateTime.of(2026, 9, 20, 0, 0);
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        dto.setItems(List.of(
+                processItem(101L, t1, " 厂家A直发 "),
+                processItem(102L, t2, null)));
+
+        service.process(5L, dto);
+
+        ArgumentCaptor<BizPurchaseRequestDetail> detCap =
+                ArgumentCaptor.forClass(BizPurchaseRequestDetail.class);
+        verify(bizPurchaseRequestDetailMapper, times(2)).updateById(detCap.capture());
+        List<BizPurchaseRequestDetail> updated = detCap.getAllValues();
+        assertEquals(t1, updated.get(0).getExpectedArrivalTime());
+        assertEquals("厂家A直发", updated.get(0).getArrivalRemark(), "备注应 trim");
+        assertEquals(t2, updated.get(1).getExpectedArrivalTime());
+        assertNull(updated.get(1).getArrivalRemark(), "空备注应落 NULL");
+        verify(messageService).revokeUnreadByBiz("purchase_request", 5L);
+    }
+
+    private static PurchaseRequestProcessDTO.ProcessItemDTO processItem(Long detailId, LocalDateTime time, String remark) {
+        PurchaseRequestProcessDTO.ProcessItemDTO item = new PurchaseRequestProcessDTO.ProcessItemDTO();
+        item.setDetailId(detailId);
+        item.setExpectedArrivalTime(time);
+        item.setArrivalRemark(remark);
+        return item;
+    }
+
+    // ---------- D61：任一行缺预计到货时间 → 整单退回 ----------
+    @Test
+    void process_rejectsWhenAnyLineMissingTime() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(1);
+        request.setRequestNo("PR-1");
+        request.setSourceType("warehouse");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        BizPurchaseRequestDetail d2 = new BizPurchaseRequestDetail();
+        d2.setId(102L);
+        d2.setGoodsName("钢板");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1, d2));
+
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        dto.setItems(List.of(processItem(101L, LocalDateTime.of(2026, 9, 15, 0, 0), null)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.process(5L, dto));
+        assertTrue(ex.getMessage().contains("缺少预计到货时间"), "实际: " + ex.getMessage());
+        verify(bizPurchaseRequestMapper, never()).update(any(), any());
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    // ---------- D61：非待采购状态不可认领（回归保护） ----------
+    @Test
+    void process_rejectsWhenNotPending() {
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(2);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.process(5L, new PurchaseRequestProcessDTO()));
+        assertEquals("仅待采购状态可认领", ex.getMessage());
+    }
+
+    // ---------- D61：认领通知来源申请人（行级到货摘要） ----------
+    @Test
+    void process_notifiesSourceApplicantWithArrivalSummary() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(20L);
+        user.setRealName("采购乙");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        BizPurchaseRequest request = new BizPurchaseRequest();
+        request.setId(5L);
+        request.setStatus(1);
+        request.setRequestNo("PR-1");
+        request.setSourceType("production");
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+
+        BizPurchaseRequestDetail d1 = new BizPurchaseRequestDetail();
+        d1.setId(101L);
+        d1.setGoodsName("轴承");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(d1));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+
+        PurchaseRequestProcessDTO dto = new PurchaseRequestProcessDTO();
+        dto.setItems(List.of(processItem(101L, LocalDateTime.of(2026, 9, 15, 0, 0), null)));
+
+        service.process(5L, dto);
+
+        verify(messageService).sendPurchaseRequestClaimedToSourceApplicant(
+                eq("PR-1"), eq("采购乙"), eq("production"),
+                Mockito.contains("轴承 2026-09-15"), eq(5L));
     }
 }
