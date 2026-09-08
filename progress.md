@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 18 — 2026-09-08
+
+### 阶段 15 预计到货时间行级化（D61，已完成 + E2E 全绿）
+
+- **设计决策（D61）：** ① 采购申请明细行各自带「预计到货时间」（认领必填）+「到货备注」（选填，与 BOM 物料描述快照 remark 独立）；② 范围=所有采购申请单（不分来源）；③ 主表 expected_arrival_time 废除，存量回填明细行后删列；④ 采购中（status=2）可经 PUT /arrival-plan 修改，待入库确认起锁定；⑤ 认领时向来源申请人发行级到货摘要（D21 带 biz）；⑥ 列表聚合展示（最早~最晚），认领对话框行级表格+统一填充。
+- **后端：** db.sql 11.x DDL（biz_purchase_request_detail 加 expected_arrival_time/arrival_remark + 存量回填 + 主表删列，已执行实库）；PurchaseRequestService.process 改行级 items（明细 DTO 加 detailId/expectedArrivalTime/arrivalRemark，认领必填校验）+ 新增 updateArrivalPlan（仅采购中可改，按明细 ID 校验归属与必填）+ 认领通知 sendPurchaseRequestClaimedToSourceApplicant（按来源部门发放行级摘要）；主表 BizPurchaseRequest/VO/列表 移除 expectedArrivalTime 字段；明细 VO/DTO 行级化；status=2 采购中可修改到货计划，status≥3 锁定。
+- **前端：** PurchaseRequestView 认领对话框改行级表格（每行预计到货时间+到货备注，支持统一填充），修改到货计划复用同一行级表单，列表列聚合展示（多行取最早~最晚），详情表增加到货时间/到货备注两列；payload 与后端 items 结构一致。
+- **测试：** PurchaseRequestServiceTest 新增/改造 17 个用例（行级认领/缺字段校验/未知明细行/到货计划修改/状态锁/认领通知发送）；`./mvnw test` 全绿（90/0/0）。
+- **E2E（curl，warehouse_admin + purchase_admin）：** 仓储建 2 行物料申请→采购认领（行1 9-15/厂家A直发，行2 9-20）→详情行级字段正确→修改到货计划（行1→9-25/改发厂家B）200→负测a 未知 detailId 400"缺少预计到货时间"→负测b 仓储调修改 403→到货提交→待入库确认修改 400"仅采购中状态可修改到货计划"→撤回到货→消息验证（认领通知含行级到货摘要："电阻10K 2026-09-15；电容100uF 2026-09-20"）。测试数据全清理、库存无变化（500/400）。
+
+### 下一步
+
+- 用户确认后推送阶段 15（feat/d61-per-line-arrival-time 分支）；无遗留项。
+
+---
+
 ## 会话 17 — 2026-09-07
 
 ### 阶段 14 补料链路物料详情 + 未知物料自动建档（D60/ADR-0002/0003，已完成 + E2E 全绿）
