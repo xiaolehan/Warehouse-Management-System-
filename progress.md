@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 19 — 2026-09-08
+
+### 阶段 16 补料入库齐套通知（D62，已完成 + E2E 全绿）
+
+- **设计决策（D62）：** confirmReceive 成功后仅当来源=生产补料且生产单有效（未删/未作废/未报废）时重算齐套；缺口清零即 `sendKitCompleteToProductionAdmins` 通知生产部管理员「物料已齐套可领料」（绑 production_order，作废撤销沿用 voidOrder 既有点，D21）；仍缺料沉默（列表实时齐套状态兜底）；文案含任务单号/成品×数量/补料单号，统一用「领料」措辞。
+- **后端：** `PurchaseRequestService.confirmReceive` 末尾调用 `notifyKitCompleteIfReady`（source=production + 生产单有效 + computeShortage 为空才发）；`MessageService.sendKitCompleteToProductionAdmins(orderNo, goodsName, qty, requestNo, orderId)`（title=物料已齐套可领料，biz_type=production_order）；守卫三道：sourceType != production 沉默、生产单删/作废/报废沉默、缺料非空沉默。
+- **测试：** `PurchaseRequestServiceTest` 新增 4 个单测（齐套发通知/仍缺料不发/已作废不发/非生产补料不发）；`./mvnw test` 全绿。
+- **E2E（curl，production_admin + purchase_admin + warehouse_admin）：** 生产建 PTO153 任务单 qty50→**partial 缺料**（16 行全 bound，10 行缺 1 件 + 6 行缺 49~147 件）→生产补料生成 PR24（16 行，数量=ceil(deficit)）→采购认领（行级到货时间）→到货提交（数量=申请数量）→仓储确认入库（唯一动库步骤）→**生产订单齐套**（所有行 deficit≤0，kitStatus=ok）→**production_admin 消息列表出现标题「物料已齐套可领料」**，内容含「PRO260908221255861（成品 PTO153×50）所需物料已全部入库齐套（补料单 PR260908221405240 已入库）」，biz_type=production_order、biz_id=26。测试数据全清理（软删生产单/补料申请+明细/进货记录/消息），16 项物料 stock 与 purchase_price 全部恢复基线值（与前完全一致）。
+- **已知问题（本次不修）：** 补料单按行部分到货→确认入库终态→若仍缺料，受"已入库补料单阻止再补料"既有规则（D59）约束，该生产单无法再补——待单独立项。
+
+### 下一步
+
+- 用户确认后推送阶段 16（feat/d62-kit-complete-notify 分支）；前端零改动。
+
+---
+
 ## 会话 18 — 2026-09-08
 
 ### 阶段 15 预计到货时间行级化（D61，已完成 + E2E 全绿）
