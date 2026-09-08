@@ -1475,3 +1475,20 @@ ALTER TABLE `biz_purchase_request_detail`
     ADD COLUMN `material` VARCHAR(100) DEFAULT NULL COMMENT '材质快照(生产补料提交时自BOM行带入)' AFTER `spec`,
     ADD COLUMN `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注快照(生产补料提交时自BOM行带入)' AFTER `material`,
     ADD COLUMN `is_new_material` TINYINT NOT NULL DEFAULT 0 COMMENT '新物料标记: 0-已有物料缺口, 1-未知物料自动建档(详情分组展示用)' AFTER `remark`;
+-- ============================================================
+-- 11.x D61 预计到货时间行级化：明细行各自预计到货时间+到货备注，主表整单级字段废除
+-- 1) 明细加 expected_arrival_time / arrival_remark（到货备注与 remark 物料描述快照互不复用）
+-- 2) 存量回填：主表整单值下放各行（NULL 保持 NULL，不追溯）
+-- 3) 删除主表 expected_arrival_time，查询口径统一走行级
+-- ============================================================
+ALTER TABLE `biz_purchase_request_detail`
+    ADD COLUMN `expected_arrival_time` DATETIME DEFAULT NULL COMMENT '预计到货时间(采购认领时按行填写,采购中可改,D61)' AFTER `quantity`,
+    ADD COLUMN `arrival_remark` VARCHAR(200) DEFAULT NULL COMMENT '到货备注(供应商/发货方式等采购口径,与remark物料描述快照独立,D61)' AFTER `expected_arrival_time`;
+
+UPDATE biz_purchase_request_detail d
+    JOIN biz_purchase_request r ON d.request_id = r.id
+    SET d.expected_arrival_time = r.expected_arrival_time
+    WHERE d.expected_arrival_time IS NULL;
+
+ALTER TABLE `biz_purchase_request`
+    DROP COLUMN `expected_arrival_time`;
