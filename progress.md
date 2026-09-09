@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 20 — 2026-09-09
+
+### 阶段 17 领料/退料明细规格材质备注展示（D63，已完成 + E2E 全绿）
+
+- **设计决策（D63，grilling 六问定案）：** 明细行显示规格/材质/备注，**备注=物料主数据描述**（`base_goods.description`，非 BOM 行备注——与补料单 D60 快照不同源，CONTEXT.md「生产领料」词条已更新）；范围=**领料+退料**共用（pick_type=PICK/RETURN 同明细表同视图）；展示=详情弹窗加列（物料/规格/材质/备注）+ 发料确认框逐行「物料（规格/材质）×数量」；**列表页摘要不动**；口径=**建单时服务端从 base_goods 快照**（`biz_pick_list_detail` 加 spec/material/remark 三列，D60 范式），**历史行快照为空兜底实时读主数据**（软删/缺档显示「-」）；用词「物料」。
+- **后端（TDD，5 新单测）：** 实体/VO 加三字段；`ProductionPickService.createPick` 批量 selectBatchIds 快照 + `createReturn` 复用已载 BaseGoods 快照（写入点 **2 处**——人工建单已随阶段 13 移除，较计划"3 处"修正）；`PickListService.toDetailVOs` 兜底：spec 为空行按 goodsId 批量查主数据补显，有快照一律用快照（不查主数据）。`./mvnw test` **101/101 全绿**。
+- **前端：** PickListView 详情弹窗 640→760px，明细表加规格/材质/备注列（空值「—」），「商品」列头改「物料」；发料确认框改 VNode 逐行列「物料（规格/材质）×数量」；列表页摘要未动。`npm run build` 通过。
+- **E2E（curl，production_admin/warehouse_admin/sales_admin）：** 建 PTO153×1 任务单（order 27，齐套无告警）→申请领料（pick 20，16 行明细：58-60 号自动建档物料快照落库 ✓，老物料 NULL=主数据本无 ✓）→仓储 getById VO 含三列 ✓→UPDATE 清空快照模拟历史行→兜底补显 ✓→sales_admin 详情负测 body code=403 ✓→撤销领料+作废+任务单软删，库存零变动、消息已撤销、零残留。
+- **E2E 运维备注：** 本项目业务异常为 HTTP 200 + body code 封装，curl 负测必须看 body code 而非 HTTP 状态码。
+
+### 下一步
+
+- 用户确认后推送 feat/d63-pick-detail-spec 分支（PR 合并走 VS Code/GitHub 网页）。
+
+---
+
 ## 会话 19 — 2026-09-08
 
 ### 阶段 16 补料入库齐套通知（D62，已完成 + E2E 全绿）
