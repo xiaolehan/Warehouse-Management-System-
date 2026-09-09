@@ -194,6 +194,7 @@ public class PurchaseService {
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
+        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getPurchasePrice(), "商品进价为空，请传入进货单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
 
@@ -227,6 +228,7 @@ public class PurchaseService {
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
+        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getPurchasePrice(), "商品进价为空，请传入进货单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
 

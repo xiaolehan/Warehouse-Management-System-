@@ -1547,3 +1547,22 @@ CROSS JOIN (
 ) s
 WHERE o.`status` IN (1, 2, 3) AND o.`is_deleted` = 0
   AND NOT EXISTS (SELECT 1 FROM `biz_production_order_step` t WHERE t.`order_id` = o.`id`);
+
+-- 14.x D66：废除 biz_bom 唯一键（uk_bom_code / uk_bom_goods）——BOM 软删后同成品可重建：
+-- 应用层 checkBomCodeUnique / checkGoodsBomUnique 已按 is_deleted=0 查重；DB 唯一键不过滤软删行，会误伤"删后重建"
+ALTER TABLE `biz_bom` DROP INDEX `uk_bom_code`;
+ALTER TABLE `biz_bom` DROP INDEX `uk_bom_goods`;
+
+-- ============================================================
+-- 14.y D66 补强：BOM 唯一性改由「生成列 + 软删兼容唯一键」兜底（防并发双活 BOM，TOCTOU 兜底）
+-- 原理：MySQL 生成列 IF(is_deleted=0, goods_id, NULL)，软删行归 NULL（唯一键允许多 NULL）；
+-- 同时补齐被 DROP 键留下的查询索引（goods_id/bom_code 均为高频过滤列），及质检表 goods_id 索引
+-- ============================================================
+ALTER TABLE `biz_bom` ADD KEY `idx_bom_goods` (`goods_id`);
+ALTER TABLE `biz_bom` ADD KEY `idx_bom_code` (`bom_code`);
+ALTER TABLE `biz_production_qc` ADD KEY `idx_qc_goods` (`goods_id`);
+ALTER TABLE `biz_bom`
+    ADD COLUMN `active_goods_id` BIGINT GENERATED ALWAYS AS (IF(`is_deleted`=0, `goods_id`, NULL)) VIRTUAL COMMENT '软删兼容唯一键载体(D66): 有效行=goods_id, 软删行=NULL',
+    ADD COLUMN `active_bom_code` VARCHAR(50) GENERATED ALWAYS AS (IF(`is_deleted`=0, `bom_code`, NULL)) VIRTUAL COMMENT '软删兼容唯一键载体(D66): 有效行=bom_code, 软删行=NULL';
+ALTER TABLE `biz_bom` ADD UNIQUE KEY `uk_bom_active_goods` (`active_goods_id`);
+ALTER TABLE `biz_bom` ADD UNIQUE KEY `uk_bom_active_code` (`active_bom_code`);

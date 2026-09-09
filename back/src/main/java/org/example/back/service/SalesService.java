@@ -203,6 +203,7 @@ public class SalesService {
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
+        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "销售单只可选择成品（type=product）"); // D67
         ensureStockSufficient(goods, dto.getQuantity());
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getSalePrice(), "商品售价为空，请传入销售单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();

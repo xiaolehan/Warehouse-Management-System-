@@ -31,6 +31,7 @@
         <template v-else-if="isPurchaseAdmin">
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请处理</span></el-menu-item>
@@ -57,6 +58,7 @@
 
         <template v-else-if="isWarehouseAdmin">
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
@@ -88,6 +90,7 @@
         <!-- 生产研发部（D37）：生产管理员管 BOM+建任务+派发；生产员工执行 -->
         <template v-else-if="isProductionAdmin">
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/production-order"><el-icon><Notebook /></el-icon><span>生产任务单</span></el-menu-item>
           <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
@@ -112,6 +115,7 @@
         <template v-else-if="isPurchaseEmployee">
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
@@ -176,7 +180,7 @@ import { isAdminRole, isEmployeeRole, isSuperAdmin, normalizeDeptCode } from '@/
 import { logoutAPI } from '@/api/user'
 import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
-  ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled,
+  ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled, Goods,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
   Fold, Expand, Box, List, Download, Setting
 } from '@element-plus/icons-vue'

@@ -9,6 +9,7 @@ import org.example.back.dto.BomQueryDTO;
 import org.example.back.dto.BomSaveDTO;
 import org.example.back.service.BomService;
 import org.example.back.service.WorkRequirementAttachmentStorageService;
+import org.example.back.vo.BomDeleteCheckVO;
 import org.example.back.vo.BomVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
@@ -61,11 +62,21 @@ public class BomController {
         return Result.success();
     }
 
+    /** D66：删除前检查——返回该成品名下未完结生产任务单数，前端据此事先二次确认 */
+    @GetMapping("/{id}/delete-check")
+    public Result<BomDeleteCheckVO> deleteCheck(@PathVariable Long id) {
+        return Result.success(bomService.deleteCheck(id));
+    }
+
+    /**
+     * D66 删除治理：未完结任务单存在时须带 force=true（前端二次确认后传入）；
+     * 删除成功返回级联结果说明（成品主档已清理 / 保留原因）。
+     */
     @DeleteMapping("/{id}")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
-    public Result<Void> delete(@PathVariable Long id) {
-        bomService.delete(id);
-        return Result.success();
+    public Result<String> delete(@PathVariable Long id,
+                                 @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
+        return Result.success(bomService.delete(id, force));
     }
 
     // ============================== 组件图片 ==============================

@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 生产任务单（D42 齐套预警）：一张单 = 一个成品 × 生产数量。
@@ -23,6 +24,10 @@ public class BizProductionOrder {
     public static final int STATUS_DONE = 4;
     public static final int STATUS_VOIDED = 5;
     public static final int STATUS_SCRAPPED = 6;
+
+    /** 未完结状态集（D66 删 BOM 软保护等口径共用，新增生命周期状态时只改这里） */
+    public static final List<Integer> UNFINISHED_STATUSES =
+            List.of(STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_AWAIT_QC);
 
     public static final String KIT_OK = "ok";
     public static final String KIT_PARTIAL = "partial";

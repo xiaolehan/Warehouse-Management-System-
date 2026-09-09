@@ -470,7 +470,7 @@ const loadList = async () => {
 
 const loadOptions = async () => {
   try {
-    const p = await getGoodsProductOptionsAPI()
+    const p = await getGoodsProductOptionsAPI({ hasBom: true }) // D67：只列有有效 BOM 的成品
     productOptions.value = (p.data || []).map((it) => ({ goodsId: it.id, goodsName: it.name || it.goodsName, unit: it.unit }))
   } catch (error) {
     ElMessage.error(error.message || '加载成品选项失败')

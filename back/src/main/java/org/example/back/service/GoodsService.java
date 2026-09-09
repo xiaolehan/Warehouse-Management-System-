@@ -43,6 +43,10 @@ public class GoodsService {
     @Autowired
     private AuthzService authzService;
 
+    // D66：成品主数据删除安全口径（库存=0 且无单据引用），BOM 删除级联与成品手工删除共用
+    @Autowired
+    private GoodsReferenceService goodsReferenceService;
+
     // D35 职责分工：物料资料开放给仓储+采购部门读取；写操作按部门区分字段
     // D39 生产部门可只读看物料库存（数量层）
     private void requireGoodsReadAccess() {
@@ -94,6 +98,9 @@ public class GoodsService {
             .apply(warningOnly && !"zero".equals(warningType), "stock <= warning_stock")
             .eq(warningOnly && "zero".equals(warningType), BaseGoods::getStock, 0)
                 .orderByDesc(BaseGoods::getId);
+        if (warningOnly) {
+            excludeProducts(wrapper); // D65：成品不参与库存预警
+        }
 
         Page<BaseGoods> page = baseGoodsMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BaseSupplier> supplierMap = buildSupplierMap(page.getRecords().stream().map(BaseGoods::getSupplierId).collect(Collectors.toSet()));
@@ -101,7 +108,7 @@ public class GoodsService {
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
-    public List<GoodsOptionVO> options(String type) {
+    public List<GoodsOptionVO> options(String type, Boolean hasBom) {
         // D32：销售/采购员工建单时需加载商品下拉，放开部门成员（admin+员工）
         // D39/D41：生产部门只读；type 用于生产任务单品选成品(product)
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -115,6 +122,10 @@ public class GoodsService {
         wrapper.eq(BaseGoods::getStatus, 1)
                 .eq(StringUtils.hasText(type) && !"all".equals(type), BaseGoods::getType, normalizeType(type))
                 .orderByAsc(BaseGoods::getGoodsName);
+        if (Boolean.TRUE.equals(hasBom)) {
+            // D66：下达生产任务单的成品下拉只列「已建立有效(未删) BOM」的成品
+            wrapper.inSql(BaseGoods::getId, "SELECT goods_id FROM biz_bom WHERE is_deleted = 0");
+        }
         return baseGoodsMapper.selectList(wrapper).stream()
                 .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getType()))
                 .toList();
@@ -127,16 +138,20 @@ public class GoodsService {
         return toVO(goods, supplier);
     }
 
-    // 建物料仅仓储 admin；仓储建时不含进价/售价（价格由采购补录）
+    // 建物料/成品仅仓储 admin；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）
     public void create(GoodsSaveDTO dto) {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料");
-        if (GOODS_TYPE_MATERIAL.equals(normalizeType(dto.getType()))) {
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料/成品");
+        boolean isProduct = GOODS_TYPE_PRODUCT.equals(normalizeType(dto.getType()));
+        if (isProduct) {
+            // D65：成品允许手工建档（修订 D46），名称唯一口径不变（全库唯一）
+            checkGoodsNameUnique(dto.getGoodsName(), null);
+        } else {
             // D60/ADR-0003：物料按「名称+规格」唯一，同名不同规格各自成条
             checkMaterialNameSpecUnique(dto.getGoodsName(), dto.getSpec(), null);
-        } else {
-            checkGoodsNameUnique(dto.getGoodsName(), null);
         }
-        requireSupplier(dto.getSupplierId());
+        // D65：成品无供应商概念，缺省挂缺省供应商
+        Long supplierId = dto.getSupplierId() == null && isProduct ? DEFAULT_SUPPLIER_ID : dto.getSupplierId();
+        requireSupplier(supplierId);
         validateStock(dto.getStock());
         validateWarningStock(dto.getWarningStock());
         BaseGoods goods = new BaseGoods();
@@ -145,7 +160,13 @@ public class GoodsService {
         goods.setGoodsCode(CodeGenerator.goodsCode());
         goods.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
         goods.setStock(dto.getStock() == null ? 0 : dto.getStock());
-        goods.setWarningStock(dto.getWarningStock() == null ? 10 : dto.getWarningStock());
+        if (isProduct) {
+            goods.setSupplierId(supplierId);
+            goods.setCategory("成品");
+            goods.setWarningStock(0); // D65：成品不参与库存预警
+        } else {
+            goods.setWarningStock(dto.getWarningStock() == null ? 10 : dto.getWarningStock());
+        }
         baseGoodsMapper.insert(goods);
     }
 
@@ -157,11 +178,29 @@ public class GoodsService {
         boolean isPurchase = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
 
         if (isPurchase) {
+            // D65：成品无进价概念，采购部门不可编辑成品
+            if (GOODS_TYPE_PRODUCT.equals(goods.getType())) {
+                throw BusinessException.forbidden("成品无进价概念，采购部门不可编辑成品");
+            }
             // D35.2 采购(admin/员工)：仅就地补录/修改进价，基本资料与库存均由仓储维护，采购一概不动
             if (dto.getPurchasePrice() == null || dto.getPurchasePrice().compareTo(BigDecimal.ZERO) <= 0) {
                 throw BusinessException.validateFail("进价必须大于0");
             }
             goods.setPurchasePrice(dto.getPurchasePrice());
+            baseGoodsMapper.updateById(goods);
+            return;
+        }
+
+        // D65：成品维护路径——仅 名称/单位/规格/备注/状态/库存 可改；供应商/预警/材质/种类/产品名 成品页不维护，保持原值
+        if (GOODS_TYPE_PRODUCT.equals(goods.getType())) {
+            checkGoodsNameUnique(dto.getGoodsName(), id);
+            validateStock(dto.getStock());
+            goods.setGoodsName(dto.getGoodsName());
+            goods.setUnit(dto.getUnit());
+            goods.setSpec(dto.getSpec());
+            goods.setDescription(dto.getDescription());
+            goods.setStatus(dto.getStatus() == null ? goods.getStatus() : dto.getStatus());
+            goods.setStock(dto.getStock() == null ? goods.getStock() : dto.getStock());
             baseGoodsMapper.updateById(goods);
             return;
         }
@@ -193,8 +232,12 @@ public class GoodsService {
     }
 
     public void delete(Long id) {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料");
-        requireGoods(id);
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
+        BaseGoods goods = requireGoods(id);
+        // D65/Q11：成品主数据有库存、存在有效 BOM 或被任何单据引用时不允许删除（与 BOM 删除级联同一口径）
+        if (GOODS_TYPE_PRODUCT.equals(goods.getType()) && !goodsReferenceService.isProductDeletable(id, goods.getStock())) {
+            throw BusinessException.validateFail("该成品有库存、存在有效 BOM 或已被单据引用，不能删除");
+        }
         baseGoodsMapper.deleteById(id);
     }
 
@@ -263,7 +306,23 @@ public class GoodsService {
         return goods;
     }
 
+    /** D65：成品不参与库存预警/缺货识别——各预警类查询统一调用，防漏写排除条件 */
+    public static void excludeProducts(LambdaQueryWrapper<BaseGoods> wrapper) {
+        wrapper.ne(BaseGoods::getType, GOODS_TYPE_PRODUCT);
+    }
+
+    /** D67：业务单据形态校验——销售/生产入库仅成品，进货/采购申请仅物料（前端下拉收紧的服务端兜底） */
+    public static void ensureGoodsType(BaseGoods goods, String requiredType, String message) {
+        String actual = goods.getType() == null ? GOODS_TYPE_MATERIAL : goods.getType();
+        if (!requiredType.equalsIgnoreCase(actual)) {
+            throw BusinessException.validateFail(message);
+        }
+    }
+
     private BaseSupplier requireSupplier(Long id) {
+        if (id == null) {
+            throw BusinessException.validateFail("供应商不能为空");
+        }
         BaseSupplier supplier = baseSupplierMapper.selectById(id);
         if (supplier == null) {
             throw BusinessException.validateFail("供应商不存在");

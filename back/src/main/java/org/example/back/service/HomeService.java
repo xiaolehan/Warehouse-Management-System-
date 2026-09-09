@@ -219,6 +219,7 @@ public class HomeService {
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getStatus, 1)
                 .apply("stock <= warning_stock");
+        GoodsService.excludeProducts(wrapper); // D65：成品不参与库存预警
         return baseGoodsMapper.selectCount(wrapper);
     }
 
@@ -226,6 +227,7 @@ public class HomeService {
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getStatus, 1)
                 .eq(BaseGoods::getStock, 0);
+        GoodsService.excludeProducts(wrapper); // D65：成品不参与库存预警
         return baseGoodsMapper.selectCount(wrapper);
     }
     // 查询最近的错误日志列表

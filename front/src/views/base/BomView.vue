@@ -17,7 +17,7 @@
         <el-button
           type="warning" :icon="Upload" @click="openImport"
           v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
-        >批量导入</el-button>
+        >BOM导入</el-button>
       </el-form-item>
     </el-form>
 
@@ -246,6 +246,7 @@ import request from '@/utils/request'
 import {
   createBomAPI,
   deleteBomAPI,
+  getBomDeleteCheckAPI,
   getBomDetailAPI,
   getBomExportAPI,
   getBomPageAPI,
@@ -499,17 +500,34 @@ const handleEdit = async (row) => {
   }
 }
 
-const handleDelete = (row) => {
-  ElMessageBox.confirm(`确认删除 BOM「${row.bomCode}」？`, '警告', { type: 'warning' })
-    .then(async () => {
-      const res = await deleteBomAPI(row.id)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '删除失败')
-      }
-      ElMessage.success('删除成功')
-      await loadList()
+// D66：删除前先查 delete-check——成品有未完结生产任务单时软保护二次确认，确认后 force 放行；
+// 成功提示用后端返回的级联结果说明（成品主档清理/保留）
+const handleDelete = async (row) => {
+  try {
+    const check = await getBomDeleteCheckAPI(row.id)
+    if (check.code !== 200) {
+      throw new Error(check.msg || '删除前检查失败')
+    }
+    const unfinished = check.data?.unfinishedOrderCount || 0
+    const hasUnfinished = unfinished > 0
+    const message = hasUnfinished
+      ? `BOM「${row.bomCode}」的成品「${check.data?.goodsName || row.goodsName}」仍有 ${unfinished} 张未完结生产任务单，删除后将无法为这些任务单补料。确定继续删除吗？`
+      : `确认删除 BOM「${row.bomCode}」？`
+    await ElMessageBox.confirm(message, hasUnfinished ? '未完结任务单提醒' : '警告', {
+      type: 'warning',
+      confirmButtonText: hasUnfinished ? '仍要删除' : '确定'
     })
-    .catch(() => {})
+    const res = await deleteBomAPI(row.id, hasUnfinished)
+    if (res.code !== 200) {
+      throw new Error(res.msg || '删除失败')
+    }
+    ElMessage.success(res.data || '删除成功')
+    await loadList()
+  } catch (error) {
+    if (error !== 'cancel' && error?.message) {
+      ElMessage.error(error.message)
+    }
+  }
 }
 
 const buildPayload = () => {

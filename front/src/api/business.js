@@ -1,6 +1,7 @@
 import request from '@/utils/request'
 
-export const getGoodsOptionsAPI = () => request.get('/base/goods/options')
+// D67：商品下拉收口到 base.js（单一出口），此处转导出保持既有调用方不改
+export { getGoodsOptionsAPI } from './base'
 
 export const getPurchasePageAPI = (params) => request.get('/business/purchases/page', { params })
 export const getPurchaseDetailAPI = (id) => request.get(`/business/purchases/${id}`)

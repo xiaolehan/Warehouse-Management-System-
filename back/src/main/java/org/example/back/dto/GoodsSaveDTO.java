@@ -1,7 +1,6 @@
 package org.example.back.dto;
 
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -21,7 +20,7 @@ public class GoodsSaveDTO {
 
     private String brand;
 
-    @NotNull(message = "供应商不能为空")
+    // D65：成品无供应商概念可空（Service 缺省挂缺省供应商）；物料由 Service requireSupplier 兜底校验
     private Long supplierId;
 
     // 进价/售价为采购维护字段：仓储建物料时可空（采购编辑时由 Service 校验进价>0）

@@ -54,6 +54,14 @@ const router = createRouter({
           component: () => import("../views/base/GoodsView.vue"),
           meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production'] }
         },
+        // D65 主数据分域：成品管理与物料管理同组件分页渲染，权限沿用物料管理
+        {
+          path: "base/products",
+          name: "BaseProducts",
+          component: () => import("../views/base/GoodsView.vue"),
+          props: { goodsType: "product" },
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production'] }
+        },
         {
           path: "base/bom",
           name: "BaseBom",

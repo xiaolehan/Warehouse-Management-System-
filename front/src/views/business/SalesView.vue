@@ -336,9 +336,9 @@ const buildOperationTime = (selectedDate) => {
 }
 
 const loadGoodsOptions = async () => {
-  const res = await getGoodsOptionsAPI()
+  const res = await getGoodsOptionsAPI({ type: 'product' }) // D67：销售下单只选成品
   if (res.code !== 200) {
-    throw new Error(res.msg || '加载商品下拉失败')
+    throw new Error(res.msg || '加载成品下拉失败')
   }
   goodsOptions.value = res.data || []
 }

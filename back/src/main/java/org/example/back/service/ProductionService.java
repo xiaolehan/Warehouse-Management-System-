@@ -96,6 +96,7 @@ public class ProductionService {
 
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
+        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "生产入库只可选择成品（type=product）"); // D67
         BigDecimal unitPrice = resolveProductionUnitPrice(dto.getUnitPrice());
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
 

@@ -28,8 +28,9 @@ public class GoodsController {
     }
 
     @GetMapping("/options")
-    public Result<List<GoodsOptionVO>> options(@RequestParam(required = false) String type) {
-        return Result.success(goodsService.options(type));
+    public Result<List<GoodsOptionVO>> options(@RequestParam(required = false) String type,
+                                               @RequestParam(required = false) Boolean hasBom) {
+        return Result.success(goodsService.options(type, hasBom));
     }
 
     @GetMapping("/{id}")

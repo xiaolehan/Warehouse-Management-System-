@@ -132,7 +132,7 @@ public class PurchaseRequestService {
     // ============================== 缺货识别 ==============================
 
     /**
-     * 返回当前库存 ≤ 预警阈值的启用商品清单，供仓储勾选生成采购申请单。
+     * 返回当前库存 ≤ 预警阈值的启用商品清单，供仓储勾选生成采购申请单（成品除外，D65：成品不参与缺货识别）。
      */
     public List<BaseGoods> listShortageGoods() {
         requireWarehouseAccess();
@@ -140,6 +140,7 @@ public class PurchaseRequestService {
         wrapper.eq(BaseGoods::getStatus, 1)
                 .apply("stock <= warning_stock")
                 .orderByAsc(BaseGoods::getStock);
+        GoodsService.excludeProducts(wrapper); // D65：成品不参与缺货识别
         return baseGoodsMapper.selectList(wrapper);
     }
 
@@ -303,6 +304,7 @@ public class PurchaseRequestService {
         for (PurchaseRequestDetailDTO detail : dto.getDetails()) {
             BaseGoods goods = requireGoods(detail.getGoodsId());
             ensureGoodsEnabled(goods);
+            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "采购申请只可选择物料（type=material）"); // D67
             BizPurchaseRequestDetail detailEntity = new BizPurchaseRequestDetail();
             detailEntity.setRequestId(entity.getId());
             detailEntity.setGoodsId(goods.getId());

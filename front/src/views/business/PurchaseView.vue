@@ -268,9 +268,9 @@ const buildOperationTime = (selectedDate) => {
 }
 
 const loadGoodsOptions = async () => {
-  const res = await getGoodsOptionsAPI()
+  const res = await getGoodsOptionsAPI({ type: 'material' }) // D67：物料进货只选物料
   if (res.code !== 200) {
-    throw new Error(res.msg || '加载商品下拉失败')
+    throw new Error(res.msg || '加载物料下拉失败')
   }
   goodsOptions.value = res.data || []
 }

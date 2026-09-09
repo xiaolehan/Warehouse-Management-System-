@@ -337,7 +337,7 @@ import {
   confirmReceivePurchaseRequestAPI, arriveCancelPurchaseRequestAPI, arriveRejectPurchaseRequestAPI,
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
-import { getGoodsOptionsAPI } from '@/api/business'
+import { getGoodsMaterialOptionsAPI } from '@/api/base'
 
 const userStore = useUserStore()
 
@@ -500,7 +500,7 @@ const submitAdd = async () => {
 const handleManual = async () => {
   if (!goodsOptions.value.length) {
     try {
-      const res = await getGoodsOptionsAPI()
+      const res = await getGoodsMaterialOptionsAPI()
       if (res.code !== 200) throw new Error(res.msg || '加载商品失败')
       goodsOptions.value = res.data || []
     } catch (e) {

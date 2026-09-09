@@ -15,6 +15,7 @@ import org.example.back.entity.BizBomDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
+import org.example.back.vo.BomDeleteCheckVO;
 import org.example.back.vo.BomDetailVO;
 import org.example.back.vo.BomVO;
 import lombok.extern.slf4j.Slf4j;
@@ -76,6 +77,10 @@ public class BomService {
 
     @Autowired
     private AuthzService authzService;
+
+    // D66：BOM 删除安全级联——成品主档清理口径（库存=0 且无单据引用）与成品手工删除共用；未完结任务单计数亦归口此处
+    @Autowired
+    private GoodsReferenceService goodsReferenceService;
 
     @Autowired
     private WorkRequirementAttachmentStorageService storageService;
@@ -174,15 +179,41 @@ public class BomService {
         insertDetails(id, dto.getDetails());
     }
 
+    /**
+     * D66 删除治理：未完结任务单软保护（force 放行）→ 软删 BOM 与明细 → 安全级联清理成品主档。
+     * 成品主档清理口径（D66/Q11）：库存=0 且未被任何单据引用；否则保留并在返回信息中说明。
+     *
+     * @return 处理结果描述（前端 toast 展示）
+     */
     @Transactional(rollbackFor = Exception.class)
-    public void delete(Long id) {
+    public String delete(Long id, boolean force) {
         requireBomWriteAccess();
         BizBom bom = requireBom(id);
-        if (bom.getIsDeleted() != null && bom.getIsDeleted() == 1) {
-            throw BusinessException.validateFail("该 BOM 已删除");
+        BaseGoods product = baseGoodsMapper.selectById(bom.getGoodsId());
+        long unfinished = goodsReferenceService.countUnfinishedOrders(bom.getGoodsId());
+        if (unfinished > 0 && !force) {
+            throw BusinessException.validateFail("该成品有 " + unfinished + " 张未完结生产任务单，删除 BOM 后将无法补料；请确认后重试");
         }
         bizBomMapper.deleteById(id);
         deleteDetailsByBomId(id);
+        if (product != null) {
+            if (goodsReferenceService.isProductDeletable(product.getId(), product.getStock())) {
+                baseGoodsMapper.deleteById(product.getId());
+                return "BOM 已删除，成品主档[" + product.getGoodsName() + "]已一并清理";
+            }
+            return "BOM 已删除；成品主档[" + product.getGoodsName() + "]保留（有库存或被单据引用）";
+        }
+        return "BOM 已删除";
+    }
+
+    /** D66：删除前检查——该成品名下未完结生产任务单数（前端据此事先二次确认） */
+    public BomDeleteCheckVO deleteCheck(Long id) {
+        requireBomWriteAccess();
+        BizBom bom = requireBom(id);
+        BomDeleteCheckVO result = new BomDeleteCheckVO();
+        result.setUnfinishedOrderCount(goodsReferenceService.countUnfinishedOrders(bom.getGoodsId()));
+        result.setGoodsName(bom.getGoodsName());
+        return result;
     }
 
     // ============================== 私有方法 ==============================
@@ -247,7 +278,7 @@ public class BomService {
         product.setSupplierId(DEFAULT_SUPPLIER_ID);
         product.setUnit(StringUtils.hasText(unit) ? unit.trim() : null);
         product.setStock(0);
-        product.setWarningStock(10);
+        product.setWarningStock(0); // D65：成品不参与库存预警，与手工建档默认值对齐
         product.setStatus(1);
         product.setDescription("由生产研发部 BOM 建档生成");
         baseGoodsMapper.insert(product);
