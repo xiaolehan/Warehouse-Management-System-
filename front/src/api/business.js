@@ -35,6 +35,9 @@ export const startProductionOrderAPI = (id) => request.post(`/business/productio
 export const completeProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/complete`)
 export const receiptProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/receipt`)
 export const voidProductionOrderAPI = (id, reason) => request.post(`/business/production-order/${id}/void`, null, { params: { reason } })
+// 工序打卡（D64）：complete 打卡 / revoke 撤销（本人或生产管理员）
+export const completeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/complete`)
+export const revokeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/revoke`)
 
 // 生产质检
 export const getQcSnapshotAPI = (orderId) => request.get(`/business/qc/order/${orderId}`)

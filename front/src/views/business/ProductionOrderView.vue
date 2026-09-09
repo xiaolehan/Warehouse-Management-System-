@@ -155,8 +155,49 @@
           <el-descriptions-item label="下达时间">{{ detail.createTime }}</el-descriptions-item>
         </el-descriptions>
 
-        <el-divider content-position="left">装配工序（静态 SOP）</el-divider>
-        <ol style="margin: 0; padding-left: 20px">
+        <el-divider content-position="left">生产工序</el-divider>
+        <!-- D64：有工序实例 → 状态化 10 道工序（7 道人工打卡 + 首测/成品测由质检推导 + 成品入库由入库推导）；无实例（历史单/已作废）回落静态快照 -->
+        <template v-if="detail.stepList && detail.stepList.length">
+          <el-table :data="detail.stepList" border size="small">
+            <el-table-column label="序号" width="60" align="center">
+              <template #default="s">{{ s.row.stepNo }}</template>
+            </el-table-column>
+            <el-table-column prop="stepName" label="工序" min-width="200" />
+            <el-table-column label="状态" width="170" align="center">
+              <template #default="s">
+                <el-tag :type="s.row.tagType" size="small">{{ s.row.statusText }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="打卡人 / 时间" width="190">
+              <template #default="s">
+                <template v-if="s.row.operatorName">
+                  {{ s.row.operatorName }}
+                  <span style="color: #909399">{{ (s.row.operateTime || '').replace('T', ' ').slice(0, 16) }}</span>
+                </template>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="130" align="center">
+              <template #default="s">
+                <el-button
+                  v-if="s.row.operable" link type="primary" size="small"
+                  v-permission="{ deptCodes: ['production'] }"
+                  @click="doStepComplete(s.row)"
+                >打卡</el-button>
+                <el-button
+                  v-if="s.row.revocable" link type="warning" size="small"
+                  v-permission="{ deptCodes: ['production'] }"
+                  @click="doStepRevoke(s.row)"
+                >撤销</el-button>
+                <span v-if="!s.row.operable && !s.row.revocable">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="color: #909399; font-size: 12px; margin-top: 6px">
+            首次测试/成品测在「质检记录」页面录入后自动更新；成品入库在「生产入库」后自动更新；其余 7 道由生产研发部成员打卡，打卡本人或生产管理员可撤销。
+          </div>
+        </template>
+        <ol v-else style="margin: 0; padding-left: 20px">
           <li v-for="(step, i) in (detail.processList || [])" :key="i">{{ step }}</li>
         </ol>
 
@@ -345,10 +386,12 @@ import {
   Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close
 } from '@element-plus/icons-vue'
 import {
-  receiptProductionOrderAPI,
+  completeProductionStepAPI,
   createProductionOrderAPI,
   getProductionOrderDetailAPI,
   getProductionOrderPageAPI,
+  receiptProductionOrderAPI,
+  revokeProductionStepAPI,
   startProductionOrderAPI,
   voidProductionOrderAPI
 } from '@/api/business'
@@ -498,6 +541,45 @@ const openDetail = async (row) => {
 
 const handleView = async (row) => {
   try { await openDetail(row) } catch (error) { ElMessage.error(error.message) }
+}
+
+// D64：工序打卡 / 撤销（生产研发部成员；撤销限打卡本人或生产管理员）
+const refreshDetail = async () => {
+  const res = await getProductionOrderDetailAPI(detail.value.id)
+  if (res.code === 200) detail.value = res.data || {}
+  loadList()
+}
+
+const doStepComplete = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确认工序「${row.stepName}」已完成并打卡？`, '工序打卡', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    const res = await completeProductionStepAPI(detail.value.id, row.stepNo)
+    if (res.code !== 200) throw new Error(res.msg || '打卡失败')
+    ElMessage.success(`「${row.stepName}」已打卡`)
+    await refreshDetail()
+  } catch (error) {
+    ElMessage.error(error.message || '打卡失败')
+  }
+}
+
+const doStepRevoke = async (row) => {
+  try {
+    await ElMessageBox.confirm(`确认撤销工序「${row.stepName}」的打卡？撤销后将清除打卡人与打卡时间。`, '撤销打卡', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    const res = await revokeProductionStepAPI(detail.value.id, row.stepNo)
+    if (res.code !== 200) throw new Error(res.msg || '撤销失败')
+    ElMessage.success(`「${row.stepName}」打卡已撤销`)
+    await refreshDetail()
+  } catch (error) {
+    ElMessage.error(error.message || '撤销失败')
+  }
 }
 
 const doApplyPick = async () => {

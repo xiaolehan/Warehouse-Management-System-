@@ -1,6 +1,9 @@
 package org.example.back.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
+import org.example.back.common.result.PageResult;
+import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizBom;
@@ -13,6 +16,8 @@ import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.KitShortageVO;
+import org.example.back.vo.ProductionOrderVO;
+import org.example.back.vo.QcStateVO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -22,6 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -43,6 +49,8 @@ class ProductionOrderServiceTest {
     @Mock private BizPickListMapper pickListMapper;
     @Mock private AuthzService authzService;
     @Mock private MessageService messageService;
+    @Mock private QcService qcService;
+    @Mock private ProductionStepService productionStepService;
 
     @InjectMocks private ProductionOrderService service;
 
@@ -282,5 +290,30 @@ class ProductionOrderServiceTest {
                 ArgumentCaptor.forClass(BizProductionOrder.class);
         verify(orderMapper).updateById(captor.capture());
         assertEquals(BizProductionOrder.STATUS_IN_PROGRESS, captor.getValue().getStatus());
+    }
+
+    // ---------- D64：列表页批量填充 qcState（QcView 质检进度不再恒显"未测"） ----------
+    @Test
+    void page_fillsQcStateForEachRow() {
+        ProductionOrderQueryDTO dto = new ProductionOrderQueryDTO();
+
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        Page<BizProductionOrder> p = new Page<>(1, 10);
+        p.setRecords(List.of(order));
+        when(orderMapper.selectPage(any(), any())).thenReturn(p);
+
+        QcStateVO state = new QcStateVO();
+        state.setOrderId(7L);
+        state.setFirstStatus("ok");
+        state.setFirstPassed(true);
+        when(qcService.buildStateBatch(any())).thenReturn(Map.of(7L, state));
+
+        PageResult<ProductionOrderVO> result = service.page(dto);
+
+        assertEquals(1, result.getRecords().size());
+        assertEquals("ok", result.getRecords().get(0).getQcState().getFirstStatus());
+        assertTrue(result.getRecords().get(0).getQcState().getFirstPassed());
     }
 }

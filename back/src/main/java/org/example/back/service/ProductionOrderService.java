@@ -36,6 +36,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -59,6 +60,9 @@ public class ProductionOrderService {
     private QcService qcService;
 
     @Autowired
+    private ProductionStepService productionStepService;
+
+    @Autowired
     private BizBomMapper bomMapper;
 
     @Autowired
@@ -79,17 +83,8 @@ public class ProductionOrderService {
     @Autowired
     private MessageService messageService;
 
-    // D40 8 道装配工序静态 SOP（首测/成品测两项测试工序走质检记录，不在此列）
-    private static final String[] DEFAULT_PROCESS_STEPS = {
-        "备料核对（对照BOM领料清点）",
-        "部件装配组立",
-        "线材/油管连接",
-        "紧固与扭矩校验",
-        "润滑注油",
-        "外观与装配检查",
-        "功能调试",
-        "清洁与包装"
-    };
+    // D64：10 道生产工序定稿文案与人工工序实例见 ProductionStepService.PROCESS_STEPS
+    //（原 D40 8 道通用装配 SOP 常量已废弃；第 6/8 道由质检驱动、第 10 道由入库驱动）
 
     // ============================== 权限 ==============================
 
@@ -124,7 +119,14 @@ public class ProductionOrderService {
                 .eq(queryDTO.getStatus() != null, BizProductionOrder::getStatus, queryDTO.getStatus())
                 .orderByDesc(BizProductionOrder::getId);
         Page<BizProductionOrder> page = orderMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
-        List<ProductionOrderVO> records = page.getRecords().stream().map(this::toVO).toList();
+        // D64 质检进度列表修复：列表行批量填充 qcState（一次 in 查询分组推导），QcView 列表不再恒显"未测"
+        Map<Long, QcStateVO> qcStates = qcService.buildStateBatch(page.getRecords());
+        List<ProductionOrderVO> records = new ArrayList<>(page.getRecords().size());
+        for (BizProductionOrder order : page.getRecords()) {
+            ProductionOrderVO vo = toVO(order);
+            vo.setQcState(qcStates.get(order.getId()));
+            records.add(vo);
+        }
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -146,6 +148,8 @@ public class ProductionOrderService {
                 || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED) {
             vo.setQcState(qcService.buildState(order));
         }
+        // D64：10 道工序行（人工行读步骤实例，第 6/8/10 道实时推导；历史单无实例返回 null，前端回落快照文字）
+        vo.setStepList(productionStepService.listSteps(order));
         return vo;
     }
 
@@ -166,10 +170,12 @@ public class ProductionOrderService {
         order.setStatus(BizProductionOrder.STATUS_PENDING);
         order.setKitStatus(kit.kitStatus);
         order.setSource(BizProductionOrder.SOURCE_MANUAL);
-        order.setProcessSnapshot(String.join("\n", DEFAULT_PROCESS_STEPS));
+        order.setProcessSnapshot(String.join("\n", ProductionStepService.PROCESS_STEPS));
         order.setRemark(dto.getRemark());
         orderMapper.insert(order);
         BizProductionOrder saved = orderMapper.selectById(order.getId());
+        // D64：初始化 7 道人工工序实例行
+        productionStepService.initStepsForOrder(saved.getId());
 
         // D60：建单即齐套预警——存在严重缺料/未知物料时通知采购管理员（作废时由 voidOrder 撤未读）
         if (BizProductionOrder.KIT_BLOCK.equals(kit.kitStatus)) {

@@ -16,8 +16,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 生产质检（D40）：首测/成品测两个测点，追加式记录。
@@ -134,7 +137,31 @@ public class QcService {
     // ============================== 状态推导 ==============================
 
     public QcStateVO buildState(BizProductionOrder order) {
-        List<BizProductionQc> records = listByOrder(order.getId());
+        return buildStateFor(order, listByOrder(order.getId()));
+    }
+
+    /**
+     * 批量构建多张任务单的质检状态（D64 质检进度列表修复）：
+     * 一次 in 查询取回全部记录按单分组推导，避免列表页逐行 N 次查询。
+     */
+    public Map<Long, QcStateVO> buildStateBatch(List<BizProductionOrder> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<BizProductionQc> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(BizProductionQc::getOrderId, orders.stream().map(BizProductionOrder::getId).toList())
+                .orderByAsc(BizProductionQc::getId);
+        List<BizProductionQc> all = qcMapper.selectList(wrapper);
+        Map<Long, List<BizProductionQc>> byOrder = all.stream()
+                .collect(Collectors.groupingBy(BizProductionQc::getOrderId));
+        Map<Long, QcStateVO> result = new HashMap<>();
+        for (BizProductionOrder order : orders) {
+            result.put(order.getId(), buildStateFor(order, byOrder.getOrDefault(order.getId(), List.of())));
+        }
+        return result;
+    }
+
+    private QcStateVO buildStateFor(BizProductionOrder order, List<BizProductionQc> records) {
         PointState first = latestOfPoint(records, BizProductionQc.POINT_FIRST);
         PointState last = latestOfPoint(records, BizProductionQc.POINT_FINAL);
 

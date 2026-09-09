@@ -32,8 +32,11 @@ public class ProductionOrderVO {
 
     private String source;
 
-    /** 工序清单快照(8道装配工序静态 SOP) */
+    /** 工序清单快照(SOP 文字；详情有工序实例时由 stepList 取代，历史单回落) */
     private List<String> processList;
+
+    /** 10 道生产工序行（D64：人工行+质检/入库推导行；历史单无实例时为 null） */
+    private List<ProductionStepVO> stepList;
 
     private String remark;
 

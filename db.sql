@@ -1502,3 +1502,48 @@ ALTER TABLE `biz_pick_list_detail`
     ADD COLUMN `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格快照(建单时自物料主数据带入,D63)' AFTER `goods_name`,
     ADD COLUMN `material` VARCHAR(100) DEFAULT NULL COMMENT '材质快照(建单时自物料主数据带入,D63)' AFTER `spec`,
     ADD COLUMN `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注快照(建单时自物料主数据描述带入,D63)' AFTER `material`;
+
+-- ============================================================
+-- 13.x D64 生产工序打卡追踪 + 质检进度列表修复
+-- 1) 工序实例表：仅 7 道人工装配工序落库（第 6 首次测试/8 成品测试/10 成品入库
+--    由质检记录与订单状态实时推导展示，不落库——避免双源不一致）
+-- 2) 打卡不是流程闸口（D40 质检仍是唯一质量闸口）；撤销限本人或生产管理员
+-- 3) 存量单：未完结(status 1/2/3)刷新快照为新 10 道并初始化 7 行；已完结/作废/报废保留历史快照
+-- ============================================================
+CREATE TABLE IF NOT EXISTS `biz_production_order_step` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `order_id` BIGINT NOT NULL COMMENT '生产任务单 id',
+    `step_no` INT NOT NULL COMMENT '工序序号(人工工序: 1/2/3/4/5/7/9)',
+    `step_name` VARCHAR(100) NOT NULL COMMENT '工序名称(建单时快照)',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '完成状态: 0-未完成, 1-已完成',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '打卡人 id(完成时)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '打卡人姓名',
+    `operate_time` DATETIME DEFAULT NULL COMMENT '打卡时间',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_step_order_no` (`order_id`, `step_no`),
+    KEY `idx_step_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产工序实例（D64 打卡追踪，仅 7 道人工装配工序）';
+
+-- 存量未完结单：工序快照刷新为新 10 道
+UPDATE `biz_production_order`
+    SET `process_snapshot` = '磁性材料装配\n底座结构组装\n手柄机构装配\nPCB板焊接及安装\n程序烧录\n首次测试\n屏蔽壳安装\n成品测试\n发合格证、条码、标签、配件及包装\n成品入库'
+    WHERE `status` IN (1, 2, 3) AND `is_deleted` = 0;
+
+-- 存量未完结单：初始化 7 道人工工序行（已有步骤行的单跳过）
+INSERT INTO `biz_production_order_step` (`order_id`, `step_no`, `step_name`)
+SELECT o.`id`, s.`step_no`, s.`step_name`
+FROM `biz_production_order` o
+CROSS JOIN (
+    SELECT 1 AS step_no, '磁性材料装配' AS step_name UNION ALL
+    SELECT 2, '底座结构组装' UNION ALL
+    SELECT 3, '手柄机构装配' UNION ALL
+    SELECT 4, 'PCB板焊接及安装' UNION ALL
+    SELECT 5, '程序烧录' UNION ALL
+    SELECT 7, '屏蔽壳安装' UNION ALL
+    SELECT 9, '发合格证、条码、标签、配件及包装'
+) s
+WHERE o.`status` IN (1, 2, 3) AND o.`is_deleted` = 0
+  AND NOT EXISTS (SELECT 1 FROM `biz_production_order_step` t WHERE t.`order_id` = o.`id`);

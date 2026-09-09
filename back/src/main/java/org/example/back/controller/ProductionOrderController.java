@@ -1,12 +1,14 @@
 package org.example.back.controller;
 
 import jakarta.validation.Valid;
+import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.service.ProductionOrderService;
+import org.example.back.service.ProductionStepService;
 import org.example.back.vo.ProductionOrderVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +19,9 @@ public class ProductionOrderController {
 
     @Autowired
     private ProductionOrderService productionOrderService;
+
+    @Autowired
+    private ProductionStepService productionStepService;
 
     @GetMapping("/page")
     public Result<PageResult<ProductionOrderVO>> page(ProductionOrderQueryDTO queryDTO) {
@@ -52,6 +57,26 @@ public class ProductionOrderController {
     @PreventDuplicateSubmit(message = "请勿重复入库")
     public Result<Void> receipt(@PathVariable Long id) {
         productionOrderService.receipt(id);
+        return Result.success();
+    }
+
+    // ============================== 工序打卡（D64） ==============================
+
+    /** 人工工序打卡（生产部门成员） */
+    @PostMapping("/{id}/steps/{stepNo}/complete")
+    @PreventDuplicateSubmit(message = "请勿重复提交工序打卡")
+    @AuditLog(module = "生产工序", action = "打卡", targetType = "生产任务单")
+    public Result<Void> completeStep(@PathVariable Long id, @PathVariable Integer stepNo) {
+        productionStepService.complete(id, stepNo);
+        return Result.success();
+    }
+
+    /** 撤销打卡（本人或生产管理员） */
+    @PostMapping("/{id}/steps/{stepNo}/revoke")
+    @PreventDuplicateSubmit(message = "请勿重复提交撤销打卡")
+    @AuditLog(module = "生产工序", action = "撤销打卡", targetType = "生产任务单")
+    public Result<Void> revokeStep(@PathVariable Long id, @PathVariable Integer stepNo) {
+        productionStepService.revoke(id, stepNo);
         return Result.success();
     }
 
