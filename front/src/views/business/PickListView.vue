@@ -76,7 +76,7 @@
     </el-card>
 
     <!-- 详情对话框 -->
-    <el-dialog v-model="viewVisible" title="领料单详情" width="640px">
+    <el-dialog v-model="viewVisible" title="领料单详情" width="760px">
       <el-descriptions :column="2" border v-if="viewData">
         <el-descriptions-item label="单号">{{ viewData.pickNo }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ viewData.pickTypeText }}</el-descriptions-item>
@@ -92,8 +92,17 @@
       </el-descriptions>
       <el-table :data="viewData?.details || []" border size="small" style="margin-top: 12px">
         <el-table-column label="序号" width="60" type="index" />
-        <el-table-column prop="goodsName" label="商品" />
-        <el-table-column prop="quantity" label="数量" width="100" />
+        <el-table-column prop="goodsName" label="物料" />
+        <el-table-column label="规格" width="130">
+          <template #default="{ row }">{{ row.spec || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="材质" width="110">
+          <template #default="{ row }">{{ row.material || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="150">
+          <template #default="{ row }">{{ row.remark || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="quantity" label="数量" width="70" />
       </el-table>
     </el-dialog>
 
@@ -113,7 +122,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import {
@@ -191,8 +200,21 @@ const handleView = async (row) => {
   }
 }
 
+// D63：发料确认逐行列出「物料（规格/材质）×数量」，消除仓储找货歧义
+const issueDetailLines = (details) => (details || []).map(d => {
+  const sm = [d.spec, d.material].filter(Boolean).join(' / ')
+  return h('div', { style: 'line-height: 1.8' }, `${d.goodsName}（${sm || '—'}）× ${d.quantity}`)
+})
+
 const handleIssue = (row) => {
-  ElMessageBox.confirm(`确认发料？${row.pickTypeText === '退料' ? '退料将回流入库' : '将扣减库存'}`, '确认', { type: 'warning' })
+  const tip = row.pickTypeText === '退料' ? '确认退料入库？退料将回流入库。' : '确认发料？将扣减库存。'
+  const hasLines = (row.details || []).length > 0
+  ElMessageBox.confirm(
+    hasLines
+      ? h('div', null, [h('div', { style: 'margin-bottom: 8px' }, tip), ...issueDetailLines(row.details)])
+      : tip,
+    '发料确认', { type: 'warning' }
+  )
     .then(async () => {
       const res = await issuePickListAPI(row.id)
       if (res.code !== 200) throw new Error(res.msg || '发料失败')

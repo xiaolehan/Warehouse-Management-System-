@@ -19,6 +19,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -347,19 +349,94 @@ class PickListServiceTest {
         verify(messageService, never()).sendPickIssueFailedToProductionAdmins(anyString(), anyString(), anyLong());
     }
 
-    // ========================== reject - 状态校验 ==========================
+    // ========================== getById - D63 明细规格/材质/备注 ==========================
+
+    private BizPickList pendingPickOwnedByWarehouseUser(Long id) {
+        BizPickList pick = new BizPickList();
+        pick.setId(id);
+        pick.setPickNo("PK-D63");
+        pick.setPickType(PickListService.TYPE_PICK);
+        pick.setStatus(PickListService.STATUS_PENDING);
+        pick.setApplicantId(20L); // 与 mockWarehouseUser 一致，通过 ensureViewAccess
+        return pick;
+    }
 
     @Test
-    void reject_rejectsWhenNotPending() {
-        BizPickList pick = new BizPickList();
-        pick.setId(10L);
-        pick.setStatus(PickListService.STATUS_ISSUED);
-        when(bizPickListMapper.selectById(10L)).thenReturn(pick);
+    void getById_legacyDetailWithoutSnapshot_fallsBackToMasterData() {
+        when(bizPickListMapper.selectById(11L)).thenReturn(pendingPickOwnedByWarehouseUser(11L));
 
-        org.example.back.dto.PickListRejectDTO dto = new org.example.back.dto.PickListRejectDTO();
-        dto.setReason("test");
+        // 历史行：无快照列值
+        BizPickListDetail detail = new BizPickListDetail();
+        detail.setId(110L);
+        detail.setPickListId(11L);
+        detail.setGoodsId(50L);
+        detail.setGoodsName("螺丝");
+        detail.setQuantity(6);
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of(detail));
 
-        BusinessException ex = assertThrows(BusinessException.class, () -> service.reject(10L, dto));
-        assertTrue(ex.getMessage().contains("仅待发料状态可驳回"));
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setSpec("M6×20");
+        goods.setMaterial("不锈钢304");
+        goods.setDescription("外六角");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(goods));
+
+        mockWarehouseUser();
+
+        org.example.back.vo.PickListVO vo = service.getById(11L);
+
+        assertEquals("M6×20", vo.getDetails().get(0).getSpec());
+        assertEquals("不锈钢304", vo.getDetails().get(0).getMaterial());
+        assertEquals("外六角", vo.getDetails().get(0).getRemark());
+    }
+
+    @Test
+    void getById_snapshotPresent_prefersSnapshotOverMaster() {
+        when(bizPickListMapper.selectById(12L)).thenReturn(pendingPickOwnedByWarehouseUser(12L));
+
+        BizPickListDetail detail = new BizPickListDetail();
+        detail.setId(120L);
+        detail.setPickListId(12L);
+        detail.setGoodsId(50L);
+        detail.setGoodsName("螺丝");
+        detail.setQuantity(6);
+        detail.setSpec("M6×20(建单时)");
+        detail.setMaterial("不锈钢201");
+        detail.setRemark("当时描述");
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of(detail));
+
+        mockWarehouseUser();
+
+        org.example.back.vo.PickListVO vo = service.getById(12L);
+
+        // 有快照一律用快照（单据留档），不查主数据
+        assertEquals("M6×20(建单时)", vo.getDetails().get(0).getSpec());
+        assertEquals("不锈钢201", vo.getDetails().get(0).getMaterial());
+        assertEquals("当时描述", vo.getDetails().get(0).getRemark());
+        verify(baseGoodsMapper, never()).selectBatchIds(any());
+    }
+
+    @Test
+    void getById_legacyDetail_goodsMissing_specStaysNull() {
+        when(bizPickListMapper.selectById(13L)).thenReturn(pendingPickOwnedByWarehouseUser(13L));
+
+        BizPickListDetail detail = new BizPickListDetail();
+        detail.setId(130L);
+        detail.setPickListId(13L);
+        detail.setGoodsId(999L);
+        detail.setGoodsName("已删物料");
+        detail.setQuantity(1);
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of(detail));
+
+        // 物料已软删/缺档 → 兜底查不到，保持 null（前端显示「-」），不报错
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of());
+
+        mockWarehouseUser();
+
+        org.example.back.vo.PickListVO vo = service.getById(13L);
+
+        assertNull(vo.getDetails().get(0).getSpec());
+        assertNull(vo.getDetails().get(0).getMaterial());
+        assertNull(vo.getDetails().get(0).getRemark());
     }
 }

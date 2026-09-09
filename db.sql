@@ -1492,3 +1492,13 @@ UPDATE biz_purchase_request_detail d
 
 ALTER TABLE `biz_purchase_request`
     DROP COLUMN `expected_arrival_time`;
+
+-- ============================================================
+-- 12.x D63 领料/退料明细规格材质备注展示
+-- 1) 领料明细快照物料主数据规格/材质/备注（备注=主数据描述；非 BOM 行备注，与 10.x 补料快照不同源）
+-- 2) 建单时服务端写入（createPick/createReturn/create 三处）；存量行保持 NULL，展示层兜底实时读主数据
+-- ============================================================
+ALTER TABLE `biz_pick_list_detail`
+    ADD COLUMN `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格快照(建单时自物料主数据带入,D63)' AFTER `goods_name`,
+    ADD COLUMN `material` VARCHAR(100) DEFAULT NULL COMMENT '材质快照(建单时自物料主数据带入,D63)' AFTER `spec`,
+    ADD COLUMN `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注快照(建单时自物料主数据描述带入,D63)' AFTER `material`;

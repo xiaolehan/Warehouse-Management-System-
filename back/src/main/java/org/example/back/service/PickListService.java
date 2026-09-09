@@ -25,6 +25,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -342,11 +343,30 @@ public class PickListService {
         vo.setRemark(entity.getRemark());
         vo.setCreateTime(entity.getCreateTime());
         vo.setIsDeleted(entity.getIsDeleted());
-        vo.setDetails(listDetails(entity.getId()).stream().map(this::toDetailVO).toList());
+        vo.setDetails(toDetailVOs(listDetails(entity.getId())));
         return vo;
     }
 
-    private PickListDetailVO toDetailVO(BizPickListDetail detail) {
+    /**
+     * D63：明细转 VO。行上有快照（spec 非空）一律用快照（单据留档）；
+     * 历史行无快照时兜底实时读物料主数据补显（软删/缺档保持 null，前端显示「-」）。
+     */
+    private List<PickListDetailVO> toDetailVOs(List<BizPickListDetail> details) {
+        List<Long> fallbackGoodsIds = details.stream()
+                .filter(d -> d.getSpec() == null && d.getGoodsId() != null)
+                .map(BizPickListDetail::getGoodsId)
+                .distinct()
+                .toList();
+        Map<Long, BaseGoods> fallbackGoods = fallbackGoodsIds.isEmpty()
+                ? Map.of()
+                : baseGoodsMapper.selectBatchIds(fallbackGoodsIds).stream()
+                        .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        return details.stream()
+                .map(d -> toDetailVO(d, d.getSpec() == null ? fallbackGoods.get(d.getGoodsId()) : null))
+                .toList();
+    }
+
+    private PickListDetailVO toDetailVO(BizPickListDetail detail, BaseGoods fallbackGoods) {
         PickListDetailVO vo = new PickListDetailVO();
         vo.setId(detail.getId());
         vo.setPickListId(detail.getPickListId());
@@ -354,6 +374,15 @@ public class PickListService {
         vo.setGoodsName(detail.getGoodsName());
         vo.setQuantity(detail.getQuantity());
         vo.setSortNo(detail.getSortNo());
+        if (fallbackGoods != null) {
+            vo.setSpec(fallbackGoods.getSpec());
+            vo.setMaterial(fallbackGoods.getMaterial());
+            vo.setRemark(fallbackGoods.getDescription());
+        } else {
+            vo.setSpec(detail.getSpec());
+            vo.setMaterial(detail.getMaterial());
+            vo.setRemark(detail.getRemark());
+        }
         return vo;
     }
 

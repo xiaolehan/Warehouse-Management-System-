@@ -23,6 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 生产端领料：按生产任务单 BOM 全量申请领料，生成 PICK 领料单后交仓储确认出库。
@@ -79,6 +82,13 @@ public class ProductionPickService {
             throw BusinessException.validateFail("该生产任务单已申请领料，请勿重复");
         }
 
+        // D63：建单时快照物料主数据规格/材质/备注，单据留档（历史行展示由 PickListService 兜底实时读）
+        Map<Long, BaseGoods> goodsMap = loadGoodsSnapshot(items.stream()
+                .map(ProductionPickItemVO::getGoodsId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList());
+
         int sortNo = 0;
         for (ProductionPickItemVO item : items) {
             BizPickListDetail det = new BizPickListDetail();
@@ -86,6 +96,7 @@ public class ProductionPickService {
             det.setGoodsId(item.getGoodsId());
             det.setGoodsName(item.getGoodsName());
             det.setQuantity(item.getQuantity());
+            applyGoodsSnapshot(det, goodsMap.get(item.getGoodsId()));
             det.setSortNo(sortNo++);
             pickListDetailMapper.insert(det);
         }
@@ -150,6 +161,7 @@ public class ProductionPickService {
             det.setGoodsId(goods.getId());
             det.setGoodsName(goods.getGoodsName());
             det.setQuantity(item.getQuantity());
+            applyGoodsSnapshot(det, goods);
             det.setSortNo(sortNo++);
             pickListDetailMapper.insert(det);
         }
@@ -165,6 +177,24 @@ public class ProductionPickService {
         LambdaQueryWrapper<BizPickList> w = new LambdaQueryWrapper<>();
         w.eq(BizPickList::getProductionOrderId, orderId).orderByDesc(BizPickList::getId);
         return pickListMapper.selectList(w).stream().map(this::toVO).toList();
+    }
+
+    /** D63：按物料主数据批量取规格/材质/描述，用于建单时快照。 */
+    private Map<Long, BaseGoods> loadGoodsSnapshot(List<Long> goodsIds) {
+        if (goodsIds.isEmpty()) {
+            return Map.of();
+        }
+        return baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+    }
+
+    private void applyGoodsSnapshot(BizPickListDetail det, BaseGoods goods) {
+        if (goods == null) {
+            return;
+        }
+        det.setSpec(goods.getSpec());
+        det.setMaterial(goods.getMaterial());
+        det.setRemark(goods.getDescription());
     }
 
     /**

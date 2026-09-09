@@ -21,6 +21,15 @@ public class BizPickListDetail {
 
     private String goodsName;
 
+    /** 规格快照（建单时自物料主数据带入，D63） */
+    private String spec;
+
+    /** 材质快照（建单时自物料主数据带入，D63） */
+    private String material;
+
+    /** 备注快照（建单时自物料主数据描述带入，D63） */
+    private String remark;
+
     private Integer quantity;
 
     private Integer sortNo;

@@ -241,4 +241,80 @@ class ProductionPickServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.createReturn(999L, null));
         assertTrue(ex.getMessage().contains("生产任务单不存在"));
     }
+
+    // ========================== D63 明细快照规格/材质/备注 ==========================
+
+    @Test
+    void createPick_snapshotsSpecMaterialRemarkFromMaster() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("SC-0001");
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        when(pickListMapper.selectCount(any())).thenReturn(0L);
+
+        ProductionPickItemVO item = new ProductionPickItemVO();
+        item.setGoodsId(50L);
+        item.setGoodsName("螺丝");
+        item.setQuantity(6);
+        when(productionOrderService.computePickItems(7L)).thenReturn(List.of(item));
+
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setGoodsName("螺丝");
+        goods.setSpec("M6×20");
+        goods.setMaterial("不锈钢304");
+        goods.setDescription("外六角，用于面板固定");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(goods));
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        service.createPick(7L);
+
+        ArgumentCaptor<BizPickListDetail> dcap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(dcap.capture());
+        assertEquals("M6×20", dcap.getValue().getSpec());
+        assertEquals("不锈钢304", dcap.getValue().getMaterial());
+        assertEquals("外六角，用于面板固定", dcap.getValue().getRemark());
+    }
+
+    @Test
+    void createReturn_snapshotsSpecMaterialRemarkFromMaster() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("SC-0001");
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setGoodsName("螺丝");
+        goods.setSpec("M8×30");
+        goods.setMaterial("45#钢");
+        goods.setDescription("内六角");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(goods);
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(3);
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of(item));
+
+        service.createReturn(7L, dto);
+
+        ArgumentCaptor<BizPickListDetail> dcap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(dcap.capture());
+        assertEquals("M8×30", dcap.getValue().getSpec());
+        assertEquals("45#钢", dcap.getValue().getMaterial());
+        assertEquals("内六角", dcap.getValue().getRemark());
+    }
 }
