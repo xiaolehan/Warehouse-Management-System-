@@ -472,6 +472,28 @@
 - [x] F2 ProductionOrderView 详情：stepList 有值渲染工序表格（序号/工序/状态 tag/打卡人时间/打卡撤销按钮，v-permission `{ deptCodes: ['production'] }` 匹配后端任意成员+超管语义），无 stepList 回落 processList 文字列表；分隔条改「生产工序」+ 脚注说明 6/8/10 自动更新
 - [x] F3 build + E2E（curl 全链路：建单初始化 10 行 → 待生产打卡拦截 → 开工 → 员工打卡/重复打卡/管理员撤他人/本人撤销/再撤销 → 派生 step6 拒打卡 → sales_admin 打卡与读详情双 403 → 首测/成品测 OK 推导 step6/8 → 入库推导 step10 → **page 行级 qcState 填充验证（QcView bug 修复）** → 测试数据软删+库存恢复）
 
+### 阶段 19：主数据分域（物料/成品管理）+ BOM 删除治理 + 业务下拉收紧（D65–D67，2026-09-09 会话 23）
+
+- 背景（用户三项调整）：① 现「物料管理」页成品/物料混显，要拆出「成品管理」页；② BOM 导入按钮叫"批量导入"实际一次只能导入一个 BOM；③ 删 BOM 后自动建档的成品主档残留，"下达生产任务单"下拉仍可见该成品。
+- 调研结论：`page()/options()` 已支持 type 过滤；`resolveOrCreateProduct` 已按 goods_name+type=product 复用同名成品；缺货识别/首页低库存统计**不排除成品**且自动建档成品 `warning_stock=10`（新建 BOM 即被缺货识别扫出）；删 BOM=软删，下达下拉读 `base_goods type=product` 与 BOM 表无关（后端 `requireBomOfProduct` 本就拦截无 BOM 建单，纯 UX 缺口）；`biz_bom.goods_id` 唯一键 `uk_bom_goods` 使"软删后重建"必撞键报错。
+- 决策（grilling 两轮定案，用户逐题确认）：**D65** 同表分页 + 成品允许手工建档（修订 D46）+ 成品全链路排除预警 + 导入改名「BOM导入」；**D66** 下达下拉只列有有效 BOM 的成品 + 删 BOM 软保护（未完结任务单二次确认）+ 安全级联清理成品主档（库存=0 且无任何单据引用）+ DROP uk_bom_goods 改应用层查重；**D67** 业务下拉收紧（销售下单/生产入库→成品，商品进货/采购申请→物料）。
+
+#### 后端
+- [x] B1 db.sql 14.x：DROP INDEX uk_bom_goods + uk_bom_code（软删后重建同成品/同编码 BOM 均会撞 DB 唯一键，查重改由应用层 checkGoodsBomUnique/checkBomCodeUnique 按 is_deleted=0 保证；本地执行；CREATE 块保留两键供 14.x DROP 顺序重放）；14.y 补强：生成列 active_goods_id/active_bom_code + 软删兼容唯一键（并发双活 BOM 的 DB 兜底）+ idx_bom_goods/idx_bom_code/idx_qc_goods 普通索引
+- [x] B2 GoodsService：成品手工建档（create 分支：缺省供应商1/category=成品/warning_stock=0）；update 成品专属路径（采购不可改成品，不动 supplier/warning）；预警三处排除成品（PurchaseRequestService.listShortageGoods / HomeService.countLowStockGoods / page warningOnly）；options 加 hasBom 过滤
+- [x] B3 BomService：删除治理（delete-check 未完结任务单计数 + 软保护确认后放行；级联校验：成品 stock=0 且无 生产任务单/生产入库/销售/销售退货/进货/退货/采购申请明细/领料明细/BOM明细 引用 → 软删成品主档，否则保留）；复用口径维持 type=product
+- [x] B4 Controller：GoodsController options 加 hasBom；BomController 加 GET /{id}/delete-check
+- [x] B5 单测：GoodsServiceTest（成品建档默认值/预警排除/hasBom）+ BomServiceTest（删除三分支：级联删/保留/软保护拦截）
+
+#### 前端
+- [x] F1 GoodsView 按 route goodsType 渲染两页（物料页现状字段 + 成品页：名称/单位/规格/备注/库存，隐藏供应商/进价/预警/材质/种类/产品名称，加创建来源列）；路由 /base/products + 菜单与物料管理并列
+- [x] F2 BomView：「批量导入」→「BOM导入」；删除走 delete-check 二次确认
+- [x] F3 ProductionOrderView 成品下拉改 hasBom 选项；SalesView/ProductionView→type=product；PurchaseView/PurchaseRequestView→type=material
+- [x] F4 npm build + 重启两端 + curl E2E
+
+#### 验收
+- [x] 成品手工建档→建 BOM 复用；删 BOM 三分支（级联删/保留/软保护确认）；下达下拉过滤；缺货识别/首页统计无成品；四业务下拉收紧；软删后重建 BOM 不撞键；权限负测（body code）；测试数据清理
+
 ---
 
 ## ✅ 关键决策记录
@@ -520,6 +542,9 @@
 | D44 | 现有 `product_name` 保留但不作为权威"成品—物料"关系；新 BOM 系统以 BOM 表为准 | 避免迁移风险；product_name 此前只是自由文本标签 | 2026-08-31 |
 | D45 | BOM 录入：生产研发部导入 xlsx（物料名称/规格/数量/材质/备注模板）+ 手工新增；用 PTO153 试点先跑通链路 | 现有大量成品 BOM 需批量录入；PTO153 文档作试点数据 | 2026-08-31 |
 | D64 | 生产工序打卡追踪：新增 biz_production_order_step 仅落 7 道人工装配工序（第 6/8/10 道由质检/入库状态实时推导不落库），工序文案定稿 10 道；打卡不设流程闸口（质检仍是唯一闸口），生产成员可打卡、本人/生产管理员可撤销，仅生产中/待入库可操作；未完结存量单刷新快照+初始化，历史单保留；质检进度列表"未测" bug 由 page() 批量填 qcState 修复 | 用户要"动态"工序且确认走 A；打卡只是完成留痕≠报工 MES（D40 Avoid 收窄为报工级）；避免双源不一致 | 2026-09-09 |
+| D65 | 主数据分域：base_goods 同表分页（物料管理/成品管理两页），成品允许手工建档（修订 D46，缺省供应商1/category=成品/预警0），成品全链路排除预警与缺货识别，BOM 导入按钮改名「BOM导入」 | 物料/成品字段差异大，混显干扰；成品无预警语义；导入一次一个 BOM 名不符实 | 2026-09-09 |
+| D66 | 下达任务单下拉只列有有效 BOM 的成品（options hasBom 过滤）；删 BOM 软保护（未完结任务单>0 二次确认，force 放行）；删 BOM 安全级联（成品 stock=0 且无任何单据引用才软删主档，否则保留）；DROP uk_bom_goods/uk_bom_code 改应用层查重 | 删 BOM 后成品残留堵下达下拉是用户痛点；级联只清真孤儿；DB 唯一键不过滤软删行会误伤重建 | 2026-09-09 |
+| D67 | 业务下拉收紧：销售下单/生产入库→仅成品(type=product)；商品进货/采购申请→仅物料(type=material)；生产任务单下达成品加 hasBom | 下拉只该出现业务语义内的事物，防选错 | 2026-09-09 |
 
 ---
 

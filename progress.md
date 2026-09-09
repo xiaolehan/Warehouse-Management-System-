@@ -5,6 +5,40 @@
 
 ---
 
+## 会话 24 — 2026-09-09
+
+### 阶段 19 修复轮：7 角度 code-review 发现的 P0/P1/P2 全部落地 + 双轴复审通过
+
+- **起因：** 会话 23 完成后跑 7 角度 code-review， consolidated 出 4 个 P0 功能缺陷、3 个 P1 健壮性、6 个 P2 质量项；用户指令「完成所有修复，注意不要更改项目逻辑」。
+- **P0 修复：**
+  - GoodsView 双路由切换不刷新——加 `watch(() => props.goodsType)` 重拉（同组件复用，路由切 props 不触发 onMounted）。
+  - GoodsView 删除失败静默——`catch(() => {})` 吞掉后端拒绝；改 async try/catch 展示 `error.message`（用户取消 'cancel' 不提示）。
+  - 编辑保存硬编码 `status:1` 误激活已停用条目——物料/成品两分支均改为仅新增置 1、编辑不传（后端 null 保留原值）。
+  - 成品删除守卫漏查 biz_bom 主表——`GoodsReferenceService.hasAnyDocumentReference` 首查 BOM（@TableLogic 过滤软删；BOM 级联先软删 BOM 再查，不会自我拦截）。
+  - db.sql 自相矛盾——CREATE 块恢复 uk_bom_code/uk_bom_goods（配合 14.x DROP 可顺序重放；应用层查重仍按 is_deleted=0）。
+- **P1 修复：** 14.y 生成列 `active_goods_id`/`active_bom_code` + 软删兼容唯一键（并发双活 BOM 的 DB 兜底，软删行归 NULL 不挡重建）+ idx_bom_goods/idx_bom_code/idx_qc_goods 普通索引（本地已执行，执行前校验无双活数据）；D67 服务端兜底——`GoodsService.ensureGoodsType` 静态校验接入销售/生产入库（仅成品）、商品进货 create+createInternal/采购申请（仅物料）5 处，type=null 按物料兜底兼容历史数据。
+- **P2 修复：** `GoodsService.excludeProducts` 共享助手替换 4 处内联 `.ne(type,'product')`；BOM 建档成品 warningStock 10→0（与手工建档对齐）；`BomDeleteCheckVO` 替换 Map 返回；`BizProductionOrder.UNFINISHED_STATUSES` 状态集单点定义；成品「创建来源」改 goodsCode 前缀判别（PRD/GD，替代 description 文案匹配）；GoodsView 去重（goodsNoun computed、handleSave 单一出口、v-else-if 修复双指令）；`getGoodsOptionsAPI` 收口 base.js（business.js 转导出）。
+- **验证：** `./mvnw compile` + 全量 130/130 单测（BomServiceTest 5 改 mock 到 goodsReferenceService、GoodsServiceTest +2 个 ensureGoodsType 用例）；`npm run build` 通过；scratch 库（ft_ 前缀重写）顺序重放 db.sql 验证 14.x/14.y 可全新安装（遗留对象已清理）；curl 负测 5 项全中（四类单据选错形态各 400 精确文案 + 删有 BOM 成品 400）；正路回归（销售选成品/进货选物料 200）+ 测试数据清理无残留库存不变。
+- **双轴复审（mattpocock-skills:code-review）：** Standards 轴无硬性违规；Spec 轴修复清单全落地。遗留 judgement-call：① db.sql 七、增量迁移段与 CREATE 块列重复（8 处 ADD COLUMN duplicate），全新安装需 `--force` 或跳过第七节——文件头注释已自述「全新库可忽略」，属历史设计未动；② BomService.delete 重复删除报错文案由「该 BOM 已删除」变「BOM 不存在」（@TableLogic 兜底，结果同为 400）；③ 物料编辑 payload 带 type:'material' 会把历史 NULL 行归一（阶段 19 既有行为，方向正确）。
+- **运维教训（新增）：** wms_user 仅 `warehouse_management.*` 权限，scratch 库验证只能库内表前缀重写；db.sql 有两处**裸表名**语句（9.x ALTER biz_pick_list、11.x UPDATE）前缀重写会漏改打到正式表——重写须覆盖裸名，本次两条恰好在正式表执行失败（duplicate/unknown column）零损害。
+
+---
+
+## 会话 23 — 2026-09-09
+
+### 阶段 19 主数据分域 + BOM 删除治理 + 业务下拉收紧（D65–D67，已完成 + E2E 全链路通过）
+
+- **需求（grill-with-docs 两轮定案）：** ① 物料/成品拆两页管理，成品不做物料关联、不预警；② BOM「批量导入」名不符实→改名「BOM导入」；③ 删 BOM 后自动建档成品残留、堵在「下达生产任务单」下拉里。
+- **后端：** DDL 14.x DROP uk_bom_goods/uk_bom_code（软删后重建同成品/同编码 BOM 必撞 DB 唯一键，查重改应用层 checkGoodsBomUnique/checkBomCodeUnique 按 is_deleted=0；本地已执行，CREATE 块保留两键供顺序重放）；新建 `GoodsReferenceService`（10 张业务表引用检查，避免 GoodsService↔BomService 循环依赖）；GoodsService 成品手工建档（缺省供应商1/成品类/预警0）+ update 成品专属路径（采购改成品 403，不动 supplier/warning/productName）+ 预警三处排除成品（HomeService 低库存/零库存、PurchaseRequestService 缺货识别、page warningOnly）+ options(type,hasBom)；BomService delete-check（未完结任务单计数）+ 软保护（force 放行）+ 安全级联（成品 stock=0 且无单据引用才软删，否则保留并回传说明）；Controller 端点齐。
+- **E2E 揪出并修复集成缺口：** `GoodsSaveDTO.supplierId` 的 `@NotNull` 挡在 Service 成品缺省供应商逻辑之前——手工建档不带供应商必被 400「供应商不能为空」拦死（单测直接调 Service 测不到）。修复：DTO 放开 supplierId，requireSupplier 补 id==null 友好提示（物料空供应商仍拦）。
+- **前端：** GoodsView 单组件按路由 goodsType prop 渲染物料/成品两页（成品页：名称/单位/规格/库存/备注/创建来源列——按 goodsCode 前缀打标（PRD=BOM建档/GD=手工，会话24 起；此前曾按 description 文案匹配）；隐藏供应商/进价/预警/材质/种类/产品名；rules 成品仅名称必填）；路由 /base/products（props goodsType=product）+ 四个菜单块（采购/仓储/生产 admin、采购员工）加「成品管理」并列入口；BomView「批量导入」→「BOM导入」+ 删除流程改 delete-check 预检（未完结任务单>0 弹软保护确认，force=true，成功 toast 后端级联结果文案）；ProductionOrderView 下达成品下拉 `{hasBom:true}`；ProductionView/SalesView 成品、PurchaseView 物料、PurchaseRequestView 物料（business.js getGoodsOptionsAPI 支持 params）。`npm run build` 通过。
+- **测试：** 后端全量 128/128 绿（GoodsServiceTest 8 例含成品建档默认值/成品更新不抹字段/采购不可改/删除守卫；BomServiceTest 5 例含 delete-check 计数/软保护/级联清理/保留/force 绕过保护仍保留被引用成品）。
+- **E2E（curl 全链路 + 清理，负测均看 body code）：** ① 成品手工建档缺省值全对（category=成品/warningStock=0/supplierId=1）；② material 下拉无成品、hasBom 下拉未建 BOM 前不含成品；③ 建 BOM 复用同名成品（goodsId=61 复用零新建）；④ 下达任务单(OID=29)→delete-check=1→无 force 400「1 张未完结」→force 200「成品保留」→成品仍在；⑤ BOM 自动建档成品B（desc=BOM建档生成/stock=0）→删 BOM「已一并清理」→残留 0；⑥ 软删后同成品名重建 BOM 成功（uk 已废）；⑦ warningOnly 页 7 行无成品；⑧ 负测：production 建/删成品 403、purchase 改成品进价 403「成品无进价概念」、purchase 建 BOM 403「仅生产研发部管理员可维护 BOM」、production 读成品 page 200；⑨ 清理：SQL 软删测试任务单→成品A 库存清零→API 删除→成品页无 E2E 残留。
+- **教训：** ① `cd x && nohup y &` 的 `&` 会把整条 `cd && y` 背景化、主 shell 不切目录（本次虚惊，两端其实起对）；② pkill -f 自杀陷阱又踩一次（exit 144），按 CLAUDE.md 一律 fuser -k 按端口杀；③ 分类器拦 bash 脚本执行时拆成单条 curl 分步跑；④ curl 带 UTF-8 中文查询参数必须 `-G --data-urlencode`，裸拼 URL 会静默失败。
+- **注意：** 本次会话遗留未提交改动：阶段 19 全部代码 + 文档（task_plan/progress/CONTEXT/db.sql），**用户尚未要求提交**。
+
+---
+
 ## 会话 22 — 2026-09-09
 
 ### 阶段 18 生产工序打卡追踪 + 质检进度列表修复（D64，已完成 + E2E 全链路通过）
