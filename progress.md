@@ -5,6 +5,29 @@
 
 ---
 
+## 会话 22 — 2026-09-09
+
+### 阶段 18 生产工序打卡追踪 + 质检进度列表修复（D64，已完成 + E2E 全链路通过）
+
+- **需求（grill-with-docs 三轮定案）：** ① 任务单详情"装配工序（静态 SOP）"改动态——选方案 A：新增 `biz_production_order_step` 仅落 7 道人工装配工序（打卡留痕），第 6/8/10 道由质检记录/订单状态实时推导不落库；工序文案定稿 10 道（磁性材料装配/底座结构组装/手柄机构装配/PCB板焊接及安装/程序烧录/首次测试/屏蔽壳安装/成品测试/发合格证条码标签配件及包装/成品入库）。② 质检记录页"质检进度"恒显"未测"——根因 `page()` 不填 qcState（仅 getById 填）→ 新增 `QcService.buildStateBatch` 一次 in 查询分组推导批量填充。
+- **后端：** DDL 13.x（建表 + 存量未完结单快照刷新/7 行初始化，仅影响 status=3 的单 id=24）；`BizProductionOrderStep`/`ProductionStepVO`/`ProductionStepService`（complete/revoke/listSteps 合并 10 行；撤销用 LambdaUpdateWrapper 显式置 null 清打卡人；状态闸 2/3 可操作）；Controller 两端点挂 @AuditLog+@PreventDuplicateSubmit；`create()` 快照新 10 道+初始化步骤行。
+- **测试：** ProductionStepServiceTest 14 例 + QcServiceTest 2 例 + ProductionOrderServiceTest +1 例（page 回归）全绿。中途教训：**长文件单次 Write 两次被截断成乱码占位**——改为「小段 Write + `// __MORE__` 锚点逐段 Edit 追加」后一次成功；javac 为准，JDT 报错忽略。
+- **前端：** api 两函数；详情工序区状态化表格（tag/打卡人时间/打卡撤销按钮），v-permission 用 `{ deptCodes: ['production'] }`（指令 roles∩deptCodes 为 AND，空 roles = 部门任意成员，匹配后端 requireAnyDeptMemberOrSuperAdmin）；无实例回落静态快照；分隔条改「生产工序」+ 脚注。`npm run build` 通过。
+- **E2E（curl 全链路 + 数据清理）：** 建单（id=28）初始化 10 行 → 待生产打卡拦截"尚未开工" → 补临时库存(47-60→10) → 领料(id=21)→仓储发料→开工 → 员工打卡 step1（任意成员✓）→ 防重提交拦截 → 业务层"已完成打卡"拒绝 → 管理员撤销他人✓ → 本人撤销✓/再撤销拒绝 → 派生 step6 拒打卡 → sales_admin 打卡/读详情双 403 → 首测+成品测 OK → status 3 + step6/8"已完成（合格）" + step10"待入库（质检合格）" → 生产入库 → status 4 + step10"已完成（已入库）" → **page 行级 qcState 填充（28: first=ok final=ok passed=True；修复验证✓）** → 收尾 SQL 恢复库存（47-60→0、成品 29→2）+ 软删单 28/领料 21/QC×2/step×7，列表无残留。
+- **注意：** 本次会话遗留未提交改动：阶段 18 全部代码 + 会话 21 的计划文件勾选（task_plan.md/progress.md/CONTEXT.md/db.sql 等），**用户尚未要求提交**。
+
+---
+
+## 会话 21 — 2026-09-09
+
+### 计划文件补账：阶段 9–13 勾选收口（无代码改动）
+
+- **依据：** progress.md 会话 13–16 各阶段「已完成 + E2E 全绿」记录 + commit 490a489（生产研发部完整模块，阶段 9–13 一批）+ 阶段 9 逐项取证（db.sql:525 部门 seed、:546-547 账号 seed；`DEPT_PRODUCTION` 常量在 AuthzService+5 个 service；layout:217-222 生产 computed/菜单；router production 路由）。
+- **task_plan.md：** 阶段 9–13 共 36 个 checkbox 全部勾选 [x]，5 个阶段标题补「✅ 完成」注记（阶段 9 注明无独立日志小节；阶段 11 注明 2026-09-01/09-07 演进——生产端申请领料+开工校验全额出库、自动发料删除）；顶部「当前状态」与「总体进度」同步至阶段 17 收尾。
+- **下一步候选（待用户定）：** ① 阶段 4 盘点/余料/成品追溯；② 阶段 16 已知问题——补料单按行部分到货后生产单无法再补料。
+
+---
+
 ## 会话 20 — 2026-09-09
 
 ### 阶段 17 领料/退料明细规格材质备注展示（D63，已完成 + E2E 全绿）

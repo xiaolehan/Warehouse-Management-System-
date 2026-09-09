@@ -1,7 +1,7 @@
 # 任务规划 (Task Plan)
 
 > 本文件用于记录阶段、进度与决策。会话中断后可据此恢复上下文。
-> 最后更新：2026-07-04
+> 最后更新：2026-09-09
 
 ---
 
@@ -16,7 +16,7 @@
 - `document/wms系统改造参考参考资料.md`（§5.3 生产领料模块）
 - `projectmd/生产领料模块开发任务清单.md`（可执行任务拆解）
 
-**当前状态：** ✅ 阶段 1–8 全部完成（生产领料 + 销售协同 + 缺货采购 + 进退货确认 + 价格偏离超管审批 + 预计到货 + 领料反馈销售 + 员工权限放开）；六项需求改进全部落地
+**当前状态：** ✅ 阶段 1–3.7、5–8（六项需求改进全部落地）、阶段 9–13（生产研发部产线：部门角色/BOM/生产任务单+齐套预警/质检/生产端迁移，commit 490a489）、阶段 14–17（D60–D63 增量完善）全部完成；最近收尾：阶段 17（D63，2026-09-09）
 
 ---
 
@@ -332,83 +332,83 @@
 ### 需求三（采购拒绝备注）：已具备，E2E 复核
 - [x] 阶段 6 联调时已复核 reject_reason 持久化 + 前端展示（`PurchaseRequestService.java:313-331`）；阶段 5–8 E2E 全程 reject 路径无回归
 
-### 阶段 9：生产部门与角色（dept + 账号 + 权限基线）
+### 阶段 9：生产部门与角色（dept + 账号 + 权限基线）（✅ 完成 - 2026-08-31，commit 490a489；无独立日志小节，以 db.sql 种子/DEPT_PRODUCTION/生产菜单取证）
 
 **决策：** D37 生产=新部门 `production`（生产研发部），复用三档角色（admin/employee）；管理员=admin+production，员工=employee+production；BOM 建档与生产任务单建单归生产管理员。删除现有「生产入库/生产领料」的 warehouse 权限→改 production。
 **现状：** sys_dept 现 6 部门，无生产；`base_goods` 无 type；「生产入库/生产领料」硬编码仓储 admin。
 
 #### 后端
-- [ ] P1 DB：`sys_dept` 插 `(production, 生产研发部)`；`sys_user` 建 production admin/employee 种子账号（db.sql seed + 本地执行）
-- [ ] P2 `AuthzService`（+ 各字符串拷贝处）加 `DEPT_PRODUCTION` 常量
-- [ ] P3 编译 + 启动验证（superadmin/warehouse/login 不受影响）
+- [x] P1 DB：`sys_dept` 插 `(production, 生产研发部)`；`sys_user` 建 production admin/employee 种子账号（db.sql seed + 本地执行）
+- [x] P2 `AuthzService`（+ 各字符串拷贝处）加 `DEPT_PRODUCTION` 常量
+- [x] P3 编译 + 启动验证（superadmin/warehouse/login 不受影响）
 
 #### 前端
-- [ ] F1 `layout/index.vue` 加 `isProductionAdmin`/`isProductionEmployee` computed + 生产菜单块；`isBizEmployee` 纳入生产员工（showSidebar）
-- [ ] F2 `router` 加生产路由；`HomeView`/AdminHome/EmployeeHome 加生产分支
-- [ ] F3 build + Vite E2E
+- [x] F1 `layout/index.vue` 加 `isProductionAdmin`/`isProductionEmployee` computed + 生产菜单块；`isBizEmployee` 纳入生产员工（showSidebar）
+- [x] F2 `router` 加生产路由；`HomeView`/AdminHome/EmployeeHome 加生产分支
+- [x] F3 build + Vite E2E
 
-### 阶段 10：BOM 子系统（核心数据）
+### 阶段 10：BOM 子系统（核心数据）（✅ 完成 - 2026-08-31 会话 13）
 
 **决策：** D41 `base_goods` 加 `type`（成品/物料）+ 新建 BOM 主从表（成品→明细：物料/单台用量/规格/材质/备注）；BOM 明细尽量关联 base_goods，无法关联做成不强关联说明行（不参与齐套）；D44 现有 `product_name` 保留但不作权威；D45 BOM 由生产研发部（前身研发）录入——导入 xlsx（物料名称/规格/数量/材质/备注模板）+ 手工新增，用 PTO153 试点。
 
 #### 后端
-- [ ] P1 DB：`base_goods` 加 `type`（成品/物料）；建 `biz_bom` + `biz_bom_detail`（db.sql + 本地执行）
-- [ ] P2 Entity/Mapper/DTO/VO：Bom / BomDetail；`BaseGoods`/GoodsDTO 加 type
-- [ ] P3 BomService：create/update/delete（生产管理员）/page/getById（生产/仓储只读）+ 明细关联校验
-- [ ] P4 导入接口（xlsx 解析 → 批量生成 BOM 明细，后端库或前端 sheetjs 解析后提交）
-- [ ] P5 `GoodsService.options` 支持 type 过滤（成品可选作生产成品）
-- [ ] P6 编译 + E2E
+- [x] P1 DB：`base_goods` 加 `type`（成品/物料）；建 `biz_bom` + `biz_bom_detail`（db.sql + 本地执行）
+- [x] P2 Entity/Mapper/DTO/VO：Bom / BomDetail；`BaseGoods`/GoodsDTO 加 type
+- [x] P3 BomService：create/update/delete（生产管理员）/page/getById（生产/仓储只读）+ 明细关联校验
+- [x] P4 导入接口（xlsx 解析 → 批量生成 BOM 明细，后端库或前端 sheetjs 解析后提交）
+- [x] P5 `GoodsService.options` 支持 type 过滤（成品可选作生产成品）
+- [x] P6 编译 + E2E
 
 #### 前端
-- [ ] F1 BOM 维护页（生产管理员：建/改/删）+ 只读查看页（生产员工/仓储菜单）+ 导入对话框
-- [ ] F2 物料(Goods)管理 type 标记/筛选；生产任务单成品下拉只列成品
-- [ ] F3 build + Vite E2E
+- [x] F1 BOM 维护页（生产管理员：建/改/删）+ 只读查看页（生产员工/仓储菜单）+ 导入对话框
+- [x] F2 物料(Goods)管理 type 标记/筛选；生产任务单成品下拉只列成品
+- [x] F3 build + Vite E2E
 
-### 阶段 11：生产任务单 + 齐套预警（核心痛点）
+### 阶段 11：生产任务单 + 齐套预警（核心痛点）（✅ 完成 - 2026-08-31 会话 14；2026-09-01/09-07 有演进：领料改生产端按 BOM 申请、开工前置「领料单全额出库」、自动发料删除、补料走草稿→采购申请，见 ADR-0001/阶段 14）
 
 **决策：** D42 齐套预警：建生产任务单选成品×数量→展开 BOM 算需求 vs 库存，够→正常、部分缺→标红/黄、严重缺→阻断开工+站内信通知采购管理员；D43 领料单从工单按 BOM 自动生成（避免漏领），生产端出库扣库存，成品入库回填。
 
 #### 后端
-- [ ] P1 DB：`biz_production_order`（成品/数量/成品类型引用/状态/来源）+ 工序清单（静态子表或 JSON 字段）
-- [ ] P2 Entity/Mapper/DTO/VO；`CodeGenerator.productionOrderNo()`
-- [ ] P3 OrderService：create（含齐套展开校验）/page/getById/状态流转/作废
-- [ ] P4 齐套服务：BOM 展开 + 库存对比，produ采缺料明细；严重缺时 `MessageService.sendToDeptAdminsWithBiz` 通知采购 admin
-- [ ] P5 领料单生成：从工单 BOM×数量 自动生成 biz_pick_list（PICK），生产端发料扣库存
-- [ ] P6 成品入库：质检合格后 生产入库 成品库存+，回填工单
-- [ ] P7 编译 + E2E
+- [x] P1 DB：`biz_production_order`（成品/数量/成品类型引用/状态/来源）+ 工序清单（静态子表或 JSON 字段）
+- [x] P2 Entity/Mapper/DTO/VO；`CodeGenerator.productionOrderNo()`
+- [x] P3 OrderService：create（含齐套展开校验）/page/getById/状态流转/作废
+- [x] P4 齐套服务：BOM 展开 + 库存对比，produ采缺料明细；严重缺时 `MessageService.sendToDeptAdminsWithBiz` 通知采购 admin
+- [x] P5 领料单生成：从工单 BOM×数量 自动生成 biz_pick_list（PICK），生产端发料扣库存
+- [x] P6 成品入库：质检合格后 生产入库 成品库存+，回填工单
+- [x] P7 编译 + E2E
 
 #### 前端
-- [ ] F1 生产任务单页面：建单（选成品×数量，展示齐套结果/缺料红黄）/列表/详情/领料/入库联动
-- [ ] F2 缺料红黄提示 + 采购通知提示
-- [ ] F3 build + Vite E2E
+- [x] F1 生产任务单页面：建单（选成品×数量，展示齐套结果/缺料红黄）/列表/详情/领料/入库联动
+- [x] F2 缺料红黄提示 + 采购通知提示
+- [x] F3 build + Vite E2E
 
-### 阶段 12：质检记录
+### 阶段 12：质检记录（✅ 完成 - 2026-08-31 会话 15）
 
 **决策：** D40 10 道工序不全追踪；8 装配工序只作静态清单；2 测试工序单独「质检记录」：测试员/结果(OK/NG)/时间/原因；NG→返工→重测（生产管理员重新派发），合格才允许生产入库；不可修复则报废(scrap)。
 
 #### 后端
-- [ ] P1 DB：`biz_production_qc`（工单/产品/工序(首测|成品测)/测试员/结果/时间/原因/处置）
-- [ ] P2 Entity/Mapper/DTO/VO；QCService：record/rewEork(re-派发)/scrap
-- [ ] P3 成品入库前置：待首测+成品测均合格才允许入库；NG 未处置阻塞
-- [ ] P4 编译 + E2E
+- [x] P1 DB：`biz_production_qc`（工单/产品/工序(首测|成品测)/测试员/结果/时间/原因/处置）
+- [x] P2 Entity/Mapper/DTO/VO；QCService：record/rewEork(re-派发)/scrap
+- [x] P3 成品入库前置：待首测+成品测均合格才允许入库；NG 未处置阻塞
+- [x] P4 编译 + E2E
 
 #### 前端
-- [ ] F1 质检录入界面 + NG 处置（返工/报废）按钮；工单进度展示
-- [ ] F2 build + Vite E2E
+- [x] F1 质检录入界面 + NG 处置（返工/报废）按钮；工单进度展示
+- [x] F2 build + Vite E2E
 
-### 阶段 13：迁移生产入库/领料到生产端
+### 阶段 13：迁移生产入库/领料到生产端（✅ 完成 - 2026-08-31 会话 16；后续 2026-09-07 仓储端彻底不建领料单，退料入口也移到生产端）
 
 **决策：** D38 「生产入库/生产领料」从仓储端移到生产端（实际操作者=生产员工）；仓储端保留只读台账/查询。
 **现状副作用（需归位）：** 扣/加库存、领料缺料通知销售、`biz_production` 当前归档仓储。
 
 #### 后端
-- [ ] P1 `PickListService`/`ProductionService` 权限 `requireDeptAdminOrSuperAdmin(DEPT_WAREHOUSE)`→生产域（建单/领料/发料/入库=生产成员；删/作废=生产 admin）
-- [ ] P2 仓储侧保留只读 `page/getById`（加 `requireProductionReadAccess` 含 warehouse 读）
-- [ ] P3 缺料/领料失败通知目标部门校正；编译 + E2E
+- [x] P1 `PickListService`/`ProductionService` 权限 `requireDeptAdminOrSuperAdmin(DEPT_WAREHOUSE)`→生产域（建单/领料/发料/入库=生产成员；删/作废=生产 admin）
+- [x] P2 仓储侧保留只读 `page/getById`（加 `requireProductionReadAccess` 含 warehouse 读）
+- [x] P3 缺料/领料失败通知目标部门校正；编译 + E2E
 
 #### 前端
-- [ ] F1 菜单从仓储端移到生产端；仓储端仅留查询入口；路由/按钮 deptCodes 调整
-- [ ] F2 build + Vite E2E
+- [x] F1 菜单从仓储端移到生产端；仓储端仅留查询入口；路由/按钮 deptCodes 调整
+- [x] F2 build + Vite E2E
 
 ### 阶段 14：补料链路物料详情 + 未知物料自动建档（D60/ADR-0002/0003，2026-09-07 会话 10）
 
@@ -453,6 +453,24 @@
 - 决策（D63，grilling 六问定案）：① 明细行显示 规格/材质/备注，**备注=物料主数据描述**（`base_goods.description`，非 BOM 行备注——与补料单 D60 快照不同源，CONTEXT.md「生产领料」词条已更新）；② 范围=**领料+退料**（pick_type=PICK/RETURN 共用明细表与视图）；③ 展示=详情弹窗加列（物料/规格/材质/备注）+ 发料确认框逐行「品名（规格/材质）×数量」轻改；**列表页摘要不动**；④ 口径=**建单时服务端从 base_goods 快照** spec/material/remark 三列（`biz_pick_list_detail` 加列，D60 范式；写入点 3 处：createPick/createReturn/create），**历史行快照为空兜底实时读主数据**（软删/缺档显示「-」）；⑤ 用词「物料」（详情弹窗原「商品」列头改「物料」）。
 - 落地（2026-09-09）：写入点实为 **2 处**（createPick/createReturn——人工建单已随阶段 13 迁移移除，计划中"3 处"修正）；5 新单测（快照×2、兜底×3），全量 **101/101**。E2E：生产建 PTO153×1（order 27，齐套）→领料（pick 20，16 行明细，58-60 号自动建档物料快照落库 ✓，老物料 NULL=主数据本无 ✓）→仓储 getById VO 含三列 ✓→UPDATE 清空快照模拟历史行→兜底实时读主数据补显 ✓→sales_admin 详情负测 body code=403 ✓（**注意：本项目异常为 HTTP 200 + body code 封装，负测须看 body**）→撤销+作废+任务单软删，库存零变动、消息已撤销、零残留。
 - 任务：[x] DDL 三列（db.sql 12.x + 本地库） [x] TDD 后端：实体/VO/快照写入 2 处/兜底填充 + 5 单测（101/101） [x] 前端 PickListView 详情列+发料文案 [x] E2E+清理 [x] 文档
+
+### 阶段 18：生产工序打卡追踪 + 质检进度列表修复（D64，2026-09-09 会话 22）✅ 完成（后端 25 个新单测全绿 + E2E 全链路通过）
+
+- 背景：① 详情页装配工序是 8 道通用静态 SOP 文案，用户要求改为真实产线 10 道并希望"动态"；② 质检记录页列表"质检进度"恒显"未测"——根因：QcView 列表调生产任务单 `page()`，而 `qcState` 仅 `getById` 填充（ProductionOrderService.java:147），`page()` 不填 → 行数据 qcState 恒 null。
+- 决策（D64，grilling 三轮定案）：① 方案选 A（逐工序追踪）而非 C（纯文案+联动）：新增 `biz_production_order_step` 工序实例表，**仅 7 道人工装配工序落库**（1 磁性材料装配 / 2 底座结构组装 / 3 手柄机构装配 / 4 PCB板焊接及安装 / 5 程序烧录 / 7 屏蔽壳安装 / 9 发合格证、条码、标签、配件及包装），第 6 首次测试 / 8 成品测试 / 10 成品入库 三行展示时从质检记录与订单状态**实时推导不落库**（避免双源不一致）；② 打卡**不是流程闸口**（完工/入库校验维持现状，质检仍是唯一质量闸口）；③ 生产部门任意成员可打卡，撤销限本人或生产管理员，仅生产中/待入库状态可打卡/撤销；④ 打卡/撤销挂 @AuditLog + @PreventDuplicateSubmit；⑤ 存量单：未完结（status 1/2/3）刷新快照为新 10 道并初始化 7 行，已完结/作废/报废保留历史快照不初始化；⑥ 部分取代 D40"静态不追踪"口径——打卡只是完成留痕，避免的仍是报工级 MES（数量/工时/派工），CONTEXT.md「工序打卡」词条已同步；⑦ bug 修复：`page()` 批量填充 qcState（QcService.buildStateBatch，一次 in 查询分组推导），无流程/模型变更。
+
+#### 后端
+- [x] B1 db.sql 13.x：biz_production_order_step 建表 + 未完结存量单快照刷新 + 步骤行初始化（本地执行；仅存量 status=3 的单 id=24 初始化 7 行，历史单 17–20 未动）
+- [x] B2 Entity BizProductionOrderStep + Mapper + VO ProductionStepVO
+- [x] B3 ProductionStepService：initStepsForOrder / complete / revoke / listSteps（10 行合并：人工行+推导行）；PROCESS_STEPS 常量换新 10 道
+- [x] B4 ProductionOrderService：create 快照新 10 道+初始化步骤行；page() 批量填 qcState（bug 修复）；getById 返回 stepList
+- [x] B5 Controller：POST /{id}/steps/{stepNo}/complete 与 /revoke（@AuditLog+@PreventDuplicateSubmit）
+- [x] B6 单测：ProductionStepServiceTest 14 例（初始化/打卡/重复/非人工步骤/状态闸/撤销权限/推导合并/无行回落）+ QcServiceTest 2 例（buildStateBatch 分组/空输入）+ ProductionOrderServiceTest +1 例（page 填充 qcState 回归）——`./mvnw test` 全绿
+
+#### 前端
+- [x] F1 api：completeProductionStepAPI / revokeProductionStepAPI
+- [x] F2 ProductionOrderView 详情：stepList 有值渲染工序表格（序号/工序/状态 tag/打卡人时间/打卡撤销按钮，v-permission `{ deptCodes: ['production'] }` 匹配后端任意成员+超管语义），无 stepList 回落 processList 文字列表；分隔条改「生产工序」+ 脚注说明 6/8/10 自动更新
+- [x] F3 build + E2E（curl 全链路：建单初始化 10 行 → 待生产打卡拦截 → 开工 → 员工打卡/重复打卡/管理员撤他人/本人撤销/再撤销 → 派生 step6 拒打卡 → sales_admin 打卡与读详情双 403 → 首测/成品测 OK 推导 step6/8 → 入库推导 step10 → **page 行级 qcState 填充验证（QcView bug 修复）** → 测试数据软删+库存恢复）
 
 ---
 
@@ -501,6 +519,7 @@
 | D43 | 领料单从生产任务单按 BOM 自动生成（避免手动对照漏领），生产端出库扣库存；成品质检合格后生产入库回填成品库存 | BOM 是唯一需求源，自动生单防漏领 | 2026-08-31 |
 | D44 | 现有 `product_name` 保留但不作为权威"成品—物料"关系；新 BOM 系统以 BOM 表为准 | 避免迁移风险；product_name 此前只是自由文本标签 | 2026-08-31 |
 | D45 | BOM 录入：生产研发部导入 xlsx（物料名称/规格/数量/材质/备注模板）+ 手工新增；用 PTO153 试点先跑通链路 | 现有大量成品 BOM 需批量录入；PTO153 文档作试点数据 | 2026-08-31 |
+| D64 | 生产工序打卡追踪：新增 biz_production_order_step 仅落 7 道人工装配工序（第 6/8/10 道由质检/入库状态实时推导不落库），工序文案定稿 10 道；打卡不设流程闸口（质检仍是唯一闸口），生产成员可打卡、本人/生产管理员可撤销，仅生产中/待入库可操作；未完结存量单刷新快照+初始化，历史单保留；质检进度列表"未测" bug 由 page() 批量填 qcState 修复 | 用户要"动态"工序且确认走 A；打卡只是完成留痕≠报工 MES（D40 Avoid 收窄为报工级）；避免双源不一致 | 2026-09-09 |
 
 ---
 
@@ -520,9 +539,9 @@ Q1–Q6 已全部确认，结论见决策记录 D15–D20。无阻塞项。
 
 ## 📊 总体进度
 
-- 完成度：阶段 1 + 2 + 3 + 3.5 + 3.6 + 3.7 + 5 + 6 + 7 + 8 编码 100%（后端 + 前端 + 联调验收通过）
-- 当前阶段：**生产模块（阶段 9–13）设计定稿，未开工**——阶段 9 起为规划于 2026-08-31 的生产研发部产线（BOM / 生产任务单 / 齐套预警 / 质检 / 迁移），决策 D37–D45 已记录
-- 阻塞项：无（待用户确认设计定稿后按序开工）
+- 完成度：阶段 1–3.7 + 5–8 + 9–13（commit 490a489）+ 14–17（D60–D63）编码 100%（后端 + 前端 + E2E 验收通过）
+- 当前阶段：**阶段 17（D63 领料/退料明细规格材质备注）已收尾（2026-09-09）**；候选下一步：① 阶段 4（盘点/余料/成品追溯）② 阶段 16 登记的已知问题（补料单按行部分到货→确认入库终态后，受 D59「已入库补料单阻止再补料」约束，该生产单无法再补——待单独立项）
+- 阻塞项：无
 
 ## 🧪 验收结果（阶段 3 缺货识别与采购触发）
 
