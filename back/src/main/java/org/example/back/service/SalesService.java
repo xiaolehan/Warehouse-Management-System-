@@ -12,10 +12,12 @@ import org.example.back.dto.SalesQueryDTO;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
+import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizSales;
 import org.example.back.entity.BizSalesReturn;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
+import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizSalesMapper;
 import org.example.back.mapper.BizSalesReturnMapper;
@@ -62,6 +64,9 @@ public class SalesService {
 
     @Autowired
     private BizApprovalOrderMapper bizApprovalOrderMapper;
+
+    @Autowired
+    private BizProductionOrderMapper bizProductionOrderMapper;
 
     @Autowired
     private AuthService authService;
@@ -348,6 +353,7 @@ public class SalesService {
         messageService.revokeUnreadByBiz("sales", id);
         // 撤销价格偏离审批待办（单据已删除，超管不再需要审批）
         revokePriceDeviationApprovals(id);
+        notifyLinkedProductionOrderIfUnfinished(entity, "删除");
         bizSalesMapper.deleteById(id);
     }
 
@@ -367,6 +373,21 @@ public class SalesService {
             return;
         }
         throw BusinessException.forbidden("仅销售管理员可删除销售单（员工仅可删除自己未出库的当天单）");
+    }
+
+    /**
+     * D73：销售单删除/作废生效后，若存在关联的未终态生产任务单 → 通知生产管理员手动终止+退料。
+     * 已完工/已作废/已报废/已终止的生产单不打扰（SQL 层 in 过滤）；关联保留，生产端列表标注"已取消"。
+     */
+    private void notifyLinkedProductionOrderIfUnfinished(BizSales entity, String cancelAction) {
+        LambdaQueryWrapper<BizProductionOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductionOrder::getSalesOrderId, entity.getId())
+                .in(BizProductionOrder::getStatus, BizProductionOrder.UNFINISHED_STATUSES);
+        for (BizProductionOrder order : bizProductionOrderMapper.selectList(wrapper)) {
+            messageService.sendSalesCancelledToProductionAdmins(
+                    entity.getSalesNo(), entity.getGoodsName(), entity.getQuantity(),
+                    order.getOrderNo(), order.getId(), cancelAction);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -398,6 +419,8 @@ public class SalesService {
         if (shipped) {
             increaseStock(entity.getGoodsId(), entity.getQuantity());
         }
+        // D73：作废生效后通知关联未终态生产任务单（stock 回补之后、红冲之前）
+        notifyLinkedProductionOrderIfUnfinished(entity, "作废");
 
         if (shipped && dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
             LoginResponse.UserInfoVO loginUser = authService.getUserInfo();

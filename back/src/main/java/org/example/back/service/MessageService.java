@@ -568,6 +568,30 @@ public class MessageService {
     }
 
     /**
+     * D73：销售单删除/作废生效后，其关联的未终态生产任务单 → 通知生产管理员手动终止并退料。
+     * 绑 biz_type=production_order + biz_id=生产单id：生产单终止/作废/报废/入库终态时随 D21 范式撤未读。
+     */
+    public void sendSalesCancelledToProductionAdmins(String salesNo, String goodsName, Integer quantity,
+                                                     String orderNo, Long orderId, String cancelAction) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "关联销售单已取消",
+                String.format(Locale.ROOT,
+                        "销售单 %s（成品 %s×%d）已%s，其关联的生产任务单 %s 仍未完结。请评估后手动终止该任务单（终止时系统将预填已领未退物料供退料回库）。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        quantity == null ? 0 : quantity,
+                        cancelAction == null ? "取消" : cancelAction,
+                        orderNo == null ? "-" : orderNo),
+                "production_order",
+                orderId);
+    }
+
+    /**
      * 生产端提交退料申请 → 通知仓储管理员确认回流入库。
      */
     public void sendPickReturnPendingToWarehouseAdmins(String pickNo, String orderNo, Long pickId) {
