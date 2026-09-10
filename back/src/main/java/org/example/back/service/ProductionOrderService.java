@@ -272,6 +272,9 @@ public class ProductionOrderService {
         order.setStatus(BizProductionOrder.STATUS_DONE);
         orderMapper.updateById(order);
 
+        // D73：订单终态（已完成）——撤销该单未读待办（含"关联销售单已取消"等绑 production_order 的消息）
+        messageService.revokeUnreadByBiz("production_order", id);
+
         // D70：关联销售单仍待出库 → 通知建单销售本人"可发货"（biz 绑定销售单，出库/作废撤未读）
         notifySalesReadyToShipIfLinked(order);
     }
