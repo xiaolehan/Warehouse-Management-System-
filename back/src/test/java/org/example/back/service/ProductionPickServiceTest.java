@@ -4,6 +4,7 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionReturnCreateDTO;
 import org.example.back.dto.ProductionReturnItemDTO;
+import org.example.back.dto.ProductionTerminateDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
@@ -13,6 +14,7 @@ import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.ProductionPickItemVO;
+import org.example.back.vo.ProductionReturnableVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -316,5 +320,183 @@ class ProductionPickServiceTest {
         assertEquals("M8×30", dcap.getValue().getSpec());
         assertEquals("45#钢", dcap.getValue().getMaterial());
         assertEquals("内六角", dcap.getValue().getRemark());
+    }
+
+    // ============================== D73：手动终止 + 已领未退预览 ==============================
+
+    private BizProductionOrder terminatableOrder(int status) {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(status);
+        order.setRemark("原备注");
+        return order;
+    }
+
+    private BizPickList pickListOf(long id, String type, int status) {
+        BizPickList p = new BizPickList();
+        p.setId(id);
+        p.setPickNo("PICK-" + id);
+        p.setPickType(type);
+        p.setStatus(status);
+        p.setProductionOrderId(7L);
+        return p;
+    }
+
+    private BizPickListDetail detailOf(long pickListId, long goodsId, String name, int qty) {
+        BizPickListDetail d = new BizPickListDetail();
+        d.setPickListId(pickListId);
+        d.setGoodsId(goodsId);
+        d.setGoodsName(name);
+        d.setQuantity(qty);
+        return d;
+    }
+
+    /** 终止前置：订单存在 + 无待出库领料单 */
+    private void mockTerminateBase(BizProductionOrder order) {
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+        when(pickListMapper.selectCount(any())).thenReturn(0L);
+    }
+
+    /** 一张已发料 PICK 单含 goods 50 ×qty（已领未退净额=qty）；不含 insertReturnList 的 selectById stub */
+    private void mockReturnableData(int qty) {
+        when(pickListMapper.selectList(any()))
+                .thenReturn(List.of(pickListOf(10L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any()))
+                .thenReturn(List.of(detailOf(10L, 50L, "螺丝", qty)));
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(g));
+    }
+
+    private ProductionTerminateDTO terminateDTO(String reason, long goodsId, int qty) {
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(goodsId);
+        item.setQuantity(qty);
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason(reason);
+        dto.setItems(List.of(item));
+        return dto;
+    }
+
+    @Test
+    void terminate_inProgressWithItems_terminatesAndCreatesReturnList() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        when(pickListMapper.selectOne(any())).thenReturn(null); // 无进行中退料单
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(g); // insertReturnList 明细快照
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(3L);
+        user.setRealName("生产管理员");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        service.terminate(7L, terminateDTO("销售交易单 SAL-1 已取消", 50L, 4));
+
+        ArgumentCaptor<BizProductionOrder> orderCap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(productionOrderMapper).updateById(orderCap.capture());
+        assertEquals(BizProductionOrder.STATUS_TERMINATED, orderCap.getValue().getStatus());
+        assertTrue(orderCap.getValue().getRemark().contains("终止原因: 销售交易单 SAL-1 已取消"));
+
+        ArgumentCaptor<BizPickList> pickCap = ArgumentCaptor.forClass(BizPickList.class);
+        verify(pickListMapper).insert(pickCap.capture());
+        assertEquals(PickListService.TYPE_RETURN, pickCap.getValue().getPickType());
+        assertEquals(PickListService.STATUS_PENDING, pickCap.getValue().getStatus());
+
+        ArgumentCaptor<BizPickListDetail> detCap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(detCap.capture());
+        assertEquals(4, detCap.getValue().getQuantity());
+
+        verify(messageService).revokeUnreadByBiz("production_order", 7L);
+        verify(messageService).sendPickReturnPendingToWarehouseAdmins(any(), eq("PRO-X"), any());
+    }
+
+    @Test
+    void terminate_doneStatus_throws() {
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_DONE));
+        assertThrows(BusinessException.class, () -> service.terminate(7L, terminateDTO("x", 50L, 1)));
+    }
+
+    @Test
+    void terminate_blankReason_throws() {
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        assertThrows(BusinessException.class, () -> service.terminate(7L, terminateDTO("  ", 50L, 1)));
+    }
+
+    @Test
+    void terminate_pendingPickExists_throws() {
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(pickListMapper.selectCount(any())).thenReturn(1L); // 有待出库领料单
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(7L, terminateDTO("x", 50L, 1)));
+        assertTrue(ex.getMessage().contains("待出库的领料单"));
+    }
+
+    @Test
+    void terminate_qtyExceedsReturnable_throws() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(7L, terminateDTO("x", 50L, 7)));
+        assertTrue(ex.getMessage().contains("超过已领未退"));
+    }
+
+    @Test
+    void terminate_noItems_onlyTerminates() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_PENDING));
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("销售单取消");
+        dto.setItems(List.of());
+
+        service.terminate(7L, dto);
+
+        ArgumentCaptor<BizProductionOrder> orderCap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(productionOrderMapper).updateById(orderCap.capture());
+        assertEquals(BizProductionOrder.STATUS_TERMINATED, orderCap.getValue().getStatus());
+        verify(pickListMapper, never()).insert(any());
+        verify(messageService).revokeUnreadByBiz("production_order", 7L);
+    }
+
+    @Test
+    void terminate_openReturnExists_skipsAutoCreate() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        when(pickListMapper.selectOne(any()))
+                .thenReturn(pickListOf(11L, PickListService.TYPE_RETURN, PickListService.STATUS_PENDING));
+
+        service.terminate(7L, terminateDTO("销售单取消", 50L, 6));
+
+        verify(productionOrderMapper).updateById(any());
+        verify(pickListMapper, never()).insert(any());
+        verify(messageService).revokeUnreadByBiz("production_order", 7L);
+    }
+
+    @Test
+    void computeReturnablePreview_netOfIssuedMinusReturned() {
+        when(pickListMapper.selectList(any())).thenReturn(List.of(
+                pickListOf(10L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED),
+                pickListOf(11L, PickListService.TYPE_RETURN, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(10L, 50L, "螺丝", 10)),  // 第一次：出库明细
+                List.of(detailOf(11L, 50L, "螺丝", 4)));  // 第二次：退回明细
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("螺丝");
+        g.setSpec("M3");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(g));
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(1, vo.getItems().size());
+        assertEquals(6, vo.getItems().get(0).getQuantity());
+        assertEquals("M3", vo.getItems().get(0).getSpec());
+        assertEquals(Boolean.FALSE, vo.getHasOpenReturn());
     }
 }

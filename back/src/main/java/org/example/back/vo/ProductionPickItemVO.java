@@ -10,4 +10,8 @@ public class ProductionPickItemVO {
     private Long goodsId;
     private String goodsName;
     private Integer quantity;
+    /** 规格（终止退料预览等展示场景填充，可空） */
+    private String spec;
+    /** 材质（同上） */
+    private String material;
 }
