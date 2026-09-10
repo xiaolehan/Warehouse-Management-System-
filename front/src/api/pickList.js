@@ -13,3 +13,7 @@ export const getProductionPickListAPI = (orderId) => request.get(`/business/prod
 
 // 生产单退料
 export const createProductionReturnAPI = (orderId, data) => request.post(`/business/production-orders/${orderId}/return`, data)
+
+// D73：终止退料预览 + 手动终止生产任务单
+export const getProductionReturnableAPI = (orderId) => request.get(`/business/production-orders/${orderId}/returnable`)
+export const terminateProductionOrderAPI = (orderId, data) => request.post(`/business/production-orders/${orderId}/terminate`, data)

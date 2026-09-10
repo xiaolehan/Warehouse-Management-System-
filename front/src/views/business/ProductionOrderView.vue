@@ -39,7 +39,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="createTime" label="下达时间" width="170" />
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="290" fixed="right">
         <template #default="scope">
           <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
           <el-button v-if="scope.row.status === 1" size="small" type="primary" :icon="VideoPlay" @click="handleStart(scope.row)">开工</el-button>
@@ -53,6 +53,10 @@
             v-if="scope.row.status === 1 || scope.row.status === 2" size="small" type="danger" :icon="CloseBold"
             @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >作废</el-button>
+          <el-button
+            v-if="[1, 2, 3].includes(scope.row.status)" size="small" type="danger" :icon="CircleClose"
+            @click="openTerminate(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          >终止</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -416,6 +420,56 @@
         <el-button type="primary" :loading="ecSubmitting" @click="submitEc(ecTime)">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- D73：手动终止（销售取消等外部原因）；预填已领未退净额供核对退料，一个事务提交 -->
+    <el-dialog v-model="terminateVisible" :title="`终止生产任务单 - ${terminateRow.orderNo || ''}`" width="820px" :close-on-click-modal="false">
+      <el-alert
+        title="终止为终态操作，不可恢复。已领物料将按下方清单生成退料单，由仓储确认入库后库存加回。"
+        type="warning" :closable="false" style="margin-bottom: 12px"
+      />
+      <el-alert
+        v-if="terminateHasOpenReturn"
+        :title="`该单已有进行中退料单（${terminateOpenReturnPickNo}），本次终止不再自动生成退料单，请在既有退料单中核对退料覆盖。`"
+        type="info" :closable="false" style="margin-bottom: 12px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="终止原因" required>
+          <el-input v-model="terminateReason" type="textarea" :rows="2" placeholder="必填，如：销售交易单 XS… 已取消" />
+        </el-form-item>
+        <el-form-item v-if="terminateItems.length" label="退料明细">
+          <el-table :data="terminateItems" border size="small" style="width: 100%">
+            <el-table-column type="index" label="序号" width="55" />
+            <el-table-column label="物料" min-width="150">
+              <template #default="{ row }">
+                {{ row.goodsName }}
+                <span v-if="row.spec || row.material" style="color:#909399">（{{ [row.spec, row.material].filter(Boolean).join(' / ') }}）</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="已领未退" width="90" align="center">
+              <template #default="{ row }">{{ row.maxQty }}</template>
+            </el-table-column>
+            <el-table-column label="退料数量" width="140">
+              <template #default="{ row }">
+                <el-input-number v-model="row.quantity" :min="0" :max="row.maxQty" controls-position="right" style="width: 120px" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="70" align="center">
+              <template #default="{ $index }">
+                <el-button link type="danger" @click="terminateItems.splice($index, 1)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="color:#909399; font-size:12px; margin-top:6px">已耗用/损坏的物料请减量或删除该行；退料数量不可超过已领未退。</div>
+        </el-form-item>
+        <el-form-item v-else label="退料明细">
+          <span style="color:#909399">无已领未退物料，终止后不生成退料单</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="terminateVisible = false">取消</el-button>
+        <el-button type="danger" :loading="terminateSubmitting" @click="doTerminate">确认终止</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -423,7 +477,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close
+  Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close, CircleClose
 } from '@element-plus/icons-vue'
 import {
   completeProductionStepAPI,
@@ -439,7 +493,7 @@ import {
 } from '@/api/business'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
-import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI } from '@/api/pickList'
+import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI } from '@/api/pickList'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -447,7 +501,8 @@ const statusOptions = [
   { value: 3, label: '待入库' },
   { value: 4, label: '已完成' },
   { value: 5, label: '已作废' },
-  { value: 6, label: '已报废' }
+  { value: 6, label: '已报废' },
+  { value: 7, label: '已终止' }
 ]
 
 const searchForm = reactive({ orderNo: '', goodsName: '', status: null })
@@ -786,6 +841,65 @@ const handleVoid = (row) => {
   }).catch((e) => { if (e === 'cancel') return; if (e && e.message) ElMessage.error(e.message) })
 }
 
+// D73：手动终止（仅生产管理员；预填已领未退净额，一个事务终止+生成退料单）
+const terminateVisible = ref(false)
+const terminateRow = ref({})
+const terminateReason = ref('')
+const terminateItems = ref([])
+const terminateHasOpenReturn = ref(false)
+const terminateOpenReturnPickNo = ref('')
+const terminateSubmitting = ref(false)
+
+async function openTerminate(row) {
+  terminateRow.value = row
+  terminateReason.value = ''
+  terminateItems.value = []
+  terminateHasOpenReturn.value = false
+  terminateOpenReturnPickNo.value = ''
+  try {
+    const res = await getProductionReturnableAPI(row.id)
+    if (res.code !== 200) throw new Error(res.msg || '加载已领未退失败')
+    const data = res.data || {}
+    terminateItems.value = (data.items || []).map((it) => ({ ...it, maxQty: it.quantity }))
+    terminateHasOpenReturn.value = !!data.hasOpenReturn
+    terminateOpenReturnPickNo.value = data.openReturnPickNo || ''
+  } catch (e) {
+    ElMessage.error(e.message || '加载已领未退失败')
+    return
+  }
+  terminateVisible.value = true
+}
+
+async function doTerminate() {
+  if (!terminateReason.value || !terminateReason.value.trim()) {
+    ElMessage.warning('请填写终止原因')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('终止为终态操作，不可恢复。确认终止该生产任务单？', '终止确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  terminateSubmitting.value = true
+  try {
+    const items = terminateItems.value
+      .filter((i) => i.quantity > 0)
+      .map((i) => ({ goodsId: i.goodsId, quantity: i.quantity }))
+    const res = await terminateProductionOrderAPI(terminateRow.value.id, {
+      reason: terminateReason.value.trim(),
+      items
+    })
+    if (res.code !== 200) throw new Error(res.msg || '终止失败')
+    ElMessage.success(items.length ? '已终止，退料单已提交仓储确认入库' : '已终止')
+    terminateVisible.value = false
+    loadList()
+  } catch (e) {
+    ElMessage.error(e.message || '终止失败')
+  } finally {
+    terminateSubmitting.value = false
+  }
+}
+
 // 补料
 const draftVisible = ref(false)
 const draftRow = ref({})
@@ -926,7 +1040,7 @@ const submitEc = async (time) => {
 const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
 const fmtTime = (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '')
 const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
-const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : 'danger')
+const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : s === 7 ? 'danger' : 'danger')
 // D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红
 const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : l === 'unknown' ? 'info' : 'danger')
 
