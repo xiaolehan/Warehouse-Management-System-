@@ -117,7 +117,21 @@ public class SalesService {
                 .map(item -> toVO(item, approvalMap.get(item.getId())))
                 .filter(vo -> !warehouseView || !isPriceDeviationRejected(vo))
                 .toList();
+        fillStockBatch(records); // D69：仓储出库确认页"库存不足"标红的数据来源
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
+    }
+
+    /** D69：批量填充当前库存（一次 in 查询），供列表标红缺货待确认单 */
+    private void fillStockBatch(List<SalesVO> records) {
+        List<Long> goodsIds = records.stream().map(SalesVO::getGoodsId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (goodsIds.isEmpty()) {
+            return;
+        }
+        LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(BaseGoods::getId, goodsIds);
+        Map<Long, Integer> stockMap = baseGoodsMapper.selectList(wrapper).stream()
+                .collect(java.util.stream.Collectors.toMap(BaseGoods::getId, g -> g.getStock() == null ? 0 : g.getStock()));
+        records.forEach(vo -> vo.setStock(stockMap.getOrDefault(vo.getGoodsId(), 0)));
     }
 
     /**
@@ -144,6 +158,7 @@ public class SalesService {
         if (isWarehouseView() && isPriceDeviationRejected(vo)) {
             throw BusinessException.notFound("销售单不存在或已退回销售人员处理");
         }
+        fillStockBatch(java.util.List.of(vo));
         return vo;
     }
 
@@ -196,6 +211,38 @@ public class SalesService {
                 .toList();
     }
 
+    /**
+     * D70：生产建单关联销售单下拉——该成品「正常且待出库」的销售单（生产/销售/仓储可读）。
+     * 与 requireLinkableSalesOrder 的校验口径一致（bizStatus=1 + 待出库），仅做候选展示。
+     */
+    public List<SalesSourceOptionVO> linkableOptions(Long goodsId) {
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅生产/销售/仓储部门可访问", AuthzService.DEPT_PRODUCTION, AuthzService.DEPT_SALES, AuthzService.DEPT_WAREHOUSE);
+        if (goodsId == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizSales::getBizStatus, 1)
+                .eq(BizSales::getConfirmStatus, CONFIRM_PENDING)
+                .eq(BizSales::getGoodsId, goodsId)
+                .orderByDesc(BizSales::getOperationTime)
+                .orderByDesc(BizSales::getId)
+                .last("LIMIT 50");
+        return bizSalesMapper.selectList(wrapper).stream()
+                .map(item -> {
+                    SalesSourceOptionVO vo = new SalesSourceOptionVO();
+                    vo.setId(item.getId());
+                    vo.setSalesNo(item.getSalesNo());
+                    vo.setGoodsId(item.getGoodsId());
+                    vo.setGoodsName(item.getGoodsName());
+                    vo.setCustomerName(item.getCustomerName());
+                    vo.setQuantity(item.getQuantity());
+                    vo.setOperationTime(item.getOperationTime());
+                    return vo;
+                })
+                .toList();
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void create(SalesSaveDTO dto) {
         requireSalesModuleAccess();
@@ -204,7 +251,7 @@ public class SalesService {
         BaseGoods goods = requireGoods(dto.getGoodsId());
         ensureGoodsEnabled(goods);
         GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "销售单只可选择成品（type=product）"); // D67
-        ensureStockSufficient(goods, dto.getQuantity());
+        // D69：建单零库存校验（定制模式销售单=需求单，允许超卖）；库存扣减在仓储确认出库硬校验兜底
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getSalePrice(), "商品售价为空，请传入销售单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
         CostSnapshot costSnapshot = buildSalesCostSnapshot(goods.getId(), operationTime, goods.getPurchasePrice());
@@ -241,6 +288,14 @@ public class SalesService {
         // 销售下单后不立即扣库存，待仓库管理员确认出库时再扣减；同时通知仓储管理员有待确认单据
         messageService.sendSalesPendingConfirmToWarehouseAdmins(
                 entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName(), entity.getId());
+
+        // D70 销售需求联动：现货不足（含超卖）→ 通知生产管理员有销售需求待排产（biz 绑定本单，删/作废/出库撤未读）
+        int available = goods.getStock() == null ? 0 : goods.getStock();
+        if (dto.getQuantity() > available) {
+            messageService.sendSalesDemandToProductionAdmins(
+                    entity.getSalesNo(), entity.getGoodsName(), entity.getQuantity(), available,
+                    entity.getCustomerName(), loginUser.getRealName(), entity.getId());
+        }
     }
 
     /**
@@ -481,20 +536,6 @@ public class SalesService {
         int rows = baseGoodsMapper.update(null, wrapper);
         if (rows == 0) {
             throw BusinessException.stockInsufficient(msg);
-        }
-    }
-
-    /**
-     * 销售建单时软校验出库数量不超过当前库存，避免建出必然无法确认出库的单据。
-     * 注意：销售单建单不扣库存（待仓储确认出库时 decreaseStock 硬校验），此处仅做早期拦截。
-     */
-    private void ensureStockSufficient(BaseGoods goods, Integer quantity) {
-        if (quantity == null) {
-            return;
-        }
-        int available = goods.getStock() == null ? 0 : goods.getStock();
-        if (quantity > available) {
-            throw BusinessException.validateFail("出库数量超过当前库存(" + available + "件)，请调整数量或先补货");
         }
     }
 

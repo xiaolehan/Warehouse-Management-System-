@@ -249,6 +249,48 @@ public class MessageService {
     }
 
     /**
+     * D70：缺货销售单（现货不足）建单后通知生产管理员有销售需求待排产。
+     * 绑 biz_type=sales：销售单删除/作废/确认出库时随 D21 范式一并撤未读。
+     */
+    public void sendSalesDemandToProductionAdmins(String salesNo, String goodsName, Integer quantity,
+                                                  Integer available, String customerName, String applicantName, Long salesId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        String customer = StringUtils.hasText(customerName) ? customerName : "未填写";
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "销售需求待排产",
+                String.format(
+                        Locale.ROOT,
+                        "销售单 %s（成品 %s×%d，客户：%s，建单：%s）现货不足（现存 %d），请评估排产并在建生产任务单时关联该销售单。",
+                        salesNo, goodsName, quantity == null ? 0 : quantity, customer, applicantName, available == null ? 0 : available
+                ),
+                "sales",
+                salesId
+        );
+    }
+
+    /**
+     * D70：关联生产任务单入库、销售单可发货时，通知建单销售本人（精准到人）。
+     * 绑 biz_type=sales：销售单删除/作废/确认出库时随 D21 范式一并撤未读。
+     */
+    public void sendSalesReadyToShipToUser(Long userId, String salesNo, String goodsName, Integer quantity, Long salesId) {
+        sendToUserWithBiz(
+                userId,
+                "销售单可发货",
+                String.format(
+                        Locale.ROOT,
+                        "您建的销售单 %s（成品 %s×%d）对应生产任务单已完成入库，现货已可满足，请跟进仓储确认出库。",
+                        salesNo, goodsName, quantity == null ? 0 : quantity
+                ),
+                "sales",
+                salesId
+        );
+    }
+
+    /**
      * 销售退货建单后通知仓储管理员有待确认入库的退货单。
      */
     public void sendSalesReturnPendingConfirmToWarehouseAdmins(String returnNo, String applicantName, Long returnId) {
@@ -630,6 +672,11 @@ public class MessageService {
     }
 
     private void sendToUser(Long userId, String title, String content) {
+        sendToUserWithBiz(userId, title, content, null, null);
+    }
+
+    /** 精准到人 + 业务绑定（D70 用到）：单据终态/撤销时按 biz 撤未读，避免悬挂通知 */
+    private void sendToUserWithBiz(Long userId, String title, String content, String bizType, Long bizId) {
         if (userId == null || !StringUtils.hasText(title) || !StringUtils.hasText(content)) {
             return;
         }
@@ -643,6 +690,8 @@ public class MessageService {
         message.setTitle(title.trim());
         message.setContent(content.trim());
         message.setIsRead(MESSAGE_UNREAD);
+        message.setBizType(bizType);
+        message.setBizId(bizId);
         sysMessageMapper.insert(message);
     }
 

@@ -27,6 +27,9 @@ public class BizBom {
     /** 成品名称(冗余) */
     private String goodsName;
 
+    /** D71：标准工期（天），生产建/编辑 BOM 时填写，可空；空=待生产评估（新品无工期数据） */
+    private Integer leadDays;
+
     private String remark;
 
     private LocalDateTime createTime;

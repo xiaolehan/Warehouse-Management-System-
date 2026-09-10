@@ -10,6 +10,7 @@ import org.example.back.entity.BizBom;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.entity.BizSales;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
@@ -51,6 +52,9 @@ class ProductionOrderServiceTest {
     @Mock private MessageService messageService;
     @Mock private QcService qcService;
     @Mock private ProductionStepService productionStepService;
+    @Mock private org.example.back.mapper.BizProductionMapper productionMapper;
+    @Mock private AuthService authService;
+    @Mock private org.example.back.mapper.BizSalesMapper bizSalesMapper;
 
     @InjectMocks private ProductionOrderService service;
 
@@ -315,5 +319,174 @@ class ProductionOrderServiceTest {
         assertEquals(1, result.getRecords().size());
         assertEquals("ok", result.getRecords().get(0).getQcState().getFirstStatus());
         assertTrue(result.getRecords().get(0).getQcState().getFirstPassed());
+    }
+
+    // ---------- D70：建单选填关联销售单（须同成品、正常且待出库） ----------
+    private BaseGoods product29() {
+        BaseGoods product = new BaseGoods();
+        product.setId(29L);
+        product.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        product.setStatus(1);
+        product.setGoodsName("PTO153");
+        return product;
+    }
+
+    /** 打桩到 computeKit 为止（建单校验失败的路径不会触达 insert） */
+    private void mockCreateProductAndKit() {
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        BizBom bom = new BizBom();
+        bom.setId(1L);
+        when(bomMapper.selectOne(any())).thenReturn(bom);
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of()); // 无明细 → 齐套
+    }
+
+    private void mockCreateKitOk() {
+        mockCreateProductAndKit();
+        when(orderMapper.insert(any(BizProductionOrder.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizProductionOrder.class).setId(301L);
+            return 1;
+        });
+        BizProductionOrder saved = new BizProductionOrder();
+        saved.setId(301L);
+        saved.setGoodsId(29L);
+        when(orderMapper.selectById(301L)).thenReturn(saved);
+    }
+
+    private BizSales salesOrder(int bizStatus, int confirmStatus, Long goodsId) {
+        BizSales sales = new BizSales();
+        sales.setId(501L);
+        sales.setSalesNo("XS260910001");
+        sales.setGoodsId(goodsId);
+        sales.setQuantity(10);
+        sales.setBizStatus(bizStatus);
+        sales.setConfirmStatus(confirmStatus);
+        sales.setOperatorId(7L);
+        return sales;
+    }
+
+    @Test
+    void create_withLinkableSalesOrder_setsSalesOrderId() {
+        mockCreateKitOk();
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+
+        ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
+        dto.setGoodsId(29L);
+        dto.setQuantity(10);
+        dto.setSalesOrderId(501L);
+        service.create(dto);
+
+        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(orderMapper).insert(cap.capture());
+        assertEquals(501L, cap.getValue().getSalesOrderId());
+    }
+
+    @Test
+    void create_withShippedSalesOrder_rejected() {
+        mockCreateProductAndKit();
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED, 29L));
+
+        ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
+        dto.setGoodsId(29L);
+        dto.setQuantity(10);
+        dto.setSalesOrderId(501L);
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(dto));
+        assertTrue(ex.getMessage().contains("已确认出库"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void create_withMismatchedGoodsSalesOrder_rejected() {
+        mockCreateProductAndKit();
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 999L));
+
+        ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
+        dto.setGoodsId(29L);
+        dto.setQuantity(10);
+        dto.setSalesOrderId(501L);
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(dto));
+        assertTrue(ex.getMessage().contains("成品与本任务单不一致"), "实际: " + ex.getMessage());
+    }
+
+    // ---------- D71：生产手工修正预计完工时间（仅未完结单） ----------
+    @Test
+    void updateExpectedCompletion_okOnUnfinished() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(orderMapper.updateById(any())).thenReturn(1);
+
+        java.time.LocalDateTime time = java.time.LocalDateTime.of(2026, 9, 20, 18, 0);
+        service.updateExpectedCompletion(7L, time);
+
+        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(orderMapper).updateById(cap.capture());
+        assertEquals(time, cap.getValue().getExpectedCompletionTime());
+    }
+
+    @Test
+    void updateExpectedCompletion_rejectsFinishedOrder() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_DONE);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.updateExpectedCompletion(7L, java.time.LocalDateTime.now()));
+        assertTrue(ex.getMessage().contains("未完结"), "实际: " + ex.getMessage());
+    }
+
+    // ---------- D70：生产入库后通知建单销售本人 ----------
+    @Test
+    void receipt_notifiesLinkedSalespersonWhenStillPending() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO260910001");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(10);
+        order.setStatus(BizProductionOrder.STATUS_AWAIT_QC);
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        BaseGoods product = product29();
+        product.setStock(0);
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product);
+        when(baseGoodsMapper.updateById(any(BaseGoods.class))).thenReturn(1);
+
+        org.example.back.dto.LoginResponse.UserInfoVO user = new org.example.back.dto.LoginResponse.UserInfoVO();
+        user.setId(11L);
+        user.setRealName("生产员工");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+
+        service.receipt(7L);
+
+        verify(messageService).sendSalesReadyToShipToUser(
+                eq(7L), eq("XS260910001"), eq("PTO153"), eq(10), eq(501L));
+    }
+
+    @Test
+    void receipt_noNotifyWhenSalesAlreadyShipped() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO260910001");
+        order.setGoodsId(29L);
+        order.setQuantity(10);
+        order.setStatus(BizProductionOrder.STATUS_AWAIT_QC);
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        when(baseGoodsMapper.updateById(any(BaseGoods.class))).thenReturn(1);
+        org.example.back.dto.LoginResponse.UserInfoVO user = new org.example.back.dto.LoginResponse.UserInfoVO();
+        user.setId(11L);
+        user.setRealName("生产员工");
+        when(authService.getUserInfo()).thenReturn(user);
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED, 29L));
+
+        service.receipt(7L);
+
+        verify(messageService, org.mockito.Mockito.never()).sendSalesReadyToShipToUser(
+                any(), anyString(), anyString(), any(), any());
     }
 }

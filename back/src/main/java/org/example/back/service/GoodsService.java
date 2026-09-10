@@ -49,12 +49,14 @@ public class GoodsService {
 
     // D35 职责分工：物料资料开放给仓储+采购部门读取；写操作按部门区分字段
     // D39 生产部门可只读看物料库存（数量层）
+    // D68 销售部门可只读看物料/成品两页（定价场景要看库存与规格）
     private void requireGoodsReadAccess() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
-                "仅仓储、采购或生产部门可访问物料资料",
+                "仅仓储、采购、生产或销售部门可访问物料资料",
                 AuthzService.DEPT_WAREHOUSE,
                 AuthzService.DEPT_PURCHASE,
-                AuthzService.DEPT_PRODUCTION
+                AuthzService.DEPT_PRODUCTION,
+                AuthzService.DEPT_SALES
         );
     }
 
@@ -71,15 +73,16 @@ public class GoodsService {
         requireGoodsReadAccess();
     }
 
-    // 编辑：仓储 admin 或 采购部门（admin+员工）可进入，各改各职责字段
+    // 编辑：仓储 admin / 采购部门（admin+员工）/ 销售部门（admin+员工，D68 仅成品售价）可进入，各改各职责字段
     private void requireGoodsUpdateAccess() {
         if (authzService.isSuperAdmin()) {
             return;
         }
         boolean warehouseAdmin = authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE);
         boolean purchaseMember = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
-        if (!warehouseAdmin && !purchaseMember) {
-            throw BusinessException.forbidden("仅仓储管理员或采购部门可编辑物料");
+        boolean salesMember = authzService.isDeptMember(AuthzService.DEPT_SALES);
+        if (!warehouseAdmin && !purchaseMember && !salesMember) {
+            throw BusinessException.forbidden("仅仓储管理员、采购部门或销售部门可编辑");
         }
     }
 
@@ -171,11 +174,26 @@ public class GoodsService {
     }
 
     // D35：编辑按职责分字段——采购可改进价(并校验>0)、不可动库存；仓储改库存/预警阈值、不可动价格；
-    //      二者均可改物料基本字段(名称/产品名/种类/供应商/单位)。售价不在本页维护。
+    //      二者均可改物料基本字段(名称/产品名/种类/供应商/单位)。
+    // D68：销售部门(admin+员工)可编辑成品标准售价(并校验>0)，其余字段一概不动；物料不维护售价。
     public void update(Long id, GoodsSaveDTO dto) {
         requireGoodsUpdateAccess();
         BaseGoods goods = requireGoods(id);
         boolean isPurchase = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
+        boolean isSales = authzService.isDeptMember(AuthzService.DEPT_SALES);
+
+        if (isSales && !authzService.isSuperAdmin()) {
+            // D68 销售(admin/员工)：仅维护成品标准售价（镜像采购进价范式），基本资料/库存一概不动
+            if (!GOODS_TYPE_PRODUCT.equals(goods.getType())) {
+                throw BusinessException.forbidden("物料无售价概念，销售部门仅可编辑成品售价");
+            }
+            if (dto.getSalePrice() == null || dto.getSalePrice().compareTo(BigDecimal.ZERO) <= 0) {
+                throw BusinessException.validateFail("售价必须大于0");
+            }
+            goods.setSalePrice(dto.getSalePrice());
+            baseGoodsMapper.updateById(goods);
+            return;
+        }
 
         if (isPurchase) {
             // D65：成品无进价概念，采购部门不可编辑成品

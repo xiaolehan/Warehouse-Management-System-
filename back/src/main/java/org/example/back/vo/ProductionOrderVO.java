@@ -32,6 +32,15 @@ public class ProductionOrderVO {
 
     private String source;
 
+    /** D70：关联销售单 id（可空） */
+    private Long salesOrderId;
+
+    /** D70：关联销售单号（展示用，列表/详情批量填充） */
+    private String salesOrderNo;
+
+    /** D71：生产手工修正的预计完工时间（可空，优先于系统推算） */
+    private LocalDateTime expectedCompletionTime;
+
     /** 工序清单快照(SOP 文字；详情有工序实例时由 stepList 取代，历史单回落) */
     private List<String> processList;
 

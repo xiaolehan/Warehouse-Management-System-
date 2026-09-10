@@ -33,13 +33,20 @@
         </el-form>
       </div>
 
-      <el-table :data="tableData" border style="width: 100%" v-loading="loading">
+      <el-table :data="tableData" border style="width: 100%" v-loading="loading" :row-class-name="shortageRowClass">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="salesNo" label="销售单号" width="150" />
         <el-table-column prop="goodsName" label="出库商品" />
         <el-table-column prop="customerName" label="客户公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column prop="quantity" label="销售数量" width="100" />
+        <!-- D69：仓储视角当前库存列——待确认且缺货的行标红，提示先协调生产/采购再确认出库 -->
+        <el-table-column v-if="isWarehouseUser" label="当前库存" width="130">
+          <template #default="scope">
+            <span v-if="isShortageRow(scope.row)" class="stock-shortage-text">库存不足（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</span>
+            <span v-else>{{ scope.row.stock ?? '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column v-if="showPrice" prop="salesPrice" label="销售均价(元)" width="120" />
         <el-table-column v-if="showPrice" prop="totalAmount" label="销售总额(元)" width="120" />
         <el-table-column v-if="showPrice" label="是否含税" width="100" align="center">
@@ -142,13 +149,15 @@
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
             <el-option v-for="item in goodsOptions" :key="item.id" :label="`${item.name}（库存 ${item.stock || 0}${item.unit ? ' ' + item.unit : ''}）`" :value="item.id" />
           </el-select>
-          <div v-if="selectedStock !== null" class="stock-hint">可售数量：{{ selectedStock }} {{ selectedUnit }}<span v-if="selectedSalePrice"> ｜ 标准售价：¥{{ selectedSalePrice }}</span></div>
+          <div v-if="selectedStock !== null" class="stock-hint">当前库存：{{ selectedStock }} {{ selectedUnit }}<span v-if="selectedSalePrice"> ｜ 标准售价：¥{{ selectedSalePrice }}</span></div>
         </el-form-item>
         <el-form-item label="备注" prop="remark">
           <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
         </el-form-item>
         <el-form-item label="出库数量" prop="quantity">
-          <el-input-number v-model="dialogForm.quantity" :min="1" :max="selectedStock || undefined" style="width: 100%" />
+          <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
+          <!-- D69：缺货提示（不拦截建单），现货不足将通知生产管理员排产 -->
+          <div v-if="isShortage" class="shortage-hint">⚠ 当前库存不足（需 {{ dialogForm.quantity }} / 现存 {{ selectedStock }}），建单后将通知生产排产，可在详情查看履约进度</div>
         </el-form-item>
         <el-form-item v-if="showPrice" label="销售单价" prop="unitPrice">
           <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
@@ -181,12 +190,14 @@
           <el-button v-if="dialogType !== 'view'" type="primary" :icon="Check" @click="submitForm">确定新增</el-button>
         </span>
       </template>
+      <!-- D71：履约时间线（类淘宝物流），仅详情态展示 -->
+      <SalesTimeline v-if="dialogType === 'view' && dialogVisible" :sales-id="currentViewId" />
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
@@ -194,6 +205,7 @@ import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { isEmployeeRole, getRole } from '@/utils/auth'
 import { getDeptCode, isSuperAdmin } from '@/utils/auth'
+import SalesTimeline from '@/components/SalesTimeline.vue'
 import {
   createSalesAPI,
   confirmSalesAPI,
@@ -208,6 +220,11 @@ const userRole = getRole()
 const userDept = getDeptCode()
 // D36：销售金额列仅销售部门可见（售价）；仓储看库存不看价格；超管全见
 const showPrice = userDept === 'sales' || isSuperAdmin(userRole)
+// D69：仓储视角展示当前库存列并标红缺货待确认单
+const isWarehouseUser = userDept === 'warehouse'
+const isShortageRow = (row) =>
+  Number(row?.confirmStatus) === 1 && !isBizDocumentDeleted(row) && Number(row?.quantity) > Number(row?.stock ?? 0)
+const shortageRowClass = ({ row }) => (isWarehouseUser && isShortageRow(row) ? 'shortage-row' : '')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -218,6 +235,7 @@ const tableData = ref([])
 
 const dialogVisible = ref(false)
 const dialogType = ref('add')
+const currentViewId = ref(null) // 详情态当前查看的销售单id（履约时间线数据源）
 const dialogFormRef = ref(null)
 const dialogForm = reactive({ goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '', taxIncluded: 0 })
 
@@ -241,35 +259,19 @@ const priceDeviationPct = computed(() => {
   return Math.round(Math.abs(up - sp) / sp * 100)
 })
 const isPriceDeviated = computed(() => priceDeviationPct.value > priceDeviationThresholdPct.value)
+// D69：建单缺货提示（零库存/超卖允许建单）
+const isShortage = computed(() => {
+  const s = selectedStock.value
+  return s !== null && Number(dialogForm.quantity) > s
+})
 
-// 切换商品时若当前出库数量超过可售库存，自动钳制到库存上限（库存为 0 时不钳制，交由校验拦截）
-watch(
-  () => dialogForm.goodsId,
-  () => {
-    const s = selectedStock.value
-    if (s !== null && s >= 1 && Number(dialogForm.quantity) > s) {
-      dialogForm.quantity = s
-    }
-  }
-)
+// D69：定制公司销售单=需求单，零库存/超卖均可建单（缺货自动通知生产排产，出库时仓储硬校验兜底），
+// 故不再钳制数量、不再拦截库存为 0，仅在输入区提示缺货。
 
 const dialogRules = {
   goodsId: [{ required: true, message: '请选择商品', trigger: 'change' }],
   quantity: [
-    { required: true, message: '请输入数量', trigger: 'blur' },
-    {
-      validator: (rule, value, callback) => {
-        const s = selectedStock.value
-        if (s === 0) {
-          callback(new Error('该商品当前库存为 0，无法销售'))
-        } else if (s !== null && Number(value) > s) {
-          callback(new Error(`出库数量不能超过可售数量(${s})`))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'change'
-    }
+    { required: true, message: '请输入数量', trigger: 'blur' }
   ],
   unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }],
   salesDate: [{ required: true, message: '请选择销售日期', trigger: 'change' }]
@@ -425,6 +427,7 @@ const handleView = async (row) => {
     }
     const detail = res.data || {}
     dialogType.value = 'view'
+    currentViewId.value = row.id
     Object.assign(dialogForm, {
       goodsId: detail.goodsId ?? null,
       remark: detail.remark || '',
@@ -610,5 +613,22 @@ onMounted(async () => {
   color: #909399;
   font-size: 15px;
   cursor: pointer;
+}
+
+.shortage-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #e6a23c;
+  line-height: 1.4;
+}
+
+.stock-shortage-text {
+  color: #f56c6c;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+:deep(.shortage-row) {
+  background-color: #fef0f0;
 }
 </style>

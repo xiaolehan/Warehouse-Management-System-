@@ -83,6 +83,15 @@
         <el-form-item label="生产数量" prop="quantity">
           <el-input-number v-model="createForm.quantity" :min="1" style="width: 200px" />
         </el-form-item>
+        <!-- D70：选填关联销售单——该成品「正常且待出库」的销售单；关联后入库自动通知建单销售，销售端时间线可见本单进度 -->
+        <el-form-item label="关联销售单">
+          <el-select v-model="createForm.salesOrderId" clearable filterable placeholder="选填：为哪张销售需求单生产" style="width: 100%" :loading="linkableLoading">
+            <el-option
+              v-for="opt in linkableSalesOptions" :key="opt.id"
+              :label="`${opt.salesNo}（${opt.customerName || '未填客户'} × ${opt.quantity}）`" :value="opt.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="createForm.remark" type="textarea" :rows="2" placeholder="备注（可选）" />
         </el-form-item>
@@ -153,6 +162,21 @@
             <el-tag :type="kitTagType(detail.kitStatus)" size="small">{{ detail.kitStatusText }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="下达时间">{{ detail.createTime }}</el-descriptions-item>
+          <!-- D70：关联销售单（1对1，可空=通用备货） -->
+          <el-descriptions-item label="关联销售单">
+            <span v-if="detail.salesOrderNo">{{ detail.salesOrderNo }}</span>
+            <span v-else style="color:#909399">通用备货（未关联）</span>
+          </el-descriptions-item>
+          <!-- D71：预计完工——生产手工修正（留痕），销售端时间线优先展示该值 -->
+          <el-descriptions-item label="预计完工">
+            <span v-if="detail.expectedCompletionTime">{{ fmtTime(detail.expectedCompletionTime) }}</span>
+            <span v-else style="color:#909399">未设定（销售端按系统推算展示）</span>
+            <el-button
+              v-if="[1, 2, 3].includes(detail.status)" link type="primary" size="small" style="margin-left: 8px"
+              v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+              @click="openEcDialog"
+            >修正</el-button>
+          </el-descriptions-item>
         </el-descriptions>
 
         <el-divider content-position="left">生产工序</el-divider>
@@ -376,11 +400,27 @@
         <el-button type="primary" :loading="draftSubmitting" @click="doCreateDraft">提交补料</el-button>
       </template>
     </el-dialog>
+
+    <!-- D71：修正预计完工（生产管理员；清空=恢复系统推算；操作留痕 @AuditLog） -->
+    <el-dialog v-model="ecVisible" title="修正预计完工时间" width="420px">
+      <el-date-picker
+        v-model="ecTime" type="datetime" value-format="YYYY-MM-DD HH:mm:ss"
+        placeholder="选择预计完工时间" style="width: 100%"
+      />
+      <div style="color:#909399; font-size:12px; margin-top:8px">
+        该时间将作为「生产确认」口径展示在销售单履约时间线上；清空则恢复系统推算。
+      </div>
+      <template #footer>
+        <el-button @click="ecVisible = false">取消</el-button>
+        <el-button :loading="ecSubmitting" @click="submitEc(null)">清空恢复推算</el-button>
+        <el-button type="primary" :loading="ecSubmitting" @click="submitEc(ecTime)">确定</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close
@@ -388,11 +428,13 @@ import {
 import {
   completeProductionStepAPI,
   createProductionOrderAPI,
+  getLinkableSalesOptionsAPI,
   getProductionOrderDetailAPI,
   getProductionOrderPageAPI,
   receiptProductionOrderAPI,
   revokeProductionStepAPI,
   startProductionOrderAPI,
+  updateExpectedCompletionAPI,
   voidProductionOrderAPI
 } from '@/api/business'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
@@ -419,7 +461,10 @@ const productOptions = ref([])
 const createVisible = ref(false)
 const createFormRef = ref(null)
 const createResult = ref(null)
-const createForm = reactive({ goodsId: null, quantity: 1, remark: '' })
+const createForm = reactive({ goodsId: null, quantity: 1, remark: '', salesOrderId: null })
+// D70：关联销售单下拉（随成品选择联动加载）
+const linkableSalesOptions = ref([])
+const linkableLoading = ref(false)
 const createRules = {
   goodsId: [{ required: true, message: '请选择成品', trigger: 'change' }],
   quantity: [{ required: true, message: '请输入生产数量', trigger: 'blur' }]
@@ -493,9 +538,27 @@ const handleAdd = () => {
   createForm.goodsId = null
   createForm.quantity = 1
   createForm.remark = ''
+  createForm.salesOrderId = null
+  linkableSalesOptions.value = []
   createFormRef.value?.clearValidate()
   createVisible.value = true
 }
+
+// D70：选定成品后加载可关联销售单（正常且待出库）；切换成品清空已选关联
+watch(() => createForm.goodsId, async (goodsId) => {
+  createForm.salesOrderId = null
+  linkableSalesOptions.value = []
+  if (!goodsId) return
+  linkableLoading.value = true
+  try {
+    const res = await getLinkableSalesOptionsAPI({ goodsId })
+    if (res.code === 200) linkableSalesOptions.value = res.data || []
+  } catch {
+    // 选项加载失败不阻断建单，后端 create 仍会兜底校验
+  } finally {
+    linkableLoading.value = false
+  }
+})
 
 const handleCreate = () => {
   createFormRef.value?.validate(async (valid) => {
@@ -504,7 +567,8 @@ const handleCreate = () => {
       const res = await createProductionOrderAPI({
         goodsId: createForm.goodsId,
         quantity: createForm.quantity,
-        remark: createForm.remark || ''
+        remark: createForm.remark || '',
+        salesOrderId: createForm.salesOrderId || undefined
       })
       if (res.code !== 200) throw new Error(res.msg || '下达失败')
       createResult.value = res.data || {}
@@ -831,8 +895,36 @@ function doCreateDraft() {
   })
 }
 
+// D71：修正预计完工（生产管理员，留痕）
+const ecVisible = ref(false)
+const ecTime = ref(null)
+const ecSubmitting = ref(false)
+
+const openEcDialog = () => {
+  ecTime.value = detail.value?.expectedCompletionTime
+    ? String(detail.value.expectedCompletionTime).replace('T', ' ').slice(0, 19)
+    : null
+  ecVisible.value = true
+}
+
+const submitEc = async (time) => {
+  ecSubmitting.value = true
+  try {
+    const res = await updateExpectedCompletionAPI(detail.value.id, { expectedCompletionTime: time || null })
+    if (res.code !== 200) throw new Error(res.msg || '修正失败')
+    ElMessage.success(time ? '预计完工时间已更新' : '已清空，恢复系统推算')
+    ecVisible.value = false
+    await refreshDetail()
+  } catch (error) {
+    ElMessage.error(error.message || '修正失败')
+  } finally {
+    ecSubmitting.value = false
+  }
+}
+
 // 标题格式化工具
 const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
+const fmtTime = (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '')
 const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
 const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : 'danger')
 // D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红

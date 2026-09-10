@@ -232,4 +232,70 @@ class GoodsServiceTest {
                 () -> GoodsService.ensureGoodsType(legacy, GoodsService.GOODS_TYPE_PRODUCT, "只可选择成品"));
         assertTrue(ex.getMessage().contains("只可选择成品"), "实际: " + ex.getMessage());
     }
+
+    // ---------- D68：销售部门仅可编辑成品标准售价（镜像采购进价范式） ----------
+    private void mockSalesMember() {
+        when(authzService.isSuperAdmin()).thenReturn(false);
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_PURCHASE)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(true);
+    }
+
+    @Test
+    void update_salesMemberEditsProductSalePriceOnly() {
+        mockSalesMember();
+        BaseGoods product = new BaseGoods();
+        product.setId(9L);
+        product.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        when(baseGoodsMapper.selectById(9L)).thenReturn(product);
+
+        GoodsSaveDTO dto = new GoodsSaveDTO();
+        dto.setSalePrice(new BigDecimal("199.00"));
+        service.update(9L, dto);
+
+        ArgumentCaptor<BaseGoods> cap = ArgumentCaptor.forClass(BaseGoods.class);
+        verify(baseGoodsMapper).updateById(cap.capture());
+        assertEquals(new BigDecimal("199.00"), cap.getValue().getSalePrice());
+    }
+
+    @Test
+    void update_salesMemberCannotEditMaterial() {
+        mockSalesMember();
+        BaseGoods material = new BaseGoods();
+        material.setId(9L);
+        material.setType(GoodsService.GOODS_TYPE_MATERIAL);
+        when(baseGoodsMapper.selectById(9L)).thenReturn(material);
+
+        GoodsSaveDTO dto = new GoodsSaveDTO();
+        dto.setSalePrice(new BigDecimal("199.00"));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.update(9L, dto));
+        assertTrue(ex.getMessage().contains("销售部门仅可编辑成品售价"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).updateById(any(BaseGoods.class));
+    }
+
+    @Test
+    void update_salesMemberSalePriceMustBePositive() {
+        mockSalesMember();
+        BaseGoods product = new BaseGoods();
+        product.setId(9L);
+        product.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        when(baseGoodsMapper.selectById(9L)).thenReturn(product);
+
+        GoodsSaveDTO dto = new GoodsSaveDTO(); // salePrice 为空
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.update(9L, dto));
+        assertTrue(ex.getMessage().contains("售价必须大于0"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).updateById(any(BaseGoods.class));
+    }
+
+    // ---------- D68：生产/财务等无写权限部门仍被拦截 ----------
+    @Test
+    void update_productionMemberForbidden() {
+        when(authzService.isSuperAdmin()).thenReturn(false);
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_PURCHASE)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(false);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.update(9L, new GoodsSaveDTO()));
+        assertTrue(ex.getMessage().contains("仅仓储管理员、采购部门或销售部门可编辑"), "实际: " + ex.getMessage());
+    }
 }

@@ -14,6 +14,7 @@ import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizProduction;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.entity.BizSales;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
@@ -21,6 +22,7 @@ import org.example.back.mapper.BizProductionMapper;
 import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionOrderVO;
 import org.example.back.vo.ProductionPickItemVO;
@@ -75,6 +77,9 @@ public class ProductionOrderService {
     private BizPickListMapper pickListMapper;
 
     @Autowired
+    private BizSalesMapper bizSalesMapper;
+
+    @Autowired
     private AuthService authService;
 
     @Autowired
@@ -127,6 +132,7 @@ public class ProductionOrderService {
             vo.setQcState(qcStates.get(order.getId()));
             records.add(vo);
         }
+        fillSalesOrderNoBatch(records);
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -150,6 +156,7 @@ public class ProductionOrderService {
         }
         // D64：10 道工序行（人工行读步骤实例，第 6/8/10 道实时推导；历史单无实例返回 null，前端回落快照文字）
         vo.setStepList(productionStepService.listSteps(order));
+        fillSalesOrderNoBatch(List.of(vo));
         return vo;
     }
 
@@ -160,6 +167,8 @@ public class ProductionOrderService {
         requireOrderWriteAccess();
         BaseGoods product = requireProduct(dto.getGoodsId());
         KuaiTaoResult kit = computeKit(dto.getGoodsId(), dto.getQuantity());
+        // D70：选填关联销售单（须同成品、正常且待出库）；通用备货单留空
+        BizSales linkedSales = requireLinkableSalesOrder(dto.getSalesOrderId(), product.getId());
 
         BizProductionOrder order = new BizProductionOrder();
         order.setOrderNo(CodeGenerator.productionNo());
@@ -170,6 +179,7 @@ public class ProductionOrderService {
         order.setStatus(BizProductionOrder.STATUS_PENDING);
         order.setKitStatus(kit.kitStatus);
         order.setSource(BizProductionOrder.SOURCE_MANUAL);
+        order.setSalesOrderId(linkedSales == null ? null : linkedSales.getId());
         order.setProcessSnapshot(String.join("\n", ProductionStepService.PROCESS_STEPS));
         order.setRemark(dto.getRemark());
         orderMapper.insert(order);
@@ -260,6 +270,24 @@ public class ProductionOrderService {
         productionMapper.insert(in);
 
         order.setStatus(BizProductionOrder.STATUS_DONE);
+        orderMapper.updateById(order);
+
+        // D70：关联销售单仍待出库 → 通知建单销售本人"可发货"（biz 绑定销售单，出库/作废撤未读）
+        notifySalesReadyToShipIfLinked(order);
+    }
+
+    /**
+     * D71：生产手工修正预计完工时间（仅未完结单；留痕走 Controller 层 @AuditLog）。
+     * 手工值优先于系统推算；传 null 视为清除手工值（恢复系统推算）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateExpectedCompletion(Long id, LocalDateTime expectedCompletionTime) {
+        requireOrderExecuteAccess();
+        BizProductionOrder order = requireOrder(id);
+        if (order.getStatus() == null || !BizProductionOrder.UNFINISHED_STATUSES.contains(order.getStatus())) {
+            throw BusinessException.validateFail("仅未完结（待生产/生产中/待入库）的生产任务单可修正预计完工时间");
+        }
+        order.setExpectedCompletionTime(expectedCompletionTime);
         orderMapper.updateById(order);
     }
 
@@ -418,6 +446,55 @@ public class ProductionOrderService {
     }
 
     // ============================== 私有：校验与工具 ==============================
+
+    /** D70：校验可关联的销售单——存在、正常（未作废）、待出库、同成品；null 表示不关联（备货单） */
+    private BizSales requireLinkableSalesOrder(Long salesOrderId, Long goodsId) {
+        if (salesOrderId == null) {
+            return null;
+        }
+        BizSales sales = bizSalesMapper.selectById(salesOrderId);
+        if (sales == null) {
+            throw BusinessException.validateFail("关联销售单不存在");
+        }
+        if (sales.getBizStatus() == null || sales.getBizStatus() != 1) {
+            throw BusinessException.validateFail("关联销售单已作废，无法关联");
+        }
+        if (sales.getConfirmStatus() == null || sales.getConfirmStatus() != SalesService.CONFIRM_PENDING) {
+            throw BusinessException.validateFail("关联销售单已确认出库，无需排产");
+        }
+        if (!goodsId.equals(sales.getGoodsId())) {
+            throw BusinessException.validateFail("关联销售单的成品与本任务单不一致");
+        }
+        return sales;
+    }
+
+    /** D70：生产入库后，若关联销售单仍正常且待出库 → 通知建单销售本人 */
+    private void notifySalesReadyToShipIfLinked(BizProductionOrder order) {
+        if (order.getSalesOrderId() == null) {
+            return;
+        }
+        BizSales sales = bizSalesMapper.selectById(order.getSalesOrderId());
+        if (sales == null || sales.getBizStatus() == null || sales.getBizStatus() != 1
+                || sales.getConfirmStatus() == null || sales.getConfirmStatus() != SalesService.CONFIRM_PENDING) {
+            return;
+        }
+        messageService.sendSalesReadyToShipToUser(
+                sales.getOperatorId(), sales.getSalesNo(), order.getGoodsName(), sales.getQuantity(), sales.getId());
+    }
+
+    /** D70：批量填充关联销售单号（列表/详情展示用） */
+    private void fillSalesOrderNoBatch(List<ProductionOrderVO> records) {
+        List<Long> salesIds = records.stream().map(ProductionOrderVO::getSalesOrderId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (salesIds.isEmpty()) {
+            return;
+        }
+        LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(BizSales::getId, salesIds);
+        Map<Long, String> noMap = bizSalesMapper.selectList(wrapper).stream()
+                .collect(Collectors.toMap(BizSales::getId, BizSales::getSalesNo));
+        records.forEach(vo -> vo.setSalesOrderNo(noMap.get(vo.getSalesOrderId())));
+    }
 
     private BaseGoods requireProduct(Long goodsId) {
         BaseGoods g = baseGoodsMapper.selectById(goodsId);

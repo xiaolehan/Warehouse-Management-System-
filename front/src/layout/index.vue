@@ -45,6 +45,9 @@
         </template>
 
         <template v-else-if="isSalesAdmin">
+          <!-- D68：销售放开物料/成品只读（成品售价维护在 GoodsView 按 v-permission 控制） -->
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
@@ -108,6 +111,9 @@
 
         <!-- 业务部门员工（D32）：销售/采购员工可建单与查看，库存变更仍由仓储/admin 确认 -->
         <template v-else-if="isSalesEmployee">
+          <!-- D68：销售员工同样可见物料/成品（只读+售价维护） -->
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>

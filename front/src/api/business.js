@@ -28,6 +28,9 @@ export const completePurchaseReturnAPI = (id) => request.put(`/business/purchase
 
 export const getSalesPageAPI = (params) => request.get('/business/sales/page', { params })
 export const getSalesDetailAPI = (id) => request.get(`/business/sales/${id}`)
+// D71：履约时间线（销售单详情）；D70：生产建单关联销售单下拉
+export const getSalesTimelineAPI = (id) => request.get(`/business/sales/${id}/timeline`)
+export const getLinkableSalesOptionsAPI = (params) => request.get('/business/sales/options/linkable', { params })
 
 export const getProductionOrderPageAPI = (params) => request.get('/business/production-order/page', { params })
 export const getProductionOrderDetailAPI = (id) => request.get(`/business/production-order/${id}`)
@@ -36,6 +39,8 @@ export const startProductionOrderAPI = (id) => request.post(`/business/productio
 export const completeProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/complete`)
 export const receiptProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/receipt`)
 export const voidProductionOrderAPI = (id, reason) => request.post(`/business/production-order/${id}/void`, null, { params: { reason } })
+// D71：生产手工修正预计完工时间（留痕 @AuditLog）
+export const updateExpectedCompletionAPI = (id, data) => request.put(`/business/production-order/${id}/expected-completion`, data)
 // 工序打卡（D64）：complete 打卡 / revoke 撤销（本人或生产管理员）
 export const completeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/complete`)
 export const revokeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/revoke`)

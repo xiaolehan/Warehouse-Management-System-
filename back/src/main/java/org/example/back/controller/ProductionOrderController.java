@@ -5,6 +5,7 @@ import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
+import org.example.back.dto.ExpectedCompletionDTO;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.service.ProductionOrderService;
@@ -85,6 +86,15 @@ public class ProductionOrderController {
     public Result<Void> voidOrder(@PathVariable Long id,
                                   @RequestParam(required = false) String reason) {
         productionOrderService.voidOrder(id, reason);
+        return Result.success();
+    }
+
+    /** D71：生产手工修正预计完工时间（仅未完结单；留痕 @AuditLog） */
+    @PutMapping("/{id}/expected-completion")
+    @AuditLog(module = "生产任务单", action = "修正预计完工", targetType = "生产任务单")
+    public Result<Void> updateExpectedCompletion(@PathVariable Long id,
+                                                 @RequestBody ExpectedCompletionDTO dto) {
+        productionOrderService.updateExpectedCompletion(id, dto.getExpectedCompletionTime());
         return Result.success();
     }
 }

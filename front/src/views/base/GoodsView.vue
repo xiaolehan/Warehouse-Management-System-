@@ -55,6 +55,10 @@
           <el-tag v-else :type="scope.row.stock <= (scope.row.warningStock ?? 10) ? 'danger' : 'success'">{{ scope.row.stock }}</el-tag>
         </template>
       </el-table-column>
+      <!-- 售价(销售管)：成品页所有部门可见，销售部门可编辑；物料无售价概念 -->
+      <el-table-column v-if="isProduct" prop="salePrice" label="标准售价" width="110">
+        <template #default="scope">{{ scope.row.salePrice ?? '—' }}</template>
+      </el-table-column>
       <el-table-column v-if="isWarehouse && !isProduct" prop="warningStock" label="预警阈值" width="100" />
       <el-table-column v-if="isProduct" label="创建来源" width="130">
         <template #default="scope">
@@ -69,6 +73,9 @@
           <el-button v-if="!isProduct && (isWarehouse || isPurchase)" link size="small" type="success"
             @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase'] }">{{ isPurchase ? '进价编辑' : '编辑' }}</el-button>
+          <!-- D68：销售部门成品售价编辑（镜像采购进价编辑范式） -->
+          <el-button v-else-if="isProduct && isSales" link size="small" type="success" @click="handleEdit(scope.row)"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }">售价编辑</el-button>
           <el-button v-else-if="isWarehouse" link size="small" type="success" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">编辑</el-button>
           <el-button link size="small" type="danger" @click="handleDelete(scope.row)"
@@ -93,7 +100,7 @@
     <el-dialog :title="dialogTitle" v-model="dialogVisible" width="550px">
       <el-form :model="form" :rules="rules" ref="formRef" label-width="100px" :disabled="isView">
         <el-form-item :label="isProduct ? '成品名称' : '物料名称'" required>
-          <el-input v-model="form.goodsName" :disabled="isView || (!isProduct && isPurchase)"></el-input>
+          <el-input v-model="form.goodsName" :disabled="isView || (!isProduct && isPurchase) || isSalesPriceMode"></el-input>
         </el-form-item>
         <template v-if="!isProduct">
           <el-form-item label="产品名称">
@@ -109,29 +116,33 @@
           </el-form-item>
         </template>
         <el-form-item label="单位">
-          <el-input v-model="form.unit" :disabled="isView || (!isProduct && isPurchase)"></el-input>
+          <el-input v-model="form.unit" :disabled="isView || (!isProduct && isPurchase) || isSalesPriceMode"></el-input>
         </el-form-item>
         <!-- 规格/材质：物料固有属性(ADR-0003)，物料按「名称+规格」唯一，防同名不同规格混选；成品规格选填 -->
         <el-form-item label="规格">
-          <el-input v-model="form.spec" :disabled="isView || (!isProduct && isPurchase)"></el-input>
+          <el-input v-model="form.spec" :disabled="isView || (!isProduct && isPurchase) || isSalesPriceMode"></el-input>
         </el-form-item>
         <el-form-item v-if="!isProduct" label="材质">
           <el-input v-model="form.material" :disabled="isView || isPurchase"></el-input>
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.description" type="textarea" :rows="2" :disabled="isView || (!isProduct && isPurchase)"></el-input>
+          <el-input v-model="form.description" type="textarea" :rows="2" :disabled="isView || (!isProduct && isPurchase) || isSalesPriceMode"></el-input>
         </el-form-item>
         <!-- 进价(采购管)：仓储新增/编辑一律不显示；采购编辑/双方查看可见可改；成品无进价 -->
         <el-form-item v-if="showPrice && !isWarehouse && !isProduct" label="进价" required>
           <el-input-number v-model="form.purchasePrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%;" />
         </el-form-item>
+        <!-- 售价(销售管)：销售编辑成品可改（D68）；查看态对所有人只读展示 -->
+        <el-form-item v-if="isProduct && ((isSales && !isAddMode) || isView)" label="标准售价" :required="isSales && !isView">
+          <el-input-number v-model="form.salePrice" :min="0.01" :precision="2" :step="1" style="width: 100%;" :disabled="isView" />
+        </el-form-item>
         <!-- 初始库存(仓储建) -->
         <el-form-item v-if="!isView && isAddMode && isWarehouse" label="初始库存">
           <el-input-number v-model="form.stock" :min="0" />
         </el-form-item>
-        <!-- 当前库存：仓储编辑可改；采购编辑/双方查看只读 -->
+        <!-- 当前库存：仓储编辑可改；采购编辑/双方查看只读；销售售价编辑态只读 -->
         <el-form-item v-if="(!isView && !isAddMode && !isPurchase) || isView" label="当前库存">
-          <el-input-number v-model="form.stock" :min="0" :disabled="isView || isPurchase" style="width: 100%;" />
+          <el-input-number v-model="form.stock" :min="0" :disabled="isView || isPurchase || isSalesPriceMode" style="width: 100%;" />
         </el-form-item>
         <!-- 预警阈值(仓储管)：仓储编辑/查看可见，采购不显示；成品不参与预警 -->
         <el-form-item v-if="isWarehouse && !isProduct" label="预警阈值">
@@ -172,7 +183,11 @@ const userRole = getRole()
 const userDept = getDeptCode()
 const isWarehouse = userRole === 'admin' && userDept === 'warehouse'
 const isPurchase = userDept === 'purchase' && (userRole === 'admin' || userRole === 'employee')
+// D68：销售部门（admin/员工）可编辑成品售价，镜像采购进价范式
+const isSales = userDept === 'sales' && (userRole === 'admin' || userRole === 'employee')
 const showPrice = isPurchase || isSuperAdmin(userRole)
+// 销售编辑成品=售价编辑态：名称/规格/备注/库存等字段只读，仅售价可改
+const isSalesPriceMode = computed(() => isSales && isProduct.value && !isView.value && !isAddMode.value && !!form.id)
 
 const suppliers = ref([])
 
@@ -195,6 +210,7 @@ const form = reactive({
   category: '',
   supplierId: null,
   purchasePrice: null,
+  salePrice: null,
   unit: '',
   spec: '',
   material: '',
@@ -287,6 +303,7 @@ const initForm = () => {
   form.category = ''
   form.supplierId = null
   form.purchasePrice = null
+  form.salePrice = null
   form.unit = ''
   form.spec = ''
   form.material = ''
@@ -320,6 +337,7 @@ const openByDetail = async (row, viewMode) => {
     category: detail.category || '',
     supplierId: detail.supplierId || null,
     purchasePrice: detail.purchasePrice ?? null,
+    salePrice: detail.salePrice ?? null,
     unit: detail.unit || '',
     spec: detail.spec || '',
     material: detail.material || '',
@@ -369,7 +387,11 @@ const handleSave = () => {
     if (!valid) return
     try {
       let payload
-      if (isProduct.value) {
+      if (isProduct.value && form.id && isSales) {
+        // D68：销售编辑成品=只改售价（其他字段由后端部门分支忽略，防误传）；
+        // goodsName 仅为过 DTO @NotBlank 校验，后端售价分支不使用
+        payload = { goodsName: form.goodsName, salePrice: form.salePrice }
+      } else if (isProduct.value) {
         // D65：成品仅仓储可改，只传名称/单位/规格/备注/库存（供应商/预警/种类由后端定死，防误传）
         payload = {
           goodsName: form.goodsName,
@@ -380,8 +402,8 @@ const handleSave = () => {
           type: 'product'
         }
       } else if (form.id && isPurchase) {
-        // D35.2 采购只改单价
-        payload = { purchasePrice: form.purchasePrice }
+        // D35.2 采购只改单价；goodsName 仅为过 DTO @NotBlank 校验，后端进价分支不使用
+        payload = { goodsName: form.goodsName, purchasePrice: form.purchasePrice }
       } else {
         // 仓储新增/编辑：基本字段+初始库存/预警，无价格
         payload = {

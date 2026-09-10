@@ -70,6 +70,9 @@ public class SalesVO {
 
     private Integer approvalStatus;
 
+    /** D69：当前库存快照（列表批量填充），仓储出库确认页据此标红"库存不足"的待确认单 */
+    private Integer stock;
+
     private String approvalRequestAction;
 
     /** 最近审批单的备注（超管通过/驳回时填写，用于销售人员查看驳回原因）。 */

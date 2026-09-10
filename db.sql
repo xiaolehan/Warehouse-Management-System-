@@ -1566,3 +1566,16 @@ ALTER TABLE `biz_bom`
     ADD COLUMN `active_bom_code` VARCHAR(50) GENERATED ALWAYS AS (IF(`is_deleted`=0, `bom_code`, NULL)) VIRTUAL COMMENT '软删兼容唯一键载体(D66): 有效行=bom_code, 软删行=NULL';
 ALTER TABLE `biz_bom` ADD UNIQUE KEY `uk_bom_active_goods` (`active_goods_id`);
 ALTER TABLE `biz_bom` ADD UNIQUE KEY `uk_bom_active_code` (`active_bom_code`);
+
+-- ============================================================
+-- 15.x 阶段 20（D70/D71）：销售-生产联动 + 标准工期
+-- biz_bom.lead_days：标准工期（天），生产建/编辑 BOM 时填写，可空；空=待生产评估（新品无工期数据）
+-- biz_production_order.sales_order_id：关联销售单（可空，一张生产单最多关联一张销售单）
+-- biz_production_order.expected_completion_time：生产手工修正的预计完工时间，优先于系统推算
+-- ============================================================
+ALTER TABLE `biz_bom`
+    ADD COLUMN `lead_days` INT NULL COMMENT '标准工期（天，D71）：生产建/编辑BOM时填写，可空；空=待生产评估';
+ALTER TABLE `biz_production_order`
+    ADD COLUMN `sales_order_id` BIGINT NULL COMMENT '关联销售单id（D70），可空；一张生产单最多关联一张销售单',
+    ADD COLUMN `expected_completion_time` DATETIME NULL COMMENT '生产手工修正的预计完工时间（D71），优先于系统推算',
+    ADD KEY `idx_po_sales` (`sales_order_id`);

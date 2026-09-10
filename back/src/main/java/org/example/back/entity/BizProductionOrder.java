@@ -59,6 +59,12 @@ public class BizProductionOrder {
     /** 来源: MANUAL-手动创建 */
     private String source;
 
+    /** D70：关联销售单 id（可空，一张生产单最多关联一张销售单）；通用备货单留空 */
+    private Long salesOrderId;
+
+    /** D71：生产手工修正的预计完工时间（可空），优先于系统推算 */
+    private LocalDateTime expectedCompletionTime;
+
     /** 工序清单快照(8道装配工序静态 SOP，打印用) */
     private String processSnapshot;
 

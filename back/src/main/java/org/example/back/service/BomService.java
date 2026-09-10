@@ -138,6 +138,7 @@ public class BomService {
         bom.setBomCode(bomCode);
         bom.setGoodsId(product.getId());
         bom.setGoodsName(product.getGoodsName());
+        bom.setLeadDays(dto.getLeadDays()); // D71：标准工期可空
         bom.setRemark(dto.getRemark());
         bizBomMapper.insert(bom);
 
@@ -171,6 +172,7 @@ public class BomService {
         checkBomCodeUnique(bomCode, id);
         bom.setBomCode(bomCode);
         bom.setGoodsName(newName);
+        bom.setLeadDays(dto.getLeadDays()); // D71：标准工期可空（留空=清除，恢复"待生产评估"）
         bom.setRemark(dto.getRemark());
         bizBomMapper.updateById(bom);
 

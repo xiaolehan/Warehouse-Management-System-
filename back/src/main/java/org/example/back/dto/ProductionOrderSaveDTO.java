@@ -15,5 +15,8 @@ public class ProductionOrderSaveDTO {
     @Min(value = 1, message = "生产数量至少为1")
     private Integer quantity;
 
+    /** D70：关联销售单 id（选填；通用备货单留空）。须为同成品、正常且待出库的销售单 */
+    private Long salesOrderId;
+
     private String remark;
 }

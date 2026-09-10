@@ -73,6 +73,11 @@
         <el-form-item label="单位" prop="unit">
           <el-input v-model="form.unit" placeholder="如 台（可空）" :disabled="isView" style="width: 200px" />
         </el-form-item>
+        <!-- D71：标准工期（天，可空）——销售端履约时间线推算预计可交付的依据；新品未知工期留空（显示"待生产评估"） -->
+        <el-form-item label="标准工期">
+          <el-input-number v-model="form.leadDays" :min="1" :precision="0" placeholder="天（可空）" :disabled="isView" style="width: 200px" controls-position="right" />
+          <div style="color:#909399; font-size:12px; line-height:1.4">用于推算销售单预计可交付时间；新品工期未知可留空</div>
+        </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="BOM 备注" />
         </el-form-item>
@@ -268,7 +273,7 @@ const dialogVisible = ref(false)
 const dialogTitle = ref('')
 const isView = ref(false)
 const formRef = ref(null)
-const form = reactive({ id: null, goodsName: '', unit: '', remark: '', details: [] })
+const form = reactive({ id: null, goodsName: '', unit: '', remark: '', leadDays: null, details: [] })
 
 const detailVisible = ref(false)
 const detail = ref(null)
@@ -439,6 +444,7 @@ const initForm = () => {
   form.goodsName = ''
   form.unit = ''
   form.remark = ''
+  form.leadDays = null
   form.details = [newDetailRow()]
 }
 
@@ -480,6 +486,7 @@ const handleEdit = async (row) => {
     form.goodsName = d.goodsName || ''
     form.unit = d.goodsUnit || ''
     form.remark = d.remark || ''
+    form.leadDays = d.leadDays ?? null
     form.details = (d.details && d.details.length)
       ? d.details.map((x) => ({
           goodsId: x.goodsId || null,
@@ -536,6 +543,7 @@ const buildPayload = () => {
     goodsName: form.goodsName,
     unit: form.unit || '',
     remark: form.remark || '',
+    leadDays: form.leadDays || null, // D71：可空，新品工期未知由生产后补
     details: validDetails.map((x) => ({
       goodsId: x.goodsId || null,
       componentName: x.componentName,

@@ -52,7 +52,8 @@ const router = createRouter({
           path: "base/goods",
           name: "BaseGoods",
           component: () => import("../views/base/GoodsView.vue"),
-          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production'] }
+          // D68：销售部门放开只读（售价维护按部门分支控制，同采购进价范式）
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production', 'sales'] }
         },
         // D65 主数据分域：成品管理与物料管理同组件分页渲染，权限沿用物料管理
         {
@@ -60,7 +61,7 @@ const router = createRouter({
           name: "BaseProducts",
           component: () => import("../views/base/GoodsView.vue"),
           props: { goodsType: "product" },
-          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production'] }
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'purchase', 'production', 'sales'] }
         },
         {
           path: "base/bom",

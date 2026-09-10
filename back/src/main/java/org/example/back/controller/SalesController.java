@@ -10,7 +10,9 @@ import org.example.back.dto.SalesQueryDTO;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.SalesService;
+import org.example.back.service.SalesTimelineService;
 import org.example.back.vo.SalesSourceOptionVO;
+import org.example.back.vo.SalesTimelineVO;
 import org.example.back.vo.SalesVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +25,9 @@ public class SalesController {
 
     @Autowired
     private SalesService salesService;
+
+    @Autowired
+    private SalesTimelineService salesTimelineService;
 
     @GetMapping("/page")
     public Result<PageResult<SalesVO>> page(SalesQueryDTO queryDTO) {
@@ -37,6 +42,18 @@ public class SalesController {
     @GetMapping("/options/returnable")
     public Result<List<SalesSourceOptionVO>> returnableOptions(@RequestParam(required = false) Long goodsId) {
         return Result.success(salesService.returnableOptions(goodsId));
+    }
+
+    /** D70：生产建单关联销售单下拉（该成品正常且待出库的销售单） */
+    @GetMapping("/options/linkable")
+    public Result<List<SalesSourceOptionVO>> linkableOptions(@RequestParam Long goodsId) {
+        return Result.success(salesService.linkableOptions(goodsId));
+    }
+
+    /** D71：销售单履约时间线（下单→排产→物料→开工→装配→质检→入库→发货 + 预计可交付时间） */
+    @GetMapping("/{id}/timeline")
+    public Result<SalesTimelineVO> timeline(@PathVariable Long id) {
+        return Result.success(salesTimelineService.getTimeline(id));
     }
 
     @PostMapping

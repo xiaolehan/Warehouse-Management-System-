@@ -22,6 +22,9 @@ public class BomVO {
     /** 成品单位 */
     private String goodsUnit;
 
+    /** D71：标准工期（天，可空） */
+    private Integer leadDays;
+
     private String remark;
 
     private LocalDateTime createTime;

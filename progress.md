@@ -5,6 +5,25 @@
 
 ---
 
+## 会话 25 — 2026-09-10
+
+### 阶段 20 销售端三件套落地：售价维护 / 零库存开单 / 履约时间线联动（D68–D71，grilling 三轮定案→实施→E2E 全通过）
+
+- **定案过程（grill-with-docs）：** 用户提销售端三需求（销售看物料/成品页+定售价、零库存可开单、成品生命周期时间线联动）。三轮 grilling 定 Q1–Q13；E1（库存竞争不预留）/E2（关联单作废不拦截）挂起待公司确认；E3 工期挂 `biz_bom.lead_days` 可空（新品留空显"待生产评估"，不设全局默认值）。
+- **后端（B1–B6，154 单测全绿）：**
+  - db.sql 15.x：`biz_bom.lead_days`（可空）+ `biz_production_order.sales_order_id`/`expected_completion_time`（可空+idx_po_sales），本地已执行。
+  - D68 商品读权限放开 sales；GoodsService.update 销售分支（仅成品、salePrice>0、仅改售价，置于采购分支前，镜像 D35.2）。
+  - D69 SalesService.create 删 ensureStockSufficient 软校验（允许超卖/零库存，出库硬校验兜底）；现货不足 → `sendSalesDemandToProductionAdmins`（biz_type=sales 绑单，D21 范式）；page/getById 批量填 `SalesVO.stock`（仓储标红数据源）。
+  - D70 ProductionOrderService：create 选填 salesOrderId（requireLinkableSalesOrder 校验存在/正常/待出库/同成品）；`updateExpectedCompletion`（仅未完结，null=清除，@AuditLog）；receipt 入库后 `notifySalesReadyToShipIfLinked`（销售单仍正常待出库 → 通知建单本人）；page/getById 填 salesOrderNo。另补 `GET /sales/options/linkable?goodsId=`（生产/销售/仓储可读，建单关联下拉数据源——销售 page 接口生产无权访问）。
+  - D71 新建 SalesTimelineService：`GET /sales/{id}/timeline`（sales+warehouse 可读），8 节点（下单/排产/物料准备/开工/装配x-7/质检/入库/发货）；预计可交付推算——已发货/现货充足→立即发；手工 expectedCompletionTime 优先（manual）；leadDays 空→"待生产评估"；缺料→max(补料行预计到货)+leadDays（无到货→"缺料待采购确认到货时间"）；开工/齐套→(开工|now)+leadDays（system）；关联单作废→回退"待重新排产"；现货充足无关联单→仅下单/发货两节点。
+- **前端（F1–F6）：** 路由/菜单放开销售两页；GoodsView 成品页标准售价列+售价编辑（编辑态其他字段只读，payload 仅 goodsName+salePrice）；新建 SalesTimeline.vue 组件挂销售单详情；建单移除库存钳制/拦截改缺货提示；ProductionOrderView 建单关联销售单下拉（随成品联动）+详情关联单/预计完工+修正弹窗（可清空恢复推算）；BomView 标准工期选填；仓储销售出库页当前库存列+缺货行淡红标红。
+- **E2E（curl 全链路）：** 零库存建单 200 + 生产管理员收"销售需求待排产"（biz 绑定）；linkable 下拉→关联建单落 sales_order_id；时间线 8 节点 + "待生产评估"→手工修正后"生产确认"（manual 优先）；销售改成品售价 200/改物料 403/售价≤0 400；purchase 访问 timeline body 403；仓储 page 带 stock（0<5 缺货）；删除销售单后未读消息撤清（live_unread=0）；测试数据全清理（任务单作废/售价进价还原/库存未动）。
+- **顺带修复存量 bug：** `GoodsSaveDTO.goodsName @NotBlank` 把采购进价编辑（payload 仅 purchasePrice）也 400 拦截——线上存量缺陷，前端两个价格分支补传 goodsName（仅为过 DTO 校验，后端价格分支不使用），E2E 验证采购改价 200 且物料名称未被误改。
+- **文档：** ADR-0004（显式 1对1 关联 vs 弱联动/自动建单/多对多取舍）；CONTEXT.md +6 词条（标准售价/待货销售单/预计可交付时间/履约时间线/销售需求联动/标准工期）；task_plan D68–D71 决策行 + E1/E2 挂起登记。
+- **遗留：** E1/E2 待用户与公司确认后定（暂定行为已落地：不预留不自动通知、作废不拦截关联保留）；dev 服务器运行中（后端 8080/前端 5173）。
+
+---
+
 ## 会话 24 — 2026-09-09
 
 ### 阶段 19 修复轮：7 角度 code-review 发现的 P0/P1/P2 全部落地 + 双轴复审通过

@@ -1,6 +1,7 @@
 package org.example.back.dto;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -20,6 +21,10 @@ public class BomSaveDTO {
 
     /** 成品单位（可空，用于新建成品主档） */
     private String unit;
+
+    /** D71：标准工期（天，选填）；定制新品不知道工期可留空，时间线显示"待生产评估" */
+    @Min(value = 1, message = "标准工期至少为1天")
+    private Integer leadDays;
 
     private String remark;
 
