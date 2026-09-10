@@ -43,6 +43,18 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ProductionOrderServiceTest {
 
+    @org.junit.jupiter.api.BeforeAll
+    static void initTableInfo() {
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizProductionOrder.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizSales.class);
+    }
+
     @Mock private BizProductionOrderMapper orderMapper;
     @Mock private BizBomMapper bomMapper;
     @Mock private BizBomDetailMapper bomDetailMapper;
@@ -488,5 +500,50 @@ class ProductionOrderServiceTest {
 
         verify(messageService, org.mockito.Mockito.never()).sendSalesReadyToShipToUser(
                 any(), anyString(), anyString(), any(), any());
+    }
+
+    // ---------- D73：关联销售单已删除 → 标注"已取消的销售单" ----------
+
+    @Test
+    void getById_linkedSalesDeleted_marksCancelled() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        // 软删后 selectList 查不到 → 标注已取消
+        when(bizSalesMapper.selectList(any())).thenReturn(List.of());
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertEquals("已取消的销售单", vo.getSalesOrderNo());
+    }
+
+    @Test
+    void getById_linkedSalesVoided_marksVoided() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        BizSales sales = new BizSales();
+        sales.setId(501L);
+        sales.setSalesNo("XS260910001");
+        sales.setBizStatus(2); // 已作废
+        when(bizSalesMapper.selectList(any())).thenReturn(List.of(sales));
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertEquals("XS260910001（已作废）", vo.getSalesOrderNo());
     }
 }

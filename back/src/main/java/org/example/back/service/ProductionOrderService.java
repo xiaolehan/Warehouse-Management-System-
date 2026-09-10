@@ -485,7 +485,7 @@ public class ProductionOrderService {
                 sales.getOperatorId(), sales.getSalesNo(), order.getGoodsName(), sales.getQuantity(), sales.getId());
     }
 
-    /** D70：批量填充关联销售单号（列表/详情展示用） */
+    /** D70/D73：批量填充关联销售单号；销售单已作废→"单号（已作废）"、已删除→"已取消的销售单" */
     private void fillSalesOrderNoBatch(List<ProductionOrderVO> records) {
         List<Long> salesIds = records.stream().map(ProductionOrderVO::getSalesOrderId)
                 .filter(java.util.Objects::nonNull).distinct().toList();
@@ -494,9 +494,21 @@ public class ProductionOrderService {
         }
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.in(BizSales::getId, salesIds);
-        Map<Long, String> noMap = bizSalesMapper.selectList(wrapper).stream()
-                .collect(Collectors.toMap(BizSales::getId, BizSales::getSalesNo));
-        records.forEach(vo -> vo.setSalesOrderNo(noMap.get(vo.getSalesOrderId())));
+        Map<Long, BizSales> salesMap = bizSalesMapper.selectList(wrapper).stream()
+                .collect(Collectors.toMap(BizSales::getId, s -> s));
+        for (ProductionOrderVO vo : records) {
+            if (vo.getSalesOrderId() == null) {
+                continue;
+            }
+            BizSales sales = salesMap.get(vo.getSalesOrderId());
+            if (sales == null) {
+                vo.setSalesOrderNo("已取消的销售单");
+            } else if (sales.getBizStatus() == null || sales.getBizStatus() != 1) {
+                vo.setSalesOrderNo(sales.getSalesNo() + "（已作废）");
+            } else {
+                vo.setSalesOrderNo(sales.getSalesNo());
+            }
+        }
     }
 
     private BaseGoods requireProduct(Long goodsId) {
