@@ -272,6 +272,25 @@ class ProductionStepServiceTest {
         verify(stepMapper, never()).selectList(any());
     }
 
+    @Test
+    void listSteps_terminatedOrder_receiptLineShowsTerminated() {
+        BizProductionOrderStep done = step(3, BizProductionOrderStep.STATUS_DONE, 9L);
+        when(stepMapper.selectList(any())).thenReturn(List.of(done));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("untested");
+        qc.setFinalStatus("untested");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_TERMINATED));
+
+        // 入库行（第 10 道）应显示"已终止"
+        ProductionStepVO receipt = steps.get(9);
+        assertEquals("receipt", receipt.getType());
+        assertFalse(receipt.getDone());
+        assertEquals("已终止", receipt.getStatusText());
+        assertEquals("danger", receipt.getTagType());
+    }
+
     // ---------- D73：已终止订单冻结（打卡/撤销拦截） ----------
 
     @Test

@@ -486,7 +486,8 @@ public class PurchaseRequestService {
         if (order == null
                 || order.getStatus() == null
                 || order.getStatus() == BizProductionOrder.STATUS_VOIDED
-                || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED) {
+                || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED
+                || order.getStatus() == BizProductionOrder.STATUS_TERMINATED) {
             return;
         }
         List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(order.getId());

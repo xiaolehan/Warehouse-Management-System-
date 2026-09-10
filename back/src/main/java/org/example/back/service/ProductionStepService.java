@@ -229,6 +229,10 @@ public class ProductionStepService {
             vo.setDone(false);
             vo.setStatusText("已报废");
             vo.setTagType("danger");
+        } else if (status != null && status == BizProductionOrder.STATUS_TERMINATED) {
+            vo.setDone(false);
+            vo.setStatusText("已终止");
+            vo.setTagType("danger");
         } else {
             vo.setDone(false);
             vo.setStatusText("未完成");

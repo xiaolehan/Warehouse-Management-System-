@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -545,5 +546,26 @@ class ProductionOrderServiceTest {
         ProductionOrderVO vo = service.getById(7L);
 
         assertEquals("XS260910001（已作废）", vo.getSalesOrderNo());
+    }
+
+    @Test
+    void getById_terminatedOrder_loadsQcState() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO-TERM");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        QcStateVO state = new QcStateVO();
+        state.setFirstStatus("ok");
+        when(qcService.buildState(order)).thenReturn(state);
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertNotNull(vo.getQcState());
+        assertEquals("ok", vo.getQcState().getFirstStatus());
     }
 }

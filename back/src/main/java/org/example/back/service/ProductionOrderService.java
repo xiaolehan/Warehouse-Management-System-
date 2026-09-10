@@ -148,10 +148,11 @@ public class ProductionOrderService {
             vo.setKitStatus(kit.kitStatus);
             vo.setKitStatusText(kitText(kit.kitStatus));
         }
-        // 生产/待入库/已报废阶段展示质检状态
+        // 生产/待入库/已报废/已终止阶段展示质检状态（终止冻结但记录保留可见）
         if (order.getStatus() == BizProductionOrder.STATUS_IN_PROGRESS
                 || order.getStatus() == BizProductionOrder.STATUS_AWAIT_QC
-                || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED) {
+                || order.getStatus() == BizProductionOrder.STATUS_SCRAPPED
+                || order.getStatus() == BizProductionOrder.STATUS_TERMINATED) {
             vo.setQcState(qcService.buildState(order));
         }
         // D64：10 道工序行（人工行读步骤实例，第 6/8/10 道实时推导；历史单无实例返回 null，前端回落快照文字）

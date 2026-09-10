@@ -877,8 +877,9 @@ async function doTerminate() {
   }
   try {
     await ElMessageBox.confirm('终止为终态操作，不可恢复。确认终止该生产任务单？', '终止确认', { type: 'warning' })
-  } catch {
-    return
+  } catch (e) {
+    if (e === 'cancel') return
+    if (e && e.message) ElMessage.error(e.message)
   }
   terminateSubmitting.value = true
   try {

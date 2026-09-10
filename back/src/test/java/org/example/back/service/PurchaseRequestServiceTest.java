@@ -750,4 +750,20 @@ class PurchaseRequestServiceTest {
         verify(productionOrderService, never()).computeShortageForOrder(anyLong());
         verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
     }
+
+    @Test
+    void confirmReceive_skipsNotifyWhenOrderTerminated() {
+        BizPurchaseRequest request = awaitingConfirmRequest(PurchaseRequestService.SOURCE_PRODUCTION);
+        stubConfirmReceive(request, arrivedDetail());
+
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+
+        service.confirmReceive(30L);
+
+        verify(productionOrderService, never()).computeShortageForOrder(anyLong());
+        verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
+    }
 }
