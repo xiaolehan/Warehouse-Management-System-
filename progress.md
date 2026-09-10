@@ -5,6 +5,30 @@
 
 ---
 
+## 会话 26 — 2026-09-10
+
+### 阶段 21：E1 确认 / D73 手动终止+退料联动 / D74 红冲隐藏（171 单测全绿 + E2E 13/13 + 负测 5/5 + 库存 17/17 回基线）
+
+- **范围**：E1（库存竞争）确认维持现状；E2（关联单取消）落地为销售取消通知+生产手动终止+退料联动（D73）；E3（红冲）前端入口隐藏、后端逻辑保留（D74）。
+- **后端**：
+  - 新增状态 STATUS_TERMINATED=7，状态机 1/2/3 → 7（不可逆，仅生产管理员，原因必填，@AuditLog）；已终止不参与 UNFINISHED_STATUSES；打卡/质检冻结。
+  - ProductionPickService.terminate：一个事务生成 RETURN 退料单（退料量=已领未退净额为上界服务端兜底）+ 置生产单 status=7 + 终止原因/人/时间落库；已有进行中退料单跳过自动生成。
+  - 销售取消通知：SalesService.delete/voidDocument 末尾，若关联生产单未终态 → sendSalesCanceledToProductionAdmins（biz_type=production_order，D21）；生产单任一终态撤未读。
+  - 履约时间线联动：关联生产单已终止 → 回退「待重新排产」；关联销售单号标注「已取消 /（已作废）」。
+  - 后端红冲逻辑（biz_status=3 负向记录）完整保留，仅前端隐藏入口。
+  - 单测 154 → **171**（+17），全绿。
+- **前端**：
+  - ProductionOrderView：终止按钮（生产管理员，1/2/3 可见）+ 终止对话框（预填已领未退净额可改量）+ 已终止态 tag 灰显+冻结+关联单标注。
+  - SalesTimeline：已终止关联单 → 「待重新排产」。
+  - 五业务页（SalesView/PurchaseView/PurchaseReturnView/SalesReturnView/ProductionView）删「作废并红冲」按钮，「仅作废」更名「作废」；作废审批页删 void_red 选项（历史记录兜底显示）。
+  - npm run build 通过。
+- **E2E 结果**：主链路 13/13 全过（终止主流程/已有进行中退料跳过/状态闸/越权/销售取消通知触发与撤回/时间线联动/红冲隐藏后端仍可用/库存回补）；负测 5/5 全中；库存 17/17 回基线，测试数据零残留。
+- **文档**：task_plan 阶段 21 + D72/D73/D74 决策行 + E1/E2 从待确认移出；CONTEXT 新增「手动终止」「已领未退」词条 + 履约时间线/销售需求联动各补一句 D73；ADR-0005（生产任务单手动终止）。
+- **改动文件**：task_plan.md / CONTEXT.md / progress.md / docs/adr/0005-production-order-terminate.md（本任务）；后端 ProductionOrderService / ProductionPickService / ProductionOrderController / SalesService / SalesTimelineService / MessageService + 对应 Entity/DTO/VO/Mapper；前端 ProductionOrderView / SalesTimeline / 五业务页 / VoidApprovalView。
+- **遗留事项**：无 P0/P1；minor 留待后续——handleVoid 死代码分支、存量 void_red 历史数据展示兜底。
+
+---
+
 ## 会话 25 — 2026-09-10
 
 ### 阶段 20 销售端三件套落地：售价维护 / 零库存开单 / 履约时间线联动（D68–D71，grilling 三轮定案→实施→E2E 全通过）
