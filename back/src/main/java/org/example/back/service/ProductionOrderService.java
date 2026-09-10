@@ -598,6 +598,7 @@ public class ProductionOrderService {
             case BizProductionOrder.STATUS_DONE -> "已完成";
             case BizProductionOrder.STATUS_VOIDED -> "已作废";
             case BizProductionOrder.STATUS_SCRAPPED -> "已报废";
+            case BizProductionOrder.STATUS_TERMINATED -> "已终止";
             default -> "";
         };
     }

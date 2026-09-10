@@ -262,6 +262,9 @@ public class ProductionStepService {
         if (st == BizProductionOrder.STATUS_VOIDED) {
             throw BusinessException.validateFail("订单已作废，不能再打卡/撤销");
         }
+        if (st == BizProductionOrder.STATUS_TERMINATED) {
+            throw BusinessException.validateFail("订单已终止，不能再打卡/撤销");
+        }
         if (st == BizProductionOrder.STATUS_SCRAPPED) {
             throw BusinessException.validateFail("订单已报废，不能再打卡/撤销");
         }

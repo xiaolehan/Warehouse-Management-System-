@@ -38,7 +38,7 @@ import java.util.Objects;
  * BOM 未填工期 → "待生产评估"；未关联生产单 → "待生产排产"。
  *
  * 已知近似：开工/入库节点时间取 最早工序打卡/updateTime 近似（任务单无独立开工/入库时间字段）；
- * 现货判断不预留库存（E1 暂定口径，先出库先赢）。
+ * 现货判断不预留库存（D72 已确认口径：先出库先赢，不做预留，出库硬校验拦截后退回人工协调）。
  */
 @Service
 public class SalesTimelineService {
@@ -135,10 +135,11 @@ public class SalesTimelineService {
 
     private void buildOrderNodes(SalesTimelineVO vo, List<SalesTimelineNodeVO> nodes,
                                  BizSales sales, BizProductionOrder order, int stock, boolean shipped) {
-        // 关联单已作废 → 排产回退为待排产（E2 暂定口径：关联保留，时间线如实反映）
-        if (order.getStatus() != null && order.getStatus() == BizProductionOrder.STATUS_VOIDED) {
+        // 关联单已作废/已终止 → 排产回退为待排产（D73：关联保留，时间线如实反映）
+        if (order.getStatus() != null && (order.getStatus() == BizProductionOrder.STATUS_VOIDED
+                || order.getStatus() == BizProductionOrder.STATUS_TERMINATED)) {
             nodes.add(node("scheduled", "生产排产", "pending", null,
-                    "关联生产任务单 " + order.getOrderNo() + " 已作废，待重新排产"));
+                    "关联生产任务单 " + order.getOrderNo() + " " + statusText(order.getStatus()) + "，待重新排产"));
             nodes.add(node("shipped", "发货", "pending", null, null));
             vo.setEstimatedDeliveryText("待生产排产");
             vo.setEstimatedSource("none");
@@ -339,6 +340,7 @@ public class SalesTimelineService {
             case BizProductionOrder.STATUS_DONE -> "已完成";
             case BizProductionOrder.STATUS_VOIDED -> "已作废";
             case BizProductionOrder.STATUS_SCRAPPED -> "已报废";
+            case BizProductionOrder.STATUS_TERMINATED -> "已终止";
             default -> "";
         };
     }

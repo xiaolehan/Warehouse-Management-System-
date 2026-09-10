@@ -255,4 +255,23 @@ class SalesTimelineServiceTest {
         assertTrue(vo.getNodes().get(1).getDescription().contains("已作废"), "实际: " + vo.getNodes().get(1).getDescription());
         assertEquals("待生产排产", vo.getEstimatedDeliveryText());
     }
+
+    // ---------- D73：关联生产单已终止 → 时间线回退待排产 ----------
+
+    @Test
+    void getTimeline_terminatedLinkedOrder_fallsBackToReschedule() {
+        sales(5, SalesService.CONFIRM_PENDING);
+        goodsWithStock(0);
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(88L);
+        order.setOrderNo("PRO260910001");
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(productionOrderMapper.selectOne(any())).thenReturn(order);
+
+        SalesTimelineVO vo = service.getTimeline(501L);
+
+        assertEquals("待生产排产", vo.getEstimatedDeliveryText());
+        assertTrue(vo.getNodes().stream().anyMatch(n -> "scheduled".equals(n.getKey())
+                && n.getDescription() != null && n.getDescription().contains("已终止")));
+    }
 }

@@ -1,5 +1,7 @@
 package org.example.back.service;
 
+import org.example.back.common.exception.BusinessException;
+import org.example.back.dto.QcSaveDTO;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizProductionQc;
 import org.example.back.mapper.BizProductionOrderMapper;
@@ -16,6 +18,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -87,5 +90,24 @@ class QcServiceTest {
         assertTrue(service.buildStateBatch(List.of()).isEmpty());
         assertTrue(service.buildStateBatch(null).isEmpty());
         verify(qcMapper, never()).selectList(any());
+    }
+
+    // ---------- D73：已终止订单冻结（质检拦截） ----------
+
+    @Test
+    void record_terminatedOrder_throws() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        QcSaveDTO dto = new QcSaveDTO();
+        dto.setOrderId(7L);
+        dto.setTestPoint("first");
+        dto.setResult("OK");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.record(dto));
+        assertTrue(ex.getMessage().contains("已终止"));
     }
 }

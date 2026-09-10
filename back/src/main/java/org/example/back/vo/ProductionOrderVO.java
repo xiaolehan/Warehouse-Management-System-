@@ -20,7 +20,7 @@ public class ProductionOrderVO {
 
     private Integer quantity;
 
-    /** 状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废 */
+    /** 状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废, 6-已报废, 7-已终止 */
     private Integer status;
 
     private String statusText;

@@ -295,6 +295,9 @@ public class QcService {
         if (st == BizProductionOrder.STATUS_VOIDED) {
             throw BusinessException.validateFail("该订单已作废，无法质检");
         }
+        if (st == BizProductionOrder.STATUS_TERMINATED) {
+            throw BusinessException.validateFail("该订单已终止，无法质检");
+        }
         if (st == BizProductionOrder.STATUS_DONE) {
             throw BusinessException.validateFail("该订单已完成，无需质检");
         }

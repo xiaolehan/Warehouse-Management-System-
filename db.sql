@@ -1353,7 +1353,7 @@ CREATE TABLE IF NOT EXISTS `biz_production_order` (
     `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '成品名称(冗余)',
     `unit` VARCHAR(20) DEFAULT NULL COMMENT '成品单位(冗余)',
     `quantity` INT NOT NULL COMMENT '生产数量',
-    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废, 6-已报废, 7-已终止',
     `kit_status` VARCHAR(20) DEFAULT NULL COMMENT '齐套状态: ok-齐套, partial-部分缺料, block-严重缺料',
     `source` VARCHAR(20) DEFAULT 'MANUAL' COMMENT '来源: MANUAL-手动创建',
     `process_snapshot` TEXT COMMENT '工序清单快照(8道装配工序静态 SOP，打印用)',
@@ -1579,3 +1579,10 @@ ALTER TABLE `biz_production_order`
     ADD COLUMN `sales_order_id` BIGINT NULL COMMENT '关联销售单id（D70），可空；一张生产单最多关联一张销售单',
     ADD COLUMN `expected_completion_time` DATETIME NULL COMMENT '生产手工修正的预计完工时间（D71），优先于系统推算',
     ADD KEY `idx_po_sales` (`sales_order_id`);
+
+-- =====================================================================
+-- 16. 阶段 21：E2 关联单取消联动（D73）—— 生产任务单新状态 7=已终止
+-- 无结构变更（status 为 TINYINT），仅同步列注释；存量库执行本段即可。
+-- =====================================================================
+ALTER TABLE `biz_production_order`
+    MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废, 6-已报废, 7-已终止';

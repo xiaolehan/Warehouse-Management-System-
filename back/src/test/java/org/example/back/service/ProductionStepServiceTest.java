@@ -271,4 +271,28 @@ class ProductionStepServiceTest {
         verify(qcService, never()).buildState(any());
         verify(stepMapper, never()).selectList(any());
     }
+
+    // ---------- D73：已终止订单冻结（打卡/撤销拦截） ----------
+
+    @Test
+    void complete_terminatedOrder_throws() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.complete(7L, 1));
+        assertTrue(ex.getMessage().contains("已终止"));
+    }
+
+    @Test
+    void revoke_terminatedOrder_throws() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 1));
+        assertTrue(ex.getMessage().contains("已终止"));
+    }
 }
