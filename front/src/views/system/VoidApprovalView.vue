@@ -115,8 +115,7 @@ const bizTypeOptions = [
 ]
 
 const actionOptions = [
-  { label: '仅作废', value: 'void' },
-  { label: '作废并红冲', value: 'void_red' },
+  { label: '作废', value: 'void' },
   { label: '价格偏离确认', value: 'price_deviation_confirm' }
 ]
 
@@ -143,6 +142,7 @@ const bizTypeLabel = (val) => {
 }
 
 const actionLabel = (val) => {
+  if (val === 'void_red') return '作废并红冲' // D74：入口已隐藏，历史记录仍可辨识
   return actionOptions.find((item) => item.value === val)?.label || val || '-'
 }
 

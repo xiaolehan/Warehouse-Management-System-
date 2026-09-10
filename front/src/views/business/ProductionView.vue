@@ -3,8 +3,8 @@
     <el-card>
       <div class="search-box">
         <div class="top-right-help">
-          <span class="help-label">作废/红冲:</span>
-          <el-tooltip content="当天单据可直接删除；历史单据作废将直接冲减库存并标记作废（可选生成红冲记录）。" placement="left">
+          <span class="help-label">作废:</span>
+          <el-tooltip content="当天单据可直接删除；历史单据作废将直接冲减库存并标记作废。" placement="left">
             <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
         </div>
@@ -67,17 +67,7 @@
                   :disabled="!canVoid(scope.row)"
                   @click="handleVoid(scope.row, false)"
                 >
-                  仅作废
-                </el-button>
-                <el-button
-                  v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
-                  size="small"
-                  type="danger"
-                  link
-                  :disabled="!canVoid(scope.row)"
-                  @click="handleVoid(scope.row, true)"
-                >
-                  作废并红冲
+                  作废
                 </el-button>
               </template>
               <span v-else :class="['action-disabled', stateTextClass(scope.row)]">{{ resolveState(scope.row)?.label || '不可操作' }}</span>
