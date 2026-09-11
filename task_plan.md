@@ -16,7 +16,7 @@
 - `document/wms系统改造参考参考资料.md`（§5.3 生产领料模块）
 - `projectmd/生产领料模块开发任务清单.md`（可执行任务拆解）
 
-**当前状态：** ✅ 阶段 1–3.7、5–8（六项需求改进全部落地）、阶段 9–13（生产研发部产线：部门角色/BOM/生产任务单+齐套预警/质检/生产端迁移，commit 490a489）、阶段 14–17（D60–D63 增量完善）、阶段 18–21 全部完成；最近收尾：会话 27 三项体验优化（生产端预警中心/消息跳转+浮窗/首页预警数字红色，commit e395161，2026-09-11）
+**当前状态：** ✅ 阶段 1–3.7、5–8（六项需求改进全部落地）、阶段 9–13（生产研发部产线：部门角色/BOM/生产任务单+齐套预警/质检/生产端迁移，commit 490a489）、阶段 14–17（D60–D63 增量完善）、阶段 18–21 全部完成；会话 27 三项体验优化（commit e395161）；会话 28 defer 清理全清零（13 项 Minor + 5 项架构债，4 commit 58d79d3/30a710a/fa17767/9add31d，2026-09-11）
 
 ---
 
@@ -574,6 +574,31 @@
 - 浮窗计数比较边界：同 15s 窗口 +1/-1 抵消不弹（需 id 级基线根除）
 - 两个 Home 组件 metric 卡片 CSS 重复未抽共享
 
+### Defer 清理全清零：阶段 21 终审 13 项 Minor + 会话 27 架构债 5 项（2026-09-11 会话 28，commit 58d79d3 / 30a710a / fa17767 / 9add31d）
+
+- 背景：清零全部 18 项 defer。spec `docs/superpowers/specs/2026-09-11-defer-cleanup-design.md`；A 项决策见 ADR-0006（D75 target_route）；实施计划 `docs/superpowers/plans/2026-09-11-defer-cleanup.md`。上述会话 27 Defer 段 5 项已全部清零，阶段 21 的 13 项 Minor 同批清零。
+
+#### 组 1（58d79d3）13 项 Minor
+- [x] ProductionPickService：createReturn 行过滤（null goodsId/quantity/非正 qty 静默过滤，全无效行抛异常）；terminate dto 显式非空校验；computeReturnablePreview 加 readOnly 事务
+- [x] 五业务视图 handleVoid 去 createRedFlush 死参、成功文案收口
+- [x] ProductionOrderView：statusTagType 默认 danger→info；5 处 async 上下文补 await loadList
+- [x] 测试修复：QcServiceTest 已终止记录死字段删除；SalesTimelineServiceTest/ProductionOrderServiceTest 已终止单 helper；ProductionPickServiceTest +8
+
+#### 组 2（30a710a）B 项常量收口
+- [x] 后端 `AuthzService.WARNING_DEPT_CODES` 单一数据源（GoodsService/HomeService 消费）
+- [x] 前端 `utils/constants.js` WARNING_DEPT_CODES（router meta/AdminHome/EmployeeHome 消费）；`utils/auth.js` `checkRouteAccess` 共享判定（守卫与组件同一原子函数）
+
+#### 组 3（fa17767）D/E 项
+- [x] 浮窗 id 级基线（未读 id 集合 + total），根除同 15s 窗口 +1/−1 抵消漏弹
+- [x] 首页 metric 卡片 CSS 仅抽逐字相同段 `home-metrics.css`（`.metric-value--alert`）
+
+#### 组 4（9add31d）A 项 D75 target_route（ADR-0006）
+- [x] `sys_message.target_route` 列（db.sql 17.x，本地已执行）；SysMessage/MessageVO 透出；18 发送点显式路由（MessageService 8 个 ROUTE_* 常量）；前端 resolveJumpPath 优先 targetRoute、BIZ_ROUTE_MAP 兜底；bizType 不动保 D21 revoke 语义
+- [x] 审查代理抓 bug：sendToUserWithBiz 方法体漏 setTargetRoute → 已修 + 补测试；单测 179 → 191 全绿；curl E2E 全链路 + 测试数据清理
+
+#### 遗留
+- D 项浮窗（id 基线）由用户浏览器手测一轮（首轮不弹存量/新消息弹窗/点击跳转）
+
 ---
 
 ## ✅ 关键决策记录
@@ -656,8 +681,8 @@ Q1–Q6 已全部确认，结论见决策记录 D15–D20。无阻塞项。
 
 ## 📊 总体进度
 
-- 完成度：阶段 1–3.7 + 5–8 + 9–21 编码 100% + 会话 27 三项体验优化（后端 179 单测全绿 + 前端 build + E2E 全通过）
-- 当前阶段：会话 27 增量优化已交付（2026-09-11，commit e395161：生产端预警中心/消息跳转+浮窗/首页预警数字红色）；候选下一项：① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）② 阶段 16 登记的已知问题（补料单按行部分到货→确认入库终态后，受 D59「已入库补料单阻止再补料」约束，该生产单无法再补——待单独立项）③ defer 清理（会话 27 架构项 5 条 + 阶段 21 的 13 项 Minor）
+- 完成度：阶段 1–3.7 + 5–8 + 9–21 编码 100% + 会话 27 三项体验优化 + 会话 28 defer 清理全清零（后端 191 单测全绿 + 前端 build + curl E2E 全通过）
+- 当前阶段：会话 28 defer 清理已交付（2026-09-11，4 commit 58d79d3/30a710a/fa17767/9add31d：13 项 Minor + 常量收口 + 浮窗 id 基线 + D75 target_route）；defer 清零，候选下一项：① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）② 阶段 16 登记的已知问题（补料单按行部分到货→确认入库终态后，受 D59「已入库补料单阻止再补料」约束，该生产单无法再补——待单独立项）
 - 阻塞项：无
 
 ## 🧪 验收结果（阶段 3 缺货识别与采购触发）

@@ -5,6 +5,23 @@
 
 ---
 
+## 会话 28 — 2026-09-11
+
+### Defer 清理全清零：阶段 21 终审 13 项 Minor + 会话 27 架构债 5 项（4 commit，单测 179 → 191 全绿）
+
+- **范围：** 清零全部 18 项 defer（13 Minor + 5 架构债）。grilling 定案：低风险先行、A 项（target_route）最后单独评审；分 4 组顺序提交、主会话内联执行（非 SDD 子代理）；A 项由只读审查子代理 + 用户终审 diff 后提交。
+- **计划/决策留档：** spec `docs/superpowers/specs/2026-09-11-defer-cleanup-design.md`（f78f478）、ADR-0006（f4ea16a）、实施计划 `docs/superpowers/plans/2026-09-11-defer-cleanup.md`（d4ecd86）。
+- **组 1（58d79d3）13 项 Minor：** ProductionPickService createReturn 行过滤/terminate 显式校验/computeReturnablePreview readOnly；五业务视图 handleVoid 去 createRedFlush 死参 + 文案收口；ProductionOrderView statusTagType 默认 info + 5 处 await loadList；QcServiceTest/SalesTimelineServiceTest 测试死角修复。单测 +8（27 项 ProductionPickServiceTest 全绿）。
+- **组 2（30a710a）B 项常量收口：** 后端 `AuthzService.WARNING_DEPT_CODES` 单一数据源（GoodsService/HomeService 消费）；前端 `utils/constants.js` WARNING_DEPT_CODES（router meta/AdminHome/EmployeeHome 消费）；`utils/auth.js` 新增 `checkRouteAccess`（路由守卫与 canAccessRouteMeta 共享判定，守卫保留两条错误文案）。
+- **组 3（fa17767）D/E 项：** 浮窗改 id 级基线（未读 id 集合 + total，根除同 15s 窗口 +1/−1 抵消漏弹）；首页 metric 卡片 CSS 仅抽逐字相同段 `home-metrics.css`（`.metric-value--alert`）。
+- **组 4（9add31d）A 项 D75 target_route（ADR-0006）：** `sys_message` 加 `target_route` 列（db.sql 17.x，本地已执行）；SysMessage/MessageVO 透出；MessageService 8 个 ROUTE_* 常量，sendToDeptAdminsWithBiz/sendToUserWithBiz 加第 6 参，18 发送点显式路由；前端 resolveJumpPath 优先 targetRoute（可达性校验），BIZ_ROUTE_MAP 兜底（存量消息兼容）；bizType 不动保 D21 revoke 语义。单测 +3。**审查代理抓真 bug：** sendToUserWithBiz 签名 6 参但方法体漏 `setTargetRoute`（sendSalesReadyToShipToUser 路由静默丢弃）→ 已修 + 补测试。
+- **验证：** 后端 191/191 单测全绿；前端 build 通过；A 项 curl E2E 全链路（建缺货销售单 → sys_message target_route 落库正确（/business/production-order、/business/sales）→ production_admin page VO 透出 → 存量 NULL 消息兼容）；测试数据清理（sales 71/goods 64 删除、库存零变动）。
+- **提交：** 4 commit（58d79d3 / 30a710a / fa17767 / 9add31d），本地领先 origin 共 8 commit（含 spec/ADR/计划/会话 27 留档），待用户 VS Code 面板推送。
+- **遗留手测：** D 项浮窗（id 基线）由用户浏览器手测一轮（首轮不弹存量/新消息弹窗/点击跳转）；双端 dev 已重启，需硬刷新 + 重新登录。
+- **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 登记的已知问题（补料单按行部分到货→确认入库终态后受 D59 约束无法再补，待单独立项）。
+
+---
+
 ## 会话 27 — 2026-09-11
 
 ### 三项体验优化：生产端预警中心 / 消息点击跳转+新消息浮窗 / 首页预警数字红色（commit e395161，179 单测全绿）
