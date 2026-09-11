@@ -67,6 +67,9 @@ export const getChartTop5API = (params) => request.get('/business/charts/top5', 
 export const getChartBrandRatioAPI = (params) => request.get('/business/charts/brand-ratio', { params })
 export const getChartDailyTrendAPI = (params) => request.get('/business/charts/daily-trend', { params })
 
+export const getAnnualStatsAPI = () => request.get('/business/annual-stats')
+export const exportAnnualStatsAPI = () => request.get('/business/annual-stats/export', { responseType: 'blob' })
+
 export const getChartProfitOverviewAPI = (params) => request.get('/business/charts/profit-overview', { params })
 export const getChartProfitBrandTopAPI = (params) => request.get('/business/charts/profit-brand-top', { params })
 export const getChartProfitDailyTrendAPI = (params) => request.get('/business/charts/profit-daily-trend', { params })

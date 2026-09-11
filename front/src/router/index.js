@@ -113,6 +113,12 @@ const router = createRouter({
           meta: { roles: ['admin'], deptCodes: ['finance'] }
         },
         {
+          path: "business/annual-stats",
+          name: "BusinessAnnualStats",
+          component: () => import("../views/business/AnnualStatsView.vue"),
+          meta: { roles: ['admin'], deptCodes: ['finance'] }
+        },
+        {
           path: "business/stock-warning",
           name: "BusinessStockWarning",
           component: () => import("../views/business/StockWarningView.vue"),

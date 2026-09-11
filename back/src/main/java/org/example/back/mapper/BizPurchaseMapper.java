@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 
@@ -25,4 +26,17 @@ public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 						""")
 		BigDecimal latestValidUnitPrice(@Param("goodsId") Long goodsId,
 																		@Param("bizTime") LocalDateTime bizTime);
+
+		// ============================== 年度经营统计（ADR-0008） ==============================
+
+		/** 已入库进货单按入库确认时间归年（confirm_time 缺失的历史行回退 operation_time） */
+		@Select("""
+						SELECT YEAR(COALESCE(confirm_time, operation_time)) AS stat_year, SUM(total_price) AS amount
+						FROM biz_purchase
+						WHERE is_deleted = 0
+							AND biz_status = 1
+							AND confirm_status = 3
+						GROUP BY YEAR(COALESCE(confirm_time, operation_time))
+						""")
+		List<BizSalesMapper.YearAmountAgg> yearlyValidPurchaseAmount();
 }

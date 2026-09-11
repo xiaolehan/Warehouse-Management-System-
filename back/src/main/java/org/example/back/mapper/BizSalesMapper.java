@@ -193,6 +193,49 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 	List<DailyAmountAgg> dailyEstimatedSalesCost(@Param("startTime") LocalDateTime startTime,
 									 @Param("endTime") LocalDateTime endTime);
 
+	// ============================== 年度经营统计（ADR-0008） ==============================
+
+	@Select("""
+			SELECT YEAR(operation_time) AS stat_year, SUM(total_price) AS amount
+			FROM biz_sales
+			WHERE is_deleted = 0
+			  AND biz_status = 1
+			  AND confirm_status = 2
+			GROUP BY YEAR(operation_time)
+			""")
+	List<YearAmountAgg> yearlyValidSalesAmount();
+
+	@Select("""
+			SELECT YEAR(operation_time) AS stat_year, SUM(COALESCE(cost_total_price, 0)) AS amount
+			FROM biz_sales
+			WHERE is_deleted = 0
+			  AND biz_status = 1
+			  AND confirm_status = 2
+			GROUP BY YEAR(operation_time)
+			""")
+	List<YearAmountAgg> yearlyValidSalesCost();
+
+	class YearAmountAgg {
+		private Integer statYear;
+		private BigDecimal amount;
+
+		public Integer getStatYear() {
+			return statYear;
+		}
+
+		public void setStatYear(Integer statYear) {
+			this.statYear = statYear;
+		}
+
+		public BigDecimal getAmount() {
+			return amount;
+		}
+
+		public void setAmount(BigDecimal amount) {
+			this.amount = amount;
+		}
+	}
+
 	class TopGoodsAgg {
 		private String name;
 		private Long quantity;

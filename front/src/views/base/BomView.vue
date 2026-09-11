@@ -248,6 +248,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Plus, Close, Check, Remove, Upload, Download, Picture } from '@element-plus/icons-vue'
 import request from '@/utils/request'
+import { saveBlobAs } from '@/utils/download'
 import {
   createBomAPI,
   deleteBomAPI,
@@ -588,21 +589,11 @@ const handleSave = () => {
 }
 
 // ============ 导出 / 模板 / 导入 ============
-const downloadBlob = (blob, filename) => {
-  const url = window.URL.createObjectURL(new Blob([blob]))
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  window.URL.revokeObjectURL(url)
-}
-
+// 下载助手抽到 @/utils/download（含 JSON 错误体探测），本页不再自持
 const handleExport = async (row) => {
   try {
     const blob = await getBomExportAPI(row.id)
-    downloadBlob(blob, `${row.bomCode}.xlsx`)
+    await saveBlobAs(blob, `${row.bomCode}.xlsx`)
   } catch (error) {
     ElMessage.error(error.message || '导出失败')
   }
@@ -611,7 +602,7 @@ const handleExport = async (row) => {
 const downloadTemplate = async () => {
   try {
     const blob = await getBomTemplateAPI()
-    downloadBlob(blob, 'BOM导入模板.xlsx')
+    await saveBlobAs(blob, 'BOM导入模板.xlsx')
   } catch (error) {
     ElMessage.error(error.message || '模板下载失败')
   }

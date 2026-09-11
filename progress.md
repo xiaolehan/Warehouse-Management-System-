@@ -5,6 +5,23 @@
 
 ---
 
+## 会话 30 — 2026-09-11
+
+### 财务端「年度经营统计」（ADR-0008，后端 1 模块 + 前端 1 页面，全量 204 测试绿 + curl E2E 正负测过）
+
+- **范围：** 财务端新增独立页「年度经营统计」——按自然年汇总 采购总支出/销售总营收/销售成本/毛利/毛利率（一年一行、年份倒序）+ 分组柱状图 + xlsx 导出；仅财务管理员可见（超管也禁，同利润分析）。
+- **流程：** grilling 三轮 16 题定案 → to-spec 留档 `.scratch/annual-stats/spec.md` → implement（TDD：AnnualStatsServiceTest 7 项 + AnnualStatsAuthTest 6 项先行）→ code-review（5 项发现全部修复）→ 提交。
+- **口径（ADR-0008）：** 毛利 = 销售额 − 销售成本快照（已实现毛利，非收支差）；严过滤（`biz_status=1` + 终态 + 未删除）；退货按自身单据时间归年冲减（允许负值行）；销售额按 operation_time 归年、采购额按入库确认时间归年；销售额 ≤ 0 时毛利率为 null（页面显示「—」）；无筛选器/无下钻/无新表。
+- **code-review 关键修正（5 项）：** ① **采购额双源重复计数（严重）**——spec 假设 biz_purchase 与采购申请明细互斥，实际采购申请「确认入库」逐明细写 biz_purchase（confirmReceive→createInternal），双源相加使该渠道金额精确翻倍；修正为 biz_purchase 单一来源（唯一入库交易表），E2E 对照：2026 采购额 85314.23 → 16737.13；② 前端 fetchData 补 `normalizeBizRes` code 校验（HTTP 200 + body code 约定下 401/403 不再静默显示空数据）；③ 导出 blob 增加 JSON 错误体探测（鉴权失败不再保存损坏 xlsx）；④ 导出文件名 UTC→本地时区（与后端 Content-Disposition 一致）；⑤ downloadBlob 抽共享 `utils/download.js`（saveBlobAs + localDateString），BomView 同步切换。
+- **后端：** `AnnualStatsController`（GET 列表 + GET export，类级 admin|superadmin + 方法级 admin 门控，Service 层显式拒超管 + 部门校验）+ `AnnualStatsService`（年份并集汇总 + POI XSSFWorkbook 导出）+ 5 条按年聚合 SQL（BizSales×2 / BizSalesReturn×2 / BizPurchase×1 / BizPurchaseReturn×1）+ `AnnualStatsVO`。
+- **前端：** `AnnualStatsView.vue`（工具栏导出按钮遵守 ADR-0007、ECharts 三系列柱图按年正序、表格倒序金额千分位）+ 路由 `/business/annual-stats`（finance admin）+ 财务菜单第二项 + `api/business.js` 两个 API。
+- **留档：** ADR-0008 + CONTEXT.md 新增「统计」节（已实现销售毛利 / 年度归属）。
+- **踩坑记录：** `Map.merge(key, amount, BigDecimal::subtract)` 在 key 不存在时原样放入正值（退货冲减变加）——跨键冲减须用 `compute` 兜底 0；MockMvc 响应 Content-Type 自动带 `;charset=UTF-8`，断言用 startsWith。
+- **遗留手测：** 用户浏览器目检「年度经营统计」页（财务管理员登录 → 菜单第二项；表格/柱图/导出）；会话 28/29 遗留（浮窗手测、按钮统一目检 4 页）仍未做。
+- **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 登记的已知问题（补料单部分到货终态后受 D59 约束无法再补，待单独立项）。
+
+---
+
 ## 会话 29 — 2026-09-11
 
 ### 全站操作栏按钮风格统一（ADR-0007，~24 前端文件，build 通过）

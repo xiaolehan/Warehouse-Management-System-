@@ -129,3 +129,13 @@ _Avoid_: 复用「作废」语义（作废会清空步骤实例展示且含义�
 **消息跳转目标（targetRoute）**:
 站内消息自带的跳转路由（D75）——接收方点击消息该去的列表页，由发送方在发消息时显式指定（「接收方该去哪处理」）；为空时前端按 bizType 候选映射兜底（存量消息）。bizType 只承载消息生命周期（D21 撤销匹配），不承载跳转语义。
 _Avoid_: 按角色猜路由、把 bizType 当路由用
+
+## 统计
+
+**已实现销售毛利（GrossProfit）**:
+财务统计口径的毛利 = **净销售额 − 销售成本快照**（销售单/退货单上的 `cost_total_price`），只覆盖已生效出库的销售（严口径：`biz_status=1 AND confirm_status=2 AND is_deleted=0`）。**不是**「销售额 − 当年采购额」的收支差——后者混入库存变动，不称毛利。销售统计图表毛利视角与年度经营统计（ADR-0008）共用此口径，数字可交叉验证。
+_Avoid_: 收支差、现金毛利
+
+**年度归属（统计归年）**:
+年度统计中单据计入哪个自然年的规则（ADR-0008）：销售单/销售退货按各自 `operation_time`；进货单按 `COALESCE(confirm_time, operation_time)`（钱货两清的入库确认时点）；采购申请按主表 `COALESCE(confirm_time, receive_time)`；采购退货按 `COALESCE(complete_time, operation_time)`。**退货按退货单自身时间归年冲减，不回溯原单年份**（允许负值行）。
+_Avoid_: 按创建时间归年；退货回溯冲减原单年份

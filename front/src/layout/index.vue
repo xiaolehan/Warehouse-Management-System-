@@ -82,6 +82,7 @@
 
         <template v-else-if="isFinanceAdmin">
           <el-menu-item index="/business/sales-chart"><el-icon><DataAnalysis /></el-icon><span>销售统计图表</span></el-menu-item>
+          <el-menu-item index="/business/annual-stats"><el-icon><Histogram /></el-icon><span>年度经营统计</span></el-menu-item>
           <el-sub-menu index="/notification">
             <template #title><el-icon><Promotion /></el-icon><span class="menu-title-text">发布</span></template>
             <el-menu-item index="/system/work-requirement"><el-icon><Tickets /></el-icon><span>工作要求</span></el-menu-item>
@@ -190,7 +191,7 @@ import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
   ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled, Goods,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
-  Fold, Expand, Box, List, Download, Setting
+  Fold, Expand, Box, List, Download, Setting, Histogram
 } from '@element-plus/icons-vue'
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'layout-sidebar-collapsed'
