@@ -666,7 +666,7 @@ const handleView = async (row) => {
 const refreshDetail = async () => {
   const res = await getProductionOrderDetailAPI(detail.value.id)
   if (res.code === 200) detail.value = res.data || {}
-  loadList()
+  await loadList()
 }
 
 const doStepComplete = async (row) => {
@@ -718,7 +718,7 @@ const doApplyPick = async () => {
       const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
       pickListStatus.value = pickRow.status
     }
-    loadList()
+    await loadList()
   } catch (error) {
     ElMessage.error(error.message || '申请领料失败')
   } finally {
@@ -777,7 +777,7 @@ async function doSubmitReturn() {
     if (res.code !== 200) throw new Error(res.msg || '退料提交失败')
     ElMessage.success('退料已提交，待仓储确认入库')
     returnVisible.value = false
-    loadList()
+    await loadList()
   } catch (e) {
     ElMessage.error(e.message || '退料提交失败')
   } finally {
@@ -893,7 +893,7 @@ async function doTerminate() {
     if (res.code !== 200) throw new Error(res.msg || '终止失败')
     ElMessage.success(items.length ? '已终止，退料单已提交仓储确认入库' : '已终止')
     terminateVisible.value = false
-    loadList()
+    await loadList()
   } catch (e) {
     ElMessage.error(e.message || '终止失败')
   } finally {
@@ -998,11 +998,11 @@ function doCreateDraft() {
     productionOrderId: draftRow.value.id,
     details: items,
     remark: ''
-  }).then((res) => {
+  }).then(async (res) => {
     if (res.code !== 200) throw new Error(res.msg || '补料失败')
     ElMessage.success('补料已提交，待采购')
     draftVisible.value = false
-    loadList()
+    await loadList()
   }).catch((error) => {
     ElMessage.error(error.message || '补料失败')
   }).finally(() => {
@@ -1041,7 +1041,7 @@ const submitEc = async (time) => {
 const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
 const fmtTime = (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '')
 const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
-const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : s === 7 ? 'danger' : 'danger')
+const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : s === 7 ? 'danger' : 'info')
 // D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红
 const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : l === 'unknown' ? 'info' : 'danger')
 

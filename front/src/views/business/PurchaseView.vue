@@ -72,16 +72,16 @@
                 删除
               </el-button>
               <template v-else-if="showVoidActions(scope.row)">
-              <el-button
-                v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
-                size="small"
-                type="warning"
-                link
-                :disabled="!canVoid(scope.row)"
-                @click="handleVoid(scope.row, false)"
-              >
-                作废
-              </el-button>
+                <el-button
+                  v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
+                  size="small"
+                  type="warning"
+                  link
+                  :disabled="!canVoid(scope.row)"
+                  @click="handleVoid(scope.row)"
+                >
+                  作废
+                </el-button>
               </template>
               <span v-else :class="['action-disabled', stateTextClass(scope.row)]">{{ resolveState(scope.row)?.label || '不可操作' }}</span>
             </div>
@@ -390,11 +390,9 @@ const handleDelete = (row) => {
   })
 }
 
-const handleVoid = async (row, createRedFlush) => {
+const handleVoid = async (row) => {
   try {
-    const title = createRedFlush ? '作废并红冲' : '作废单据'
-    const promptText = createRedFlush ? '请输入红冲原因' : '请输入作废原因'
-    const { value } = await ElMessageBox.prompt(promptText, title, {
+    const { value } = await ElMessageBox.prompt('请输入作废原因', '作废单据', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       inputPlaceholder: '默认: 手工作废',
@@ -404,14 +402,14 @@ const handleVoid = async (row, createRedFlush) => {
     const res = await createApprovalOrderAPI({
       bizType: 'purchase',
       bizId: row.id,
-      requestAction: createRedFlush ? 'void_red' : 'void',
+      requestAction: 'void',
       reason: value || ''
     })
     if (res.code !== 200) {
       throw new Error(res.msg || '操作失败')
     }
 
-    ElMessage.success('作废并红冲审批已提交，等待仓储管理员处理')
+    ElMessage.success('作废审批已提交，等待仓储管理员处理')
     await loadList()
   } catch (error) {
     if (error?.message && error.message !== 'cancel') {

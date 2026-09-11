@@ -65,7 +65,7 @@
                   type="warning"
                   link
                   :disabled="!canVoid(scope.row)"
-                  @click="handleVoid(scope.row, false)"
+                  @click="handleVoid(scope.row)"
                 >
                   作废
                 </el-button>
@@ -342,23 +342,21 @@ const handleDelete = (row) => {
   })
 }
 
-const handleVoid = async (row, createRedFlush) => {
+const handleVoid = async (row) => {
   try {
-    const title = createRedFlush ? '作废并红冲' : '作废单据'
-    const promptText = createRedFlush ? '请输入红冲原因' : '请输入作废原因'
-    const { value } = await ElMessageBox.prompt(promptText, title, {
+    const { value } = await ElMessageBox.prompt('请输入作废原因', '作废单据', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       inputPlaceholder: '默认: 手工作废',
       inputValue: ''
     })
 
-    const res = await voidProductionAPI(row.id, { reason: value || '', createRedFlush })
+    const res = await voidProductionAPI(row.id, { reason: value || '', createRedFlush: false })
     if (res.code !== 200) {
       throw new Error(res.msg || '操作失败')
     }
 
-    ElMessage.success(createRedFlush ? '已作废并生成红冲记录' : '已作废')
+    ElMessage.success('已作废')
     await loadList()
   } catch (error) {
     if (error?.message && error.message !== 'cancel') {
