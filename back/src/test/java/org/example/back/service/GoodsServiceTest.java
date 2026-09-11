@@ -1,6 +1,8 @@
 package org.example.back.service;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
+import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
@@ -21,6 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,6 +47,25 @@ class GoodsServiceTest {
     @Mock private GoodsReferenceService goodsReferenceService;
 
     @InjectMocks private GoodsService service;
+
+    // ---------- 预警中心放开生产 admin：warningOnly 分页鉴权须含生产部门 ----------
+    @Test
+    void page_warningOnly_authorizesProductionAdmin() {
+        GoodsQueryDTO query = new GoodsQueryDTO();
+        query.setWarningOnly(true);
+        Page<BaseGoods> emptyPage = new Page<>(query.getPageNum(), query.getPageSize());
+        emptyPage.setRecords(java.util.List.of());
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(emptyPage);
+
+        service.page(query);
+
+        verify(authzService).requireAnyDeptAdminOrSuperAdmin(
+                anyString(),
+                eq(AuthzService.DEPT_WAREHOUSE),
+                eq(AuthzService.DEPT_PURCHASE),
+                eq(AuthzService.DEPT_PRODUCTION),
+                eq(AuthzService.DEPT_SALES));
+    }
 
     // ---------- D60/ADR-0002：生产补料自动建档——缺省供应商/零库存启用/规格材质写入 ----------
     @Test

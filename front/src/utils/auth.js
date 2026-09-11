@@ -106,3 +106,10 @@ export const isDeptAdmin = (role, deptCode) => isAdminRole(role) && Boolean(norm
 export const isDeptEmployee = (role, deptCode) => isEmployeeRole(role) && Boolean(normalizeDeptCode(deptCode))
 
 export const canAccessRoles = (currentRole, allowRoles = []) => hasRole(currentRole, allowRoles)
+
+// 路由 meta 鉴权（roles + deptCodes），与 router.beforeEach 守卫同一判定逻辑，供组件侧预判跳转可达性
+export const canAccessRouteMeta = (meta = {}, currentRole = getRole(), currentDeptCode = getDeptCode()) => {
+  if (meta.roles && !canAccessRoles(currentRole, meta.roles)) return false
+  if (Array.isArray(meta.deptCodes) && meta.deptCodes.length > 0 && !hasDeptAccess(currentDeptCode, meta.deptCodes, currentRole)) return false
+  return true
+}

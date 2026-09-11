@@ -15,7 +15,7 @@
       <section class="metric-grid">
         <article v-for="item in metricCards" :key="item.label" class="metric-card">
           <span class="metric-label">{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
+          <strong :class="{ 'metric-value--alert': item.alert && Number(item.value) > 0 }">{{ item.value }}</strong>
         </article>
       </section>
 
@@ -124,6 +124,7 @@ const moduleLabelMap = {
   sales: '销售作业、退货与预警协同',
   warehouse: '仓储资料、预警与审批中心',
   purchase: '采购进货、退货与预警协同',
+  production: '生产任务、BOM 与预警协同',
   hr: '人事组织与账号维护中心'
 }
 
@@ -142,8 +143,8 @@ const metricCards = computed(() => {
 
   return [
     ...baseCards,
-    { label: '低库存预警', value: summary.value.lowStockCount ?? 0 },
-    { label: '零库存预警', value: summary.value.zeroStockCount ?? 0 },
+    { label: '低库存预警', value: summary.value.lowStockCount ?? 0, alert: true },
+    { label: '零库存预警', value: summary.value.zeroStockCount ?? 0, alert: true },
     { label: '上次登录', value: formatTime(summary.value.lastLoginTime) }
   ]
 })
@@ -173,6 +174,11 @@ const quickActions = computed(() => {
       { path: '/business/purchase', title: '物料进货', description: '处理进货单据与审批结果回看' },
       { path: '/business/purchase-return', title: '物料退货', description: '处理进货退货与状态追踪' },
       { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存商品明细' }
+    ],
+    production: [
+      { path: '/business/production-order', title: '生产任务单', description: '下达与跟进生产任务及齐套状态' },
+      { path: '/business/qc', title: '质检记录', description: '查看首测与成品测质检进度' },
+      { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存物料明细' }
     ],
     hr: [
       { path: '/system/dept', title: '全部门管理', description: '维护部门资料与负责人信息' },
@@ -458,6 +464,11 @@ onMounted(() => {
   font-size: 1.35rem;
   color: #0f172a;
   word-break: break-word;
+}
+
+.metric-card strong.metric-value--alert {
+  color: #dc2626;
+  font-weight: 800;
 }
 
 .panel-grid {

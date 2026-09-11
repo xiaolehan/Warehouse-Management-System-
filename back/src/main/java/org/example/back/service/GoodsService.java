@@ -63,9 +63,10 @@ public class GoodsService {
     private void requireGoodsPageAccess(boolean warningOnly) {
         if (warningOnly) {
             authzService.requireAnyDeptAdminOrSuperAdmin(
-                    "仅仓储、采购或销售部门管理员可访问预警中心",
+                    "仅仓储、采购、生产或销售部门管理员可访问预警中心",
                     AuthzService.DEPT_WAREHOUSE,
                     AuthzService.DEPT_PURCHASE,
+                    AuthzService.DEPT_PRODUCTION,
                     AuthzService.DEPT_SALES
             );
             return;

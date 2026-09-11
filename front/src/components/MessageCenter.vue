@@ -21,7 +21,7 @@
           <div>
             <p class="drawer-eyebrow">MAILBOX</p>
             <h3>站内邮箱</h3>
-            <p class="drawer-desc">逐条已读，支持一键已读和删除全部已读。</p>
+            <p class="drawer-desc">点击关联单据的消息卡片可直接前往处理，支持一键已读和删除全部已读。</p>
           </div>
           <div class="drawer-action-row">
             <el-button link type="primary" :icon="Finished" :disabled="!unreadCount || actionLoading" @click="handleReadAll">一键已读</el-button>
@@ -31,7 +31,13 @@
 
         <div v-loading="listLoading" class="message-list-shell">
           <div v-if="messageList.length" class="message-list">
-            <article v-for="item in messageList" :key="item.id" class="message-card" :class="{ unread: !item.read }">
+            <article
+              v-for="item in messageList"
+              :key="item.id"
+              class="message-card"
+              :class="{ unread: !item.read, clickable: Boolean(item.jumpPath) }"
+              @click="handleMessageClick(item)"
+            >
               <div class="message-card-head">
                 <div>
                   <h4>{{ item.title }}</h4>
@@ -41,8 +47,11 @@
               </div>
               <p class="message-content">{{ item.content }}</p>
               <div class="message-card-foot">
-                <span>{{ item.read ? `已读于 ${formatTime(item.readTime)}` : '等待处理' }}</span>
-                <el-button link type="primary" :icon="Check" :disabled="item.read || actionLoading" @click="handleRead(item)">标记已读</el-button>
+                <span>
+                  {{ item.read ? `已读于 ${formatTime(item.readTime)}` : '等待处理' }}
+                  <em v-if="item.jumpPath" class="message-jump-hint">· 点击卡片前往处理 →</em>
+                </span>
+                <el-button link type="primary" :icon="Check" :disabled="item.read || actionLoading" @click.stop="handleRead(item)">标记已读</el-button>
               </div>
             </article>
           </div>
@@ -55,7 +64,8 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Finished, Delete, Check } from '@element-plus/icons-vue'
 import {
   deleteAllReadMessagesAPI,
@@ -65,8 +75,11 @@ import {
   markMessageReadAPI
 } from '@/api/message'
 import { useUserStore } from '@/stores/user'
+import { canAccessRouteMeta, getRole, isSuperAdmin } from '@/utils/auth'
 
 const userStore = useUserStore()
+const router = useRouter()
+const route = useRoute()
 
 const showMessageCenter = computed(() => Boolean(userStore.token))
 const unreadCount = ref(0)
@@ -76,6 +89,9 @@ const actionLoading = ref(false)
 const messageList = ref([])
 
 let pollingTimer = null
+// 浮窗只在未读数变化时弹：首轮拉取建立基线，存量未读不轰炸（非响应式，模板不用）
+let lastUnreadCount = null
+const notifiedMessageIds = new Set()
 
 const unreadBadgeValue = computed(() => {
   if (unreadCount.value > 99) return '99+'
@@ -84,20 +100,104 @@ const unreadBadgeValue = computed(() => {
 
 const hasReadMessages = computed(() => messageList.value.some((item) => item.read))
 
+// bizType → 候选业务列表页（按序取当前角色第一个可访问的）。
+// 跨部门通知接收方未必能进单据所属模块，故配回退页：
+// 销售收 pick_list 领料失败反馈→销售页；采购收 production_order 齐套预警→采购申请处理；生产收 sales 需求→生产任务单。
+const BIZ_ROUTE_MAP = {
+  sales: ['/business/sales', '/business/production-order'],
+  sales_return: ['/business/sales-return'],
+  purchase: ['/business/purchase'],
+  purchase_return: ['/business/purchase-return'],
+  purchase_request: ['/business/purchase-request'],
+  pick_list: ['/business/pick-list', '/business/sales'],
+  production_order: ['/business/production-order', '/business/purchase-request']
+}
+
+// 路由 meta 静态，鉴权结果按路径缓存，避免每卡片每轮渲染重复扫描路由表
+const routeAccessCache = new Map()
+
+const canAccessPath = (path) => {
+  if (routeAccessCache.has(path)) return routeAccessCache.get(path)
+  const record = router.getRoutes().find((r) => r.path === path)
+  const allowed = Boolean(record) && canAccessRouteMeta(record.meta || {})
+  routeAccessCache.set(path, allowed)
+  return allowed
+}
+
+const resolveJumpPath = (item) => {
+  if (!item || !item.bizType) return null
+  // 超管仅能进超管中心：价格偏离审批消息（biz_type=sales）映射到审批页
+  if (isSuperAdmin(getRole())) {
+    return item.bizType === 'sales' ? '/system/void-approval' : null
+  }
+  const candidates = BIZ_ROUTE_MAP[item.bizType] || []
+  return candidates.find((path) => canAccessPath(path)) || null
+}
+
+const withJumpPath = (item) => ({ ...item, jumpPath: resolveJumpPath(item) })
+
 const formatTime = (val) => {
   if (!val) return '--'
   return String(val).replace('T', ' ').substring(0, 19)
+}
+
+// 新消息浮窗：≤3 条逐条弹（点击跳转），>3 条聚合一条（点击开邮箱）
+const notifyNewMessages = async (delta) => {
+  try {
+    const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false })
+    if (res.code !== 200) return
+    const fresh = (res.data?.records || []).filter((m) => !notifiedMessageIds.has(m.id)).map(withJumpPath)
+    if (!fresh.length) return
+    fresh.forEach((m) => notifiedMessageIds.add(m.id))
+    if (fresh.length <= 3) {
+      fresh.forEach((m) => {
+        ElNotification({
+          title: m.title || '新消息',
+          message: m.content || '',
+          type: 'warning',
+          position: 'bottom-right',
+          duration: 6000,
+          onClick: () => {
+            if (m.jumpPath) {
+              handleMessageClick(m)
+            } else {
+              drawerVisible.value = true
+            }
+          }
+        })
+      })
+      return
+    }
+    ElNotification({
+      title: '新消息提醒',
+      message: `您有 ${Math.max(fresh.length, delta)} 条新未读消息，点击查看站内邮箱。`,
+      type: 'warning',
+      position: 'bottom-right',
+      duration: 6000,
+      onClick: () => {
+        drawerVisible.value = true
+      }
+    })
+  } catch {
+    // 浮窗失败不打断轮询
+  }
 }
 
 const loadUnreadCount = async () => {
   if (!showMessageCenter.value) return
   try {
     const res = await getUnreadMessageCountAPI()
-    if (res.code === 200) {
-      unreadCount.value = Number(res.data || 0)
+    if (res.code !== 200) return
+    const newCount = Number(res.data || 0)
+    const prevCount = lastUnreadCount
+    unreadCount.value = newCount
+    // 先更新基线再弹窗（fire-and-forget），避免慢请求期间下一轮轮询重入重复拉取
+    lastUnreadCount = newCount
+    if (prevCount !== null && newCount !== prevCount) {
+      notifyNewMessages(newCount - prevCount)
     }
   } catch {
-    unreadCount.value = 0
+    // 瞬时失败保持上一次数，角标不清零
   }
 }
 
@@ -109,7 +209,7 @@ const loadMessages = async () => {
     if (res.code !== 200) {
       throw new Error(res.msg || '消息加载失败')
     }
-    messageList.value = res.data?.records || []
+    messageList.value = (res.data?.records || []).map(withJumpPath)
   } catch (error) {
     ElMessage.error(error.message || '消息加载失败')
   } finally {
@@ -124,19 +224,39 @@ const refreshMessageState = async (shouldReloadList = false) => {
   }
 }
 
+// 返回是否成功，供点击跳转决定是否继续导航
 const handleRead = async (message) => {
-  if (!message || message.read) return
+  if (!message || message.read) return true
   actionLoading.value = true
   try {
     const res = await markMessageReadAPI(message.id)
     if (res.code !== 200) {
       throw new Error(res.msg || '消息已读失败')
     }
+    notifiedMessageIds.delete(message.id)
     await refreshMessageState(true)
+    return true
   } catch (error) {
     ElMessage.error(error.message || '消息已读失败')
+    return false
   } finally {
     actionLoading.value = false
+  }
+}
+
+// 整卡点击：自动已读 + 跳对应业务列表页；已读失败不跳转（避免状态分叉）；不可跳转的消息点击无行为
+const handleMessageClick = async (item) => {
+  const path = item.jumpPath ?? resolveJumpPath(item)
+  if (!path) return
+  if (!item.read) {
+    const ok = await handleRead(item)
+    if (!ok) return
+  }
+  drawerVisible.value = false
+  if (route.path !== path) {
+    router.push(path)
+  } else {
+    ElMessage.info('已位于待处理页面')
   }
 }
 
@@ -148,6 +268,7 @@ const handleReadAll = async () => {
     if (res.code !== 200) {
       throw new Error(res.msg || '一键已读失败')
     }
+    notifiedMessageIds.clear()
     ElMessage.success('全部未读消息已标记为已读')
     await refreshMessageState(true)
   } catch (error) {
@@ -210,6 +331,9 @@ watch(showMessageCenter, (visible) => {
   }
   stopPolling()
   unreadCount.value = 0
+  lastUnreadCount = null
+  notifiedMessageIds.clear()
+  routeAccessCache.clear()
   messageList.value = []
   drawerVisible.value = false
 }, { immediate: true })
@@ -323,6 +447,17 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, rgba(254, 242, 242, 0.7) 0%, #ffffff 100%);
 }
 
+.message-card.clickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.message-card.clickable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 22px 40px -28px rgba(15, 23, 42, 0.5);
+}
+
 .message-card-head {
   display: flex;
   justify-content: space-between;
@@ -354,6 +489,12 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+.message-jump-hint {
+  color: #0f766e;
+  font-weight: 600;
+  font-style: normal;
 }
 
 @media (max-width: 640px) {

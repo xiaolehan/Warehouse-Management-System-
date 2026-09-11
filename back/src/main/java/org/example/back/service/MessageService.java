@@ -741,6 +741,8 @@ public class MessageService {
         vo.setTitle(message.getTitle());
         vo.setContent(message.getContent());
         vo.setRead(Integer.valueOf(MESSAGE_READ).equals(message.getIsRead()));
+        vo.setBizType(message.getBizType());
+        vo.setBizId(message.getBizId());
         vo.setReadTime(message.getReadTime());
         vo.setCreateTime(message.getCreateTime());
         return vo;

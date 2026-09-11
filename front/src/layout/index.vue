@@ -99,6 +99,7 @@
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
         <template v-else-if="isProductionEmployee">
@@ -163,7 +164,8 @@
           <div class="header-title">后台数据管理系统</div>
         </div>
         <div class="header-actions">
-          <MessageCenter v-if="showMessageCenter" />
+          <!-- 超管也收站内消息（价格偏离审批），邮箱入口对全角色开放；组件内部按 token 自门控 -->
+          <MessageCenter />
           <el-button type="danger" text @click="handleLogout"><el-icon><SwitchButton /></el-icon>退出登录</el-button>
         </div>
       </el-header>
@@ -204,7 +206,6 @@ const isEmployee = computed(() => isEmployeeRole(userStore.role))
 const showSidebar = computed(() => !isEmployee.value || isBizEmployee.value)
 const sidebarWidth = computed(() => (isSidebarCollapsed.value ? '64px' : '220px'))
 const showSuperAdminCenter = computed(() => isSuperAdmin(userStore.role))
-const showMessageCenter = computed(() => !showSuperAdminCenter.value)
 const showAssistantLauncher = computed(() => route.path === '/home')
 const defaultOpeneds = computed(() => {
   if (!showSuperAdminCenter.value) {

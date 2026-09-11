@@ -17,7 +17,7 @@
       <section class="metric-grid">
         <article v-for="item in metricCards" :key="item.label" class="metric-card">
           <span class="metric-label">{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
+          <strong :class="{ 'metric-value--alert': item.alert && Number(item.value) > 0 }">{{ item.value }}</strong>
           <span class="metric-desc">{{ item.description }}</span>
         </article>
       </section>
@@ -251,6 +251,10 @@ const deptSceneMap = {
     title: '仓储预警与盘点纪律看板',
     subtitle: '持续关注低库存、零库存和盘点差异处理时效。'
   },
+  production: {
+    title: '生产执行与物料齐套看板',
+    subtitle: '围绕任务单进度、领料齐套和低库存物料保持生产连续。'
+  },
   finance: {
     title: '财务对账与月结节奏看板',
     subtitle: '围绕资料齐套、数据核对和月结进度保持准确性。'
@@ -276,17 +280,19 @@ const metricCards = computed(() => {
     }
   ]
 
-  if ([ 'purchase', 'sales', 'warehouse' ].includes(deptCode.value)) {
+  if ([ 'purchase', 'sales', 'warehouse', 'production' ].includes(deptCode.value)) {
     cards.push(
       {
         label: '低库存预警',
         value: summary.value.lowStockCount ?? 0,
-        description: '需优先跟进的预警商品'
+        description: '需优先跟进的预警商品',
+        alert: true
       },
       {
         label: '零库存预警',
         value: summary.value.zeroStockCount ?? 0,
-        description: '已无现货可用商品'
+        description: '已无现货可用商品',
+        alert: true
       }
     )
   } else {
@@ -699,6 +705,11 @@ onMounted(() => {
 .metric-card strong {
   font-size: 1.35rem;
   word-break: break-word;
+}
+
+.metric-card strong.metric-value--alert {
+  color: #dc2626;
+  font-weight: 800;
 }
 
 .metric-desc {

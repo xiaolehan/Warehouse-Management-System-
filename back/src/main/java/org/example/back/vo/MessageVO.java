@@ -15,6 +15,11 @@ public class MessageVO {
 
     private Boolean read;
 
+    /** D21 业务绑定：前端按 bizType 映射跳转待处理页，可为空（公告类消息） */
+    private String bizType;
+
+    private Long bizId;
+
     private LocalDateTime readTime;
 
     private LocalDateTime createTime;
