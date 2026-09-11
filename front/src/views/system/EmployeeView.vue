@@ -28,14 +28,14 @@
           <el-tag :type="scope.row.status === 1 ? 'success' : 'info'">{{ scope.row.status === 1 ? '在职' : '离职' }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="140" fixed="right">
         <template #default="scope">
           <template v-if="isReadOnlyRow(scope.row)">
             <el-tag type="info">只读展示</el-tag>
           </template>
           <template v-else>
-            <el-button size="small" type="primary" :icon="Edit" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button size="small" type="danger" :icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+            <el-button link size="small" type="success" @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </template>
       </el-table-column>
@@ -96,7 +96,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Edit, Delete, Close, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import {
   createEmployeeAPI,
   deleteEmployeeAPI,

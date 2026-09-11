@@ -28,7 +28,7 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" type="warning" :icon="Plus" @click="handleAdd">新建退货单</el-button>
+            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" type="success" :icon="Plus" @click="handleAdd">新建退货单</el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -52,7 +52,7 @@
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
-              <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
+              <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
               <el-button
                 v-if="scope.row.confirmStatus === 1"
                 v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
@@ -158,7 +158,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
+import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
@@ -510,13 +510,7 @@ onMounted(async () => {
 
 .action-group {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.action-group :deep(.el-button + .el-button) {
-  margin-left: 0;
+  align-items: center;
 }
 
 .void-help-icon {

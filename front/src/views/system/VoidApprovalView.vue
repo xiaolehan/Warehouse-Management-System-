@@ -63,7 +63,6 @@
             size="small"
             type="success"
             link
-            :icon="Select"
             @click="handleApprove(scope.row)"
           >
             通过
@@ -71,9 +70,8 @@
           <el-button
             v-if="scope.row.status === 1"
             size="small"
-            type="danger"
+            type="warning"
             link
-            :icon="CloseBold"
             @click="handleReject(scope.row)"
           >
             驳回
@@ -100,7 +98,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Select, CloseBold } from '@element-plus/icons-vue'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import {
   approveApprovalOrderAPI,
   getApprovalOrderPageAPI,

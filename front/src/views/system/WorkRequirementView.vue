@@ -47,10 +47,10 @@
       <el-table-column prop="createTime" label="创建时间" width="160">
         <template #default="{ row }">{{ fmtTime(row.createTime) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="140" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" :icon="ViewIcon" @click="handleDetail(row)">详情</el-button>
-          <el-button size="small" type="danger" :icon="Delete" @click="handleDelete(row)">删除</el-button>
+          <el-button link size="small" type="primary" @click="handleDetail(row)">详情</el-button>
+          <el-button link size="small" type="danger" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -182,8 +182,8 @@
         <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <template v-if="row.status === 2">
-              <el-button size="small" type="success" @click="handleReview(row, true)">通过</el-button>
-              <el-button size="small" type="warning" @click="handleReview(row, false)">驳回</el-button>
+              <el-button link size="small" type="success" @click="handleReview(row, true)">通过</el-button>
+              <el-button link size="small" type="warning" @click="handleReview(row, false)">驳回</el-button>
             </template>
             <span v-else style="color: #999;">-</span>
           </template>
@@ -196,7 +196,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, View as ViewIcon, Delete, Close, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import {
   downloadWorkRequirementAttachmentAPI,
   getWorkRequirementPageAPI,

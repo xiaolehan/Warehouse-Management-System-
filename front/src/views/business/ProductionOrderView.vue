@@ -39,22 +39,22 @@
         </template>
       </el-table-column>
       <el-table-column prop="createTime" label="下达时间" width="170" />
-      <el-table-column label="操作" width="290" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="scope">
-          <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
-          <el-button v-if="scope.row.status === 1" size="small" type="primary" :icon="VideoPlay" @click="handleStart(scope.row)">开工</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button v-if="scope.row.status === 1" link size="small" type="success" @click="handleStart(scope.row)">开工</el-button>
           <el-button
             v-if="(scope.row.status === 1) && (scope.row.kitStatus === 'partial' || scope.row.kitStatus === 'block')"
-            size="small" type="warning" link @click="openDraftDialog(scope.row)"
+            link size="small" type="warning" @click="openDraftDialog(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >补料</el-button>
-          <el-button v-if="scope.row.status === 3" size="small" type="success" :icon="CircleCheck" @click="handleReceipt(scope.row)">生产入库</el-button>
+          <el-button v-if="scope.row.status === 3" link size="small" type="success" @click="handleReceipt(scope.row)">生产入库</el-button>
           <el-button
-            v-if="scope.row.status === 1 || scope.row.status === 2" size="small" type="danger" :icon="CloseBold"
+            v-if="scope.row.status === 1 || scope.row.status === 2" link size="small" type="warning"
             @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >作废</el-button>
           <el-button
-            v-if="[1, 2, 3].includes(scope.row.status)" size="small" type="danger" :icon="CircleClose"
+            v-if="[1, 2, 3].includes(scope.row.status)" link size="small" type="danger"
             @click="openTerminate(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >终止</el-button>
         </template>
@@ -147,8 +147,8 @@
       </template>
 
       <template #footer>
-        <el-button v-if="!createResult" type="primary" :icon="Check" @click="handleCreate">下达并预警</el-button>
         <el-button :icon="Close" @click="closeCreate">关闭</el-button>
+        <el-button v-if="!createResult" type="primary" :icon="Check" @click="handleCreate">下达并预警</el-button>
       </template>
     </el-dialog>
 
@@ -299,7 +299,7 @@
             </el-table-column>
             <el-table-column label="操作" width="80" align="center">
               <template #default="{ $index }">
-                <el-button link type="danger" @click="removeReturnItem($index)">删除</el-button>
+                <el-button link size="small" type="danger" @click="removeReturnItem($index)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -455,7 +455,7 @@
             </el-table-column>
             <el-table-column label="操作" width="70" align="center">
               <template #default="{ $index }">
-                <el-button link type="danger" @click="terminateItems.splice($index, 1)">删除</el-button>
+                <el-button link size="small" type="danger" @click="terminateItems.splice($index, 1)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -477,7 +477,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Refresh, Plus, View, VideoPlay, CircleCheck, CloseBold, Check, Close, CircleClose
+  Search, Refresh, Plus, Check, Close
 } from '@element-plus/icons-vue'
 import {
   completeProductionStepAPI,

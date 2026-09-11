@@ -37,7 +37,7 @@
       </el-table-column>
       <el-table-column label="操作" width="110" align="center">
         <template #default="{ row }">
-          <el-button size="small" type="primary" :icon="Edit" @click="openQc(row)">质检</el-button>
+          <el-button link size="small" type="success" @click="openQc(row)">质检</el-button>
         </template>
       </el-table-column>
       <template #empty>暂无可质检的生产任务单（生产中/待入库）</template>
@@ -129,7 +129,7 @@
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
-import { Search, Refresh, Edit, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Check } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getProductionOrderPageAPI, getProductionOrderDetailAPI } from '@/api/business'
 import { getQcSnapshotAPI, recordQcAPI, disposeQcAPI } from '@/api/business'

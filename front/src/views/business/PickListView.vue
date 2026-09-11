@@ -29,8 +29,8 @@
             start-placeholder="开始" end-placeholder="结束" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="resetSearch">重置</el-button>
+          <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
+          <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
         </el-form-item>
       </el-form>
 
@@ -57,15 +57,15 @@
         <el-table-column label="申请时间" width="160">
           <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleView(row)">详情</el-button>
-            <el-button link type="primary" v-if="row.status === 1"
+            <el-button link size="small" type="primary" @click="handleView(row)">详情</el-button>
+            <el-button link size="small" type="success" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleIssue(row)">发料</el-button>
-            <el-button link type="warning" v-if="row.status === 1"
+            <el-button link size="small" type="warning" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleReject(row)">驳回</el-button>
-            <el-button link type="success" v-if="row.status === 2 && isApplicant(row)" @click="handleConfirm(row)">确认收货</el-button>
-            <el-button link type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
+            <el-button link size="small" type="success" v-if="row.status === 2 && isApplicant(row)" @click="handleConfirm(row)">确认收货</el-button>
+            <el-button link size="small" type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -124,6 +124,7 @@
 <script setup>
 import { ref, reactive, onMounted, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import {
   getPickListPageAPI, getPickListDetailAPI,

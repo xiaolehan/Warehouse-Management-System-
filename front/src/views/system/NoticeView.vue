@@ -29,11 +29,11 @@
       </el-table-column>
       <el-table-column prop="date" label="发布时间" width="165" />
       <el-table-column prop="author" label="发布人" width="100" />
-      <el-table-column label="操作" width="260" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="scope">
-          <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
-          <el-button size="small" type="primary" :icon="Edit" :disabled="!canManage(scope.row)" @click="handleEdit(scope.row)">编辑</el-button>
-          <el-button size="small" type="danger" :icon="Delete" :disabled="!canManage(scope.row)" @click="handleDelete(scope.row)">删除</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="success" :disabled="!canManage(scope.row)" @click="handleEdit(scope.row)">编辑</el-button>
+          <el-button link size="small" type="danger" :disabled="!canManage(scope.row)" @click="handleDelete(scope.row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -101,7 +101,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, View, Edit, Delete, Close, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { isSuperAdmin } from '@/utils/auth'
 import {

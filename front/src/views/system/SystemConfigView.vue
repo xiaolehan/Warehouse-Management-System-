@@ -20,9 +20,8 @@
             <el-button
               v-if="scope.row.configKey === 'price_deviation_threshold'"
               size="small"
-              type="primary"
+              type="success"
               link
-              :icon="Edit"
               @click="openEdit(scope.row)"
             >
               修改
@@ -64,7 +63,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Edit } from '@element-plus/icons-vue'
 import {
   getSystemConfigListAPI,
   updatePriceDeviationThresholdAPI

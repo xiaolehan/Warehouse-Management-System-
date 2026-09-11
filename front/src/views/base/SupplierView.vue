@@ -21,11 +21,11 @@
       <el-table-column prop="position" label="职务" min-width="110" />
       <el-table-column prop="phone" label="联系电话" min-width="140" />
       <el-table-column prop="address" label="联系地址" min-width="160" />
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="scope">
-          <el-button size="small" :icon="View" @click="handleView(scope.row)">查看</el-button>
-          <el-button size="small" type="primary" :icon="Edit" @click="handleEdit(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">编辑</el-button>
-          <el-button size="small" type="danger" :icon="Delete" @click="handleDelete(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">删除</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="success" @click="handleEdit(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">编辑</el-button>
+          <el-button link size="small" type="danger" @click="handleDelete(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -82,7 +82,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, View, Edit, Delete, Close, Check, Remove } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check, Remove } from '@element-plus/icons-vue'
 import {
   createSupplierAPI,
   deleteSupplierAPI,

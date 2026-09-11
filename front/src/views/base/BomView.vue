@@ -37,11 +37,11 @@
         <template #default="scope">
           <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
           <el-button
-            link size="small" type="warning" @click="handleExport(scope.row)"
+            link size="small" type="primary" @click="handleExport(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >导出</el-button>
           <el-button
-            link size="small" type="primary" @click="handleEdit(scope.row)"
+            link size="small" type="success" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >编辑</el-button>
           <el-button

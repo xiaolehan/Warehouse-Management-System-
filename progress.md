@@ -5,6 +5,21 @@
 
 ---
 
+## 会话 29 — 2026-09-11
+
+### 全站操作栏按钮风格统一（ADR-0007，~24 前端文件，build 通过）
+
+- **范围：** 23 个列表页的顶部工具栏 + 表格操作列按钮，全部向「商品资料管理」（物料管理，GoodsView）基准页看齐；操作列按钮同行不换行、跨行同列对齐（用户硬性要求）。
+- **流程：** grilling 8 题定案（范围=工具栏+操作列 / 形式颜色大小全对齐 / 危险操作保留红色 / 语义色映射表 / 操作列去图标+顺序约定 / 逐页显式改不抽组件 / 边界与验收）→ to-spec 留档 `.scratch/button-style-unification/spec.md`（ready-for-agent）→ 内联实施 → code-review（1 项悬空 ADR 引用，随本 commit 补齐）。
+- **规范（ADR-0007）：** 工具栏=实心+默认大小+图标（查询 primary/重置默认/新增 success）；操作列=`link`+`size="small"`+无图标+水平平铺+固定宽 `fixed="right"`；对话框=取消左确认右。语义色：查看/普通操作 primary；编辑/修改、流程确认 success；作废/驳回/补料 warning；删除/红冲/终止/撤销 danger 置尾。顺序：查看→流程→编辑→warning→danger。
+- **全局：** `main.css` 加 `.el-table .cell:has(.el-button){white-space:nowrap}` 兜底（真正保证不换行的是各页按最宽按钮组合设定的固定 width）。
+- **逐页：** 实心→link（Supplier/User/Dept/Employee/Notice/WorkRequirement）；去图标+`.action-group` 纵向→横向（Purchase/PurchaseReturn/Sales/SalesReturn/Production）；去图标+语义色修正（VoidApproval/DeptApproval 驳回 danger→warning；SystemConfig 修改→success）；补 size+工具栏图标（PickList/PurchaseRequest，含工具栏补 Search/Refresh/Plus）；text→link（SecurityIpPolicy/LoginLog/OperationLog）；混合统一（ProductionOrder 实心→link、作废 danger→warning、弹窗确认/关闭顺序修正；QcView 质检→link success）；超清单两处（BomView 编辑→success、导出 warning→primary；SecurityIpPolicy 新增策略→success）；对话框内嵌表格删除按钮补 size（PurchaseRequest/ProductionOrder×2）。全部不再使用的图标 import 已清理。
+- **验证：** `npm run build` 通过（8.53s）；code-review 核验 v-permission 禁用态仍占位的最宽组合（ProductionOrder 192/200、PurchaseRequest 228/240）均不裁剪；无逻辑/权限/后端改动。
+- **遗留手测：** 用户浏览器目检代表页（① GoodsView 基准不变；② PurchaseRequestView 按钮最多不换行；③ UserView 实心变 link；④ PurchaseView 纵向变横向）；dev 服务器 Vite HMR 已生效，硬刷新即可。
+- **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 登记的已知问题（补料单部分到货终态后受 D59 约束无法再补，待单独立项）。
+
+---
+
 ## 会话 28 — 2026-09-11
 
 ### Defer 清理全清零：阶段 21 终审 13 项 Minor + 会话 27 架构债 5 项（4 commit，单测 179 → 191 全绿）

@@ -34,6 +34,12 @@ body {
   overflow: hidden;
 }
 
+/* ADR-0007 操作列规范：含按钮的表格单元格不换行，保证按钮同行平铺、跨行同列对齐。
+   各页操作列仍须按「最多同时出现的按钮组合」设定固定 width，nowrap 只是兜底保险。 */
+.el-table .cell:has(.el-button) {
+  white-space: nowrap;
+}
+
 /* 针对小屏幕设备的基础自适应处理 */
 @media screen and (max-width: 768px) {
   .el-card__body {

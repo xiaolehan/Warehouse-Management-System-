@@ -48,7 +48,7 @@
         <el-table-column prop="requestUri" label="请求路径" min-width="220" show-overflow-tooltip />
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="scope">
-            <el-button text type="primary" :icon="ViewIcon" @click="openDetail(scope.row)">详情</el-button>
+            <el-button link size="small" type="primary" @click="openDetail(scope.row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -85,7 +85,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh, View as ViewIcon } from '@element-plus/icons-vue'
+import { Search, Refresh } from '@element-plus/icons-vue'
 import { getOperationLogDetailAPI, getOperationLogPageAPI } from '@/api/audit'
 
 const loading = ref(false)

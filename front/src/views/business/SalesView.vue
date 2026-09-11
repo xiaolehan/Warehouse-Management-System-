@@ -75,7 +75,7 @@
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
-              <el-button size="small" type="primary" link :icon="ViewIcon" @click="handleView(scope.row)">查看</el-button>
+              <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
               <el-button
                 v-if="scope.row.confirmStatus === 1 && !isBizDocumentDeleted(scope.row)"
                 v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
@@ -189,7 +189,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, View as ViewIcon, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
+import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI } from '@/api/system'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
@@ -588,13 +588,7 @@ onMounted(async () => {
 
 .action-group {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.action-group :deep(.el-button + .el-button) {
-  margin-left: 0;
+  align-items: center;
 }
 
 .void-help-icon {

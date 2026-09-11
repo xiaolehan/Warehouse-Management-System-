@@ -19,7 +19,7 @@
       <el-table-column prop="createTime" label="创建时间" />
       <el-table-column label="操作状态" width="150" fixed="right">
         <template #default="scope">
-          <el-button v-if="canEditDept(scope.row)" size="small" type="primary" :icon="Edit" @click="handleEdit(scope.row)">编辑</el-button>
+          <el-button v-if="canEditDept(scope.row)" link size="small" type="success" @click="handleEdit(scope.row)">编辑</el-button>
           <el-tag v-else :type="getDeptStatusType(scope.row)">{{ getDeptStatusLabel(scope.row) }}</el-tag>
         </template>
       </el-table-column>
@@ -63,7 +63,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh, Plus, Edit, Close, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import {
   createDeptAPI,
   getDeptDetailAPI,

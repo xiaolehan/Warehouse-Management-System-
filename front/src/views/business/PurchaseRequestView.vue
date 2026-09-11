@@ -23,10 +23,10 @@
             start-placeholder="开始" end-placeholder="结束" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="handleSearch">查询</el-button>
-          <el-button @click="resetSearch">重置</el-button>
-          <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleManual">新建采购申请</el-button>
-          <el-button v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleShortage">缺货识别建单</el-button>
+          <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
+          <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
+          <el-button type="success" :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleManual">新建采购申请</el-button>
+          <el-button :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleShortage">缺货识别建单</el-button>
         </el-form-item>
       </el-form>
 
@@ -58,30 +58,31 @@
         <el-table-column label="申请时间" width="160">
           <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="420" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleView(row)">详情</el-button>
+            <el-button link size="small" type="primary" @click="handleView(row)">详情</el-button>
             <!-- 采购：待采购 → 认领 / 驳回 -->
-            <el-button link type="primary" v-if="row.status === 1"
+            <el-button link size="small" type="primary" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleProcess(row)">认领</el-button>
-            <el-button link type="warning" v-if="row.status === 1"
+            <el-button link size="small" type="warning" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleReject(row)">驳回</el-button>
             <!-- 采购：采购中 → 到货提交 -->
-            <el-button link type="success" v-if="row.status === 2"
+            <el-button link size="small" type="success" v-if="row.status === 2"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArrive(row)">到货提交</el-button>
             <!-- 采购：采购中 → 修改到货计划（D61） -->
-            <el-button link type="primary" v-if="row.status === 2"
+            <el-button link size="small" type="primary" v-if="row.status === 2"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleUpdatePlan(row)">修改到货计划</el-button>
-            <!-- 采购：待入库确认 → 撤回到货 -->
-            <el-button link type="warning" v-if="row.status === 5"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArriveCancel(row)">撤回到货</el-button>
-            <!-- 仓储：待入库确认 → 确认入库 / 驳回入库 -->
-            <el-button link type="success" v-if="row.status === 5"
+            <!-- 仓储：待入库确认 → 确认入库 -->
+            <el-button link size="small" type="success" v-if="row.status === 5"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleConfirmReceive(row)">确认入库</el-button>
-            <el-button link type="danger" v-if="row.status === 5"
+            <!-- 采购：待入库确认 → 撤回到货 -->
+            <el-button link size="small" type="warning" v-if="row.status === 5"
+              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArriveCancel(row)">撤回到货</el-button>
+            <!-- 仓储：待入库确认 → 驳回入库 -->
+            <el-button link size="small" type="danger" v-if="row.status === 5"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleArriveReject(row)">驳回入库</el-button>
             <!-- 仓储：待采购且本人 → 撤销 -->
-            <el-button link type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
+            <el-button link size="small" type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -143,7 +144,7 @@
         </el-table-column>
         <el-table-column label="操作" width="80">
           <template #default="{ $index }">
-            <el-button link type="danger" @click="removeManualRow($index)">删除</el-button>
+            <el-button link size="small" type="danger" @click="removeManualRow($index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -328,7 +329,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {

@@ -12,7 +12,7 @@
             <p class="kicker">SECURITY POLICY</p>
             <h2>IP 白名单策略</h2>
           </div>
-          <el-button type="primary" :icon="Plus" @click="handleAdd">新增策略</el-button>
+          <el-button type="success" :icon="Plus" @click="handleAdd">新增策略</el-button>
         </div>
       </template>
 
@@ -61,10 +61,10 @@
         <el-table-column prop="updateTime" label="更新时间" width="165">
           <template #default="scope">{{ formatTime(scope.row.updateTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="130" fixed="right">
           <template #default="scope">
-            <el-button text type="primary" :icon="Edit" @click="handleEdit(scope.row)">编辑</el-button>
-            <el-button text type="danger" :icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+            <el-button link size="small" type="success" @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -120,7 +120,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus, Edit, Delete, Close, Check } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import {
   createIpPolicyAPI,
   deleteIpPolicyAPI,
