@@ -262,11 +262,7 @@ class SalesTimelineServiceTest {
     void getTimeline_terminatedLinkedOrder_fallsBackToReschedule() {
         sales(5, SalesService.CONFIRM_PENDING);
         goodsWithStock(0);
-        BizProductionOrder order = new BizProductionOrder();
-        order.setId(88L);
-        order.setOrderNo("PRO260910001");
-        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
-        when(productionOrderMapper.selectOne(any())).thenReturn(order);
+        order(BizProductionOrder.STATUS_TERMINATED);
 
         SalesTimelineVO vo = service.getTimeline(501L);
 

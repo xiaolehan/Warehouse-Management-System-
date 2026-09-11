@@ -549,6 +549,30 @@ class ProductionOrderServiceTest {
     }
 
     @Test
+    void getById_linkedSalesNormal_mapsSalesOrderNo() {
+        // bizStatus=1 正常销售单 → VO.salesOrderNo = 原始单号（无标注）
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        BizSales sales = new BizSales();
+        sales.setId(501L);
+        sales.setSalesNo("XS260910001");
+        sales.setBizStatus(1); // 正常
+        when(bizSalesMapper.selectList(any())).thenReturn(List.of(sales));
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertEquals("XS260910001", vo.getSalesOrderNo());
+    }
+
+    @Test
     void getById_terminatedOrder_loadsQcState() {
         BizProductionOrder order = new BizProductionOrder();
         order.setId(7L);

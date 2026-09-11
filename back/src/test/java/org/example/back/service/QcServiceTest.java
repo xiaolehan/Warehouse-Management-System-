@@ -96,15 +96,13 @@ class QcServiceTest {
 
     @Test
     void record_terminatedOrder_throws() {
-        BizProductionOrder order = new BizProductionOrder();
-        order.setId(7L);
+        // D73：已终止单质检冻结（ensureTestable 先于测点/结果校验，dto 仅需 orderId）
+        BizProductionOrder order = order(7L);
         order.setStatus(BizProductionOrder.STATUS_TERMINATED);
         when(orderMapper.selectById(7L)).thenReturn(order);
 
         QcSaveDTO dto = new QcSaveDTO();
         dto.setOrderId(7L);
-        dto.setTestPoint("first");
-        dto.setResult("OK");
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.record(dto));

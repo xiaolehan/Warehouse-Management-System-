@@ -239,6 +239,57 @@ class ProductionPickServiceTest {
     }
 
     @Test
+    void createReturn_nullGoodsIdItem_silentlyFiltered() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("SC-0001");
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(goods);
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        ProductionReturnItemDTO bad = new ProductionReturnItemDTO();
+        bad.setGoodsId(null); // 脏数据：与 terminate 过滤口径对齐后应被静默过滤
+        bad.setQuantity(5);
+        ProductionReturnItemDTO good = new ProductionReturnItemDTO();
+        good.setGoodsId(50L);
+        good.setQuantity(3);
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of(bad, good));
+
+        service.createReturn(7L, dto);
+
+        ArgumentCaptor<BizPickListDetail> dcap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(dcap.capture()); // 仅 good 一行
+        assertEquals(50L, dcap.getValue().getGoodsId());
+    }
+
+    @Test
+    void createReturn_allItemsInvalid_throws() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        ProductionReturnItemDTO bad = new ProductionReturnItemDTO();
+        bad.setGoodsId(null);
+        bad.setQuantity(5);
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of(bad));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createReturn(7L, dto));
+        assertTrue(ex.getMessage().contains("无有效退料明细行"));
+    }
+
+    @Test
     void createReturn_rejectsWhenOrderNotFound() {
         when(productionOrderMapper.selectById(999L)).thenReturn(null);
 
@@ -430,6 +481,13 @@ class ProductionPickServiceTest {
     }
 
     @Test
+    void terminate_nullDto_throws() {
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.terminate(7L, null));
+        assertEquals("终止原因不能为空", ex.getMessage());
+    }
+
+    @Test
     void terminate_pendingPickExists_throws() {
         when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
         when(pickListMapper.selectCount(any())).thenReturn(1L); // 有待出库领料单
@@ -498,5 +556,88 @@ class ProductionPickServiceTest {
         assertEquals(6, vo.getItems().get(0).getQuantity());
         assertEquals("M3", vo.getItems().get(0).getSpec());
         assertEquals(Boolean.FALSE, vo.getHasOpenReturn());
+    }
+
+    @Test
+    void computeReturnablePreview_supplyIssuedCountsAsPicked() {
+        // SUPPLY（补料）已发料与 PICK 同口径计入「已领」
+        when(pickListMapper.selectList(any())).thenReturn(List.of(
+                pickListOf(10L, PickListService.TYPE_SUPPLY, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(10L, 50L, "螺丝", 5)));
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(g));
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(1, vo.getItems().size());
+        assertEquals(5, vo.getItems().get(0).getQuantity());
+    }
+
+    @Test
+    void computeReturnablePreview_multiGoods_filtersNonPositive() {
+        // 多物料：净额>0 才进清单（goods 51 全退净额 0 被过滤）
+        when(pickListMapper.selectList(any())).thenReturn(List.of(
+                pickListOf(10L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED),
+                pickListOf(11L, PickListService.TYPE_RETURN, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(10L, 50L, "螺丝", 10), detailOf(10L, 51L, "螺母", 5)),
+                List.of(detailOf(11L, 50L, "螺丝", 4), detailOf(11L, 51L, "螺母", 5)));
+        BaseGoods g50 = new BaseGoods();
+        g50.setId(50L);
+        g50.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(g50));
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(1, vo.getItems().size());
+        assertEquals(50L, vo.getItems().get(0).getGoodsId());
+        assertEquals(6, vo.getItems().get(0).getQuantity());
+    }
+
+    @Test
+    void terminate_itemNotInReturnableList_throws() {
+        // 退料明细不在已领未退清单内 → 拒（ensureWithinReturnable max==null 分支）
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6); // 仅 goods 50 可退 6
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(7L, terminateDTO("x", 99L, 1)));
+        assertTrue(ex.getMessage().contains("不在该任务单已领未退清单内"));
+    }
+
+    @Test
+    void terminate_existingRemark_appendsWithSeparator() {
+        // appendRemark：旧备注非空 → "旧 | 终止原因: x"
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS)); // remark="原备注"
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("销售单取消");
+        dto.setItems(List.of());
+
+        service.terminate(7L, dto);
+
+        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(productionOrderMapper).updateById(cap.capture());
+        assertEquals("原备注 | 终止原因: 销售单取消", cap.getValue().getRemark());
+    }
+
+    @Test
+    void terminate_blankRemark_replacesWithReason() {
+        // appendRemark：旧备注空 → 仅后缀
+        BizProductionOrder order = terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS);
+        order.setRemark(null);
+        mockTerminateBase(order);
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("销售单取消");
+        dto.setItems(List.of());
+
+        service.terminate(7L, dto);
+
+        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(productionOrderMapper).updateById(cap.capture());
+        assertEquals("终止原因: 销售单取消", cap.getValue().getRemark());
     }
 }

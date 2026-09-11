@@ -133,7 +133,7 @@ public class ProductionPickService {
         }
 
         List<ProductionReturnItemDTO> items = dto.getItems().stream()
-                .filter(i -> i.getQuantity() != null && i.getQuantity() > 0)
+                .filter(i -> i.getGoodsId() != null && i.getQuantity() != null && i.getQuantity() > 0)
                 .toList();
         if (items.isEmpty()) {
             throw BusinessException.validateFail("无有效退料明细行");
@@ -209,7 +209,10 @@ public class ProductionPickService {
         if (order.getStatus() == null || !BizProductionOrder.UNFINISHED_STATUSES.contains(order.getStatus())) {
             throw BusinessException.validateFail("仅待生产/生产中/待入库状态可终止");
         }
-        String reason = dto == null ? null : dto.getReason();
+        if (dto == null) {
+            throw BusinessException.validateFail("终止原因不能为空");
+        }
+        String reason = dto.getReason();
         if (reason == null || reason.trim().isEmpty()) {
             throw BusinessException.validateFail("终止原因不能为空");
         }
@@ -239,6 +242,7 @@ public class ProductionPickService {
      * D73：终止弹窗「已领未退」预览 = PICK/SUPPLY（已发料/已完成）− RETURN（已发料/已完成），按物料分组取净额>0。
      * 生产成员可读（与领料/退料一致）。
      */
+    @Transactional(readOnly = true)
     public ProductionReturnableVO computeReturnablePreview(Long orderId) {
         requireProductionMember();
         ProductionReturnableVO vo = new ProductionReturnableVO();
