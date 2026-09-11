@@ -39,6 +39,9 @@ public class SysMessage {
      */
     private Long bizId;
 
+    /** D75 消息跳转目标：前端路由字面值，接收方点击跳该列表页；空则前端按 bizType 映射兜底 */
+    private String targetRoute;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 

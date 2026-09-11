@@ -33,6 +33,16 @@ public class MessageService {
     private static final String ROLE_ADMIN = "admin";
     private static final DateTimeFormatter MESSAGE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    // ==================== 消息跳转目标（D75）：前端路由字面值，与 front 路由表对齐 ====================
+    private static final String ROUTE_SALES = "/business/sales";
+    private static final String ROUTE_SALES_RETURN = "/business/sales-return";
+    private static final String ROUTE_PURCHASE = "/business/purchase";
+    private static final String ROUTE_PURCHASE_RETURN = "/business/purchase-return";
+    private static final String ROUTE_PURCHASE_REQUEST = "/business/purchase-request";
+    private static final String ROUTE_PICK_LIST = "/business/pick-list";
+    private static final String ROUTE_PRODUCTION_ORDER = "/business/production-order";
+    private static final String ROUTE_VOID_APPROVAL = "/system/void-approval";
+
     @Autowired
     private SysMessageMapper sysMessageMapper;
 
@@ -244,8 +254,8 @@ public class MessageService {
                         salesNo, applicant, customer
                 ),
                 "sales",
-                salesId
-        );
+                salesId,
+                ROUTE_SALES);
     }
 
     /**
@@ -268,8 +278,8 @@ public class MessageService {
                         salesNo, goodsName, quantity == null ? 0 : quantity, customer, applicantName, available == null ? 0 : available
                 ),
                 "sales",
-                salesId
-        );
+                salesId,
+                ROUTE_PRODUCTION_ORDER);
     }
 
     /**
@@ -286,8 +296,8 @@ public class MessageService {
                         salesNo, goodsName, quantity == null ? 0 : quantity
                 ),
                 "sales",
-                salesId
-        );
+                salesId,
+                ROUTE_SALES);
     }
 
     /**
@@ -308,8 +318,8 @@ public class MessageService {
                         returnNo, applicant
                 ),
                 "sales_return",
-                returnId
-        );
+                returnId,
+                ROUTE_SALES_RETURN);
     }
 
     /**
@@ -369,8 +379,8 @@ public class MessageService {
                 "生产领料失败反馈",
                 String.format(Locale.ROOT, "领料单 %s 反馈失败：%s。请关注相关订单履约。", pickNo, reason),
                 "pick_list",
-                pickListId
-        );
+                pickListId,
+                ROUTE_SALES);
     }
 
     /**
@@ -388,7 +398,8 @@ public class MessageService {
                         "领料单 %s（生产任务单 %s）已由仓储确认出库，现可开工。",
                         pickNo, orderNo == null ? "-" : orderNo),
                 "pick_list",
-                pickId);
+                pickId,
+                ROUTE_PICK_LIST);
     }
 
     /**
@@ -410,7 +421,8 @@ public class MessageService {
                         quantity == null ? 0 : quantity,
                         requestNo == null ? "-" : requestNo),
                 "production_order",
-                orderId);
+                orderId,
+                ROUTE_PRODUCTION_ORDER);
     }
 
     /**
@@ -428,7 +440,8 @@ public class MessageService {
                 "生产领料出库失败",
                 String.format(Locale.ROOT, "领料单 %s 出库失败：%s", pickNo, reason),
                 "pick_list",
-                pickId);
+                pickId,
+                ROUTE_PICK_LIST);
     }
 
     /**
@@ -449,8 +462,8 @@ public class MessageService {
                         requestNo, applicant
                 ),
                 "purchase_request",
-                requestId
-        );
+                requestId,
+                ROUTE_PURCHASE_REQUEST);
     }
 
     /**
@@ -471,8 +484,8 @@ public class MessageService {
                         requestNo, operator
                 ),
                 "purchase_request",
-                requestId
-        );
+                requestId,
+                ROUTE_PURCHASE_REQUEST);
     }
 
     /**
@@ -496,8 +509,8 @@ public class MessageService {
                         "采购申请单 %s 已由 %s 认领，预计到货：%s",
                         requestNo, operator, arrivalSummary == null ? "-" : arrivalSummary),
                 "purchase_request",
-                requestId
-        );
+                requestId,
+                ROUTE_PURCHASE_REQUEST);
     }
 
     /**
@@ -519,8 +532,8 @@ public class MessageService {
                         shortageSummary == null ? "-" : shortageSummary
                 ),
                 "production_order",
-                orderId
-        );
+                orderId,
+                ROUTE_PURCHASE_REQUEST);
     }
 
     /**
@@ -541,8 +554,8 @@ public class MessageService {
                         purchaseNo, operator
                 ),
                 "purchase",
-                purchaseId
-        );
+                purchaseId,
+                ROUTE_PURCHASE);
     }
 
     /**
@@ -563,8 +576,8 @@ public class MessageService {
                         returnNo, operator
                 ),
                 "purchase_return",
-                returnId
-        );
+                returnId,
+                ROUTE_PURCHASE_RETURN);
     }
 
     /**
@@ -588,7 +601,8 @@ public class MessageService {
                         cancelAction == null ? "取消" : cancelAction,
                         orderNo == null ? "-" : orderNo),
                 "production_order",
-                orderId);
+                orderId,
+                ROUTE_PRODUCTION_ORDER);
     }
 
     /**
@@ -606,7 +620,8 @@ public class MessageService {
                         "退料单 %s（生产任务单 %s）已由生产端提交，请确认入库。",
                         pickNo, orderNo),
                 "pick_list",
-                pickId);
+                pickId,
+                ROUTE_PICK_LIST);
     }
 
     /**
@@ -624,7 +639,8 @@ public class MessageService {
                         "领料单 %s（生产任务单 %s）已由生产端提交，请确认出库。",
                         pickNo, orderNo),
                 "pick_list",
-                pickId);
+                pickId,
+                ROUTE_PICK_LIST);
     }
 
     /**
@@ -653,6 +669,7 @@ public class MessageService {
         message.setIsRead(MESSAGE_UNREAD);
         message.setBizType("sales");
         message.setBizId(salesId);
+        message.setTargetRoute(ROUTE_VOID_APPROVAL);
         sysMessageMapper.insert(message);
     }
 
@@ -667,10 +684,10 @@ public class MessageService {
     }
 
     private void sendToDeptAdmins(Long deptId, String title, String content) {
-        sendToDeptAdminsWithBiz(deptId, title, content, null, null);
+        sendToDeptAdminsWithBiz(deptId, title, content, null, null, null);
     }
 
-    private void sendToDeptAdminsWithBiz(Long deptId, String title, String content, String bizType, Long bizId) {
+    private void sendToDeptAdminsWithBiz(Long deptId, String title, String content, String bizType, Long bizId, String targetRoute) {
         if (deptId == null || !StringUtils.hasText(title) || !StringUtils.hasText(content)) {
             return;
         }
@@ -691,16 +708,17 @@ public class MessageService {
             message.setIsRead(MESSAGE_UNREAD);
             message.setBizType(bizType);
             message.setBizId(bizId);
+            message.setTargetRoute(targetRoute);
             sysMessageMapper.insert(message);
         }
     }
 
     private void sendToUser(Long userId, String title, String content) {
-        sendToUserWithBiz(userId, title, content, null, null);
+        sendToUserWithBiz(userId, title, content, null, null, null);
     }
 
     /** 精准到人 + 业务绑定（D70 用到）：单据终态/撤销时按 biz 撤未读，避免悬挂通知 */
-    private void sendToUserWithBiz(Long userId, String title, String content, String bizType, Long bizId) {
+    private void sendToUserWithBiz(Long userId, String title, String content, String bizType, Long bizId, String targetRoute) {
         if (userId == null || !StringUtils.hasText(title) || !StringUtils.hasText(content)) {
             return;
         }
@@ -716,6 +734,7 @@ public class MessageService {
         message.setIsRead(MESSAGE_UNREAD);
         message.setBizType(bizType);
         message.setBizId(bizId);
+        message.setTargetRoute(targetRoute);
         sysMessageMapper.insert(message);
     }
 
@@ -743,6 +762,7 @@ public class MessageService {
         vo.setRead(Integer.valueOf(MESSAGE_READ).equals(message.getIsRead()));
         vo.setBizType(message.getBizType());
         vo.setBizId(message.getBizId());
+        vo.setTargetRoute(message.getTargetRoute());
         vo.setReadTime(message.getReadTime());
         vo.setCreateTime(message.getCreateTime());
         return vo;

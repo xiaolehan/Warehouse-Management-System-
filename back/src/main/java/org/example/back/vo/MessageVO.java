@@ -20,6 +20,9 @@ public class MessageVO {
 
     private Long bizId;
 
+    /** D75 消息跳转目标（发送方显式指定；为空前端按 bizType 映射兜底） */
+    private String targetRoute;
+
     private LocalDateTime readTime;
 
     private LocalDateTime createTime;

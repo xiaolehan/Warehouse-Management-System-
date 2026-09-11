@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.result.PageResult;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.MessageQueryDTO;
+import org.example.back.entity.SysDept;
 import org.example.back.entity.SysMessage;
+import org.example.back.entity.SysUser;
 import org.example.back.mapper.SysDeptMapper;
 import org.example.back.mapper.SysMessageMapper;
 import org.example.back.mapper.SysUserMapper;
@@ -12,6 +14,7 @@ import org.example.back.vo.MessageVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -22,6 +25,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -94,5 +98,51 @@ class MessageServiceTest {
         assertEquals(1, result.getRecords().size());
         assertNull(result.getRecords().get(0).getBizType());
         assertNull(result.getRecords().get(0).getBizId());
+    }
+
+    // ---------- D75：消息跳转目标 target_route 落库 ----------
+
+    @Test
+    void sendKitComplete_writesTargetRoute() {
+        SysDept dept = new SysDept();
+        dept.setId(3L);
+        when(sysDeptMapper.selectOne(any())).thenReturn(dept);
+        SysUser admin = new SysUser();
+        admin.setId(21L);
+        when(sysUserMapper.selectList(any())).thenReturn(List.of(admin));
+
+        service.sendKitCompleteToProductionAdmins("PO-1", "PTO153", 2, "PR-1", 7L);
+
+        ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
+        verify(sysMessageMapper).insert(captor.capture());
+        assertEquals("/business/production-order", captor.getValue().getTargetRoute());
+    }
+
+    @Test
+    void sendReadyToShip_writesTargetRoute() {
+        // 精准到人 helper（sendToUserWithBiz）同样须落 target_route
+        SysUser recipient = new SysUser();
+        recipient.setId(9L);
+        recipient.setStatus(1);
+        when(sysUserMapper.selectById(9L)).thenReturn(recipient);
+
+        service.sendSalesReadyToShipToUser(9L, "XS-1", "PTO153", 2, 55L);
+
+        ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
+        verify(sysMessageMapper).insert(captor.capture());
+        assertEquals("/business/sales", captor.getValue().getTargetRoute());
+    }
+
+    @Test
+    void sendPriceDeviation_writesVoidApprovalRoute() {
+        SysUser superadmin = new SysUser();
+        superadmin.setId(1L);
+        when(sysUserMapper.selectOne(any())).thenReturn(superadmin);
+
+        service.sendPriceDeviationToSuperAdmin("XS-1", "销售甲", new java.math.BigDecimal("0.08"), 55L);
+
+        ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
+        verify(sysMessageMapper).insert(captor.capture());
+        assertEquals("/system/void-approval", captor.getValue().getTargetRoute());
     }
 }

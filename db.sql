@@ -1586,3 +1586,10 @@ ALTER TABLE `biz_production_order`
 -- =====================================================================
 ALTER TABLE `biz_production_order`
     MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产, 2-生产中, 3-待质检, 4-已完成, 5-已作废, 6-已报废, 7-已终止';
+
+-- =====================================================================
+-- 17. D75：站内消息跳转目标 target_route（ADR-0006）
+-- 发送方显式指定跳转路由，前端优先使用；存量为 NULL 走 BIZ_ROUTE_MAP 兜底。
+-- =====================================================================
+ALTER TABLE `sys_message`
+    ADD COLUMN `target_route` VARCHAR(100) NULL COMMENT '跳转目标路由（前端优先使用，空则按 bizType 映射兜底）';

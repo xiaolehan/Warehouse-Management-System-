@@ -124,8 +124,11 @@ const canAccessPath = (path) => {
   return allowed
 }
 
+// D75：消息自带跳转目标优先（可达性校验，不可达/缺失回落 bizType 映射——存量消息兼容）
 const resolveJumpPath = (item) => {
-  if (!item || !item.bizType) return null
+  if (!item) return null
+  if (item.targetRoute && canAccessPath(item.targetRoute)) return item.targetRoute
+  if (!item.bizType) return null
   // 超管仅能进超管中心：价格偏离审批消息（biz_type=sales）映射到审批页
   if (isSuperAdmin(getRole())) {
     return item.bizType === 'sales' ? '/system/void-approval' : null
