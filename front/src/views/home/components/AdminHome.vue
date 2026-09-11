@@ -467,6 +467,11 @@ onMounted(() => {
   word-break: break-word;
 }
 
+/* 预警类指标（低库存/零库存）>0 时数字标红；须带 .metric-card strong 前缀压过上面的基础色 */
+.metric-card strong.metric-value--alert {
+  color: #dc2626;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;

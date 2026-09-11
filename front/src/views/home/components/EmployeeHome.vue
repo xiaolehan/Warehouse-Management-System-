@@ -708,6 +708,11 @@ onMounted(() => {
   word-break: break-word;
 }
 
+/* 预警类指标（低库存/零库存）>0 时数字标红；须带 .metric-card strong 前缀压过上面的基础色 */
+.metric-card strong.metric-value--alert {
+  color: #dc2626;
+}
+
 .metric-desc {
   font-size: 0.88rem;
   line-height: 1.6;

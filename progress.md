@@ -17,7 +17,11 @@
 - **前端：** `AnnualStatsView.vue`（工具栏导出按钮遵守 ADR-0007、ECharts 三系列柱图按年正序、表格倒序金额千分位）+ 路由 `/business/annual-stats`（finance admin）+ 财务菜单第二项 + `api/business.js` 两个 API。
 - **留档：** ADR-0008 + CONTEXT.md 新增「统计」节（已实现销售毛利 / 年度归属）。
 - **踩坑记录：** `Map.merge(key, amount, BigDecimal::subtract)` 在 key 不存在时原样放入正值（退货冲减变加）——跨键冲减须用 `compute` 兜底 0；MockMvc 响应 Content-Type 自动带 `;charset=UTF-8`，断言用 startsWith。
-- **遗留手测：** 用户浏览器目检「年度经营统计」页（财务管理员登录 → 菜单第二项；表格/柱图/导出）；会话 28/29 遗留（浮窗手测、按钮统一目检 4 页）仍未做。
+- **遗留手测（当日全部完成，grilling 定分工：我程序化预检 + 用户纯视觉确认）：**
+  - ① 年度经营统计目检：菜单/柱图/表格数字/导出文件全部符合预期 ✅
+  - ② 浮窗手测（会话 28 遗留）：销售 admin 建测试单（PTO153×1）→ 仓储 admin 首轮不弹存量 ✅、15s 内右下角弹出 ✅、点击跳 `/business/sales` + 自动已读（消息 216，created 21:14:42 → read 21:15:00）✅；测试单(id=72)已删，库存无变动
+  - ③ 按钮统一目检 4 页（会话 29 遗留）：物料基准无变化/采购申请不换行/用户管理实心变 link/进货纵向变横向 ✅
+- **目检新发现并修复（首页预警数字不红）：** AdminHome/EmployeeHome 模板绑了 `metric-value--alert` 类但 style 块从未定义该样式（且基础规则 `.metric-card strong` 优先级更高）——两文件补 `.metric-card strong.metric-value--alert { color:#dc2626 }`（>0 才红，0 保持黑色为原设计）。build 通过，用户复核无误。
 - **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 登记的已知问题（补料单部分到货终态后受 D59 约束无法再补，待单独立项）。
 
 ---
