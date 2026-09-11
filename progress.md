@@ -5,6 +5,32 @@
 
 ---
 
+## 会话 27 — 2026-09-11
+
+### 三项体验优化：生产端预警中心 / 消息点击跳转+新消息浮窗 / 首页预警数字红色（commit e395161，179 单测全绿）
+
+- **范围：** ① 生产端预警中心放开；② 站内消息整卡点击跳转业务列表页 + 新消息右下角浮窗；③ 超管邮箱入口放开；④ 首页低/零库存数字 >0 红色加粗。无 DB DDL 变更。
+- **grilling 定案：** 浮窗=新消息弹通知（非常驻）；整卡跳转+自动已读；数字 >0 才红；生产员工补预警卡片；仅跳列表页（各业务页无单据深链）；生产快捷入口补 3 项；预警卡片不加点击。
+- **后端：** 预警分页鉴权放开生产 admin；生产员工工作台预警数同步放开；`MessageVO` 透出 `bizType/bizId`（D21 字段此前未透出）。单测 174 → **179**（+5：MessageServiceTest×2 / HomeServiceTest×2 / GoodsServiceTest 预警鉴权×1），全绿。
+- **前端：**
+  - 路由/生产 admin 菜单/首页快捷入口（预警中心+生产任务单+质检记录）补齐；生产员工首页补低/零库存预警卡片。
+  - 站内邮箱整卡点击 → 自动已读 + 跳业务列表页；`BIZ_ROUTE_MAP` 候选数组按权限取首个可达（跨部门回退映射，评审修复：销售收 pick_list→/business/sales；采购收 production_order→/business/purchase-request；生产收 sales→/business/production-order；超管 sales→/system/void-approval）。
+  - 新消息 ElNotification：15s 轮询未读数变化触发，≤3 条逐条弹（点击跳转）、>3 条聚合（真实 delta）；首轮不弹存量；基线先更新防重入；瞬时失败角标不清零。
+  - `utils/auth.js` 新增 `canAccessRouteMeta`（与路由守卫同一判定，组件侧预判可达性）。
+  - 超管邮箱入口放开——修复价格偏离审批消息（发超管）此前界面无处可读的现存缺陷。
+  - AdminHome/EmployeeHome 预警数字 `metric-value--alert`（>0 红色加粗）。
+- **验证：** 后端 179/179 全绿；前端 `npm run build` 通过；改动后重启后端 curl 复验全 200。
+- **提交：** commit e395161（13 文件 +419/-23），本地与 origin/main 已同步（用户 VS Code 面板推送）。
+- **Defer（评审后有意遗留，建议下次动相关文件顺手或单独立项）：**
+  1. **intent 级 bizType 重构**——`sales` 等 bizType 被多意图复用（D21 生命周期/D70 需求/价格偏离），前端靠角色猜路由；长期应让消息自带跳转目标或 intent 级类型。注意 `revokeUnreadByBiz('sales', id)` 调用点需同步评估。
+  2. **预警部门允许名单散落 6 处**（HomeService/GoodsService/router meta/layout/AdminHome/EmployeeHome）——本次已对齐并用 AuthzService 常量，但无单一数据源，下次加部门需多点改。
+  3. 路由守卫与 `canAccessRouteMeta` 判定逻辑同源自原子函数但未共享组合（守卫保留两条不同错误文案，未合并）。
+  4. 浮窗触发为计数比较：同一 15s 窗口内 +1 新消息与 -1 撤销恰好抵消时不弹（残余边界，需 id 级基线才能根除）。
+  5. 首页两个 Home 组件 metric 卡片 CSS 本就重复（`metric-value--alert` 沿袭该模式，未抽共享样式）。
+- **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 登记的已知问题（补料单按行部分到货→确认入库终态后受 D59 约束无法再补，待单独立项）；③ defer 清理（本 defer 5 项 + 阶段 21 的 13 项 Minor，清单在 `.superpowers/sdd/progress.md` 阶段 21 段）。
+
+---
+
 ## 会话 26 — 2026-09-10
 
 ### 阶段 21：E1 确认 / D73 手动终止+退料联动 / D74 红冲隐藏（171 单测全绿 + E2E 13/13 + 负测 5/5 + 库存 17/17 回基线）
