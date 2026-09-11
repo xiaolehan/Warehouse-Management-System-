@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router"
 import { ElMessage } from "element-plus"
-import { canAccessRoles, getDeptCode, getRole, getToken, hasDeptAccess, isSuperAdmin } from "@/utils/auth"
+import { checkRouteAccess, getDeptCode, getRole, getToken, isSuperAdmin } from "@/utils/auth"
+import { WARNING_DEPT_CODES } from "@/utils/constants"
 
 const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/',
@@ -115,7 +116,7 @@ const router = createRouter({
           path: "business/stock-warning",
           name: "BusinessStockWarning",
           component: () => import("../views/business/StockWarningView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse', 'purchase', 'sales', 'production'] }
+          meta: { roles: ['admin'], deptCodes: WARNING_DEPT_CODES }
         },
         {
           path: "business/pick-list",
@@ -251,19 +252,10 @@ router.beforeEach((to, from, next) => {
         return next('/home')
       }
 
-      if (to.meta && to.meta.roles) {
-        const allowRoles = to.meta.roles
-        if (!canAccessRoles(role, allowRoles)) {
-          ElMessage.error('无权限访问该页面')
-          return next('/403')
-        }
-      }
-
-      if (to.meta && Array.isArray(to.meta.deptCodes) && to.meta.deptCodes.length > 0) {
-        if (!hasDeptAccess(deptCode, to.meta.deptCodes, role)) {
-          ElMessage.error('当前部门无权限访问该页面')
-          return next('/403')
-        }
+      const { ok, reason } = checkRouteAccess(to.meta || {}, role, deptCode)
+      if (!ok) {
+        ElMessage.error(reason === 'role' ? '无权限访问该页面' : '当前部门无权限访问该页面')
+        return next('/403')
       }
       return next()
     }

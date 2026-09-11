@@ -60,11 +60,8 @@ class GoodsServiceTest {
         service.page(query);
 
         verify(authzService).requireAnyDeptAdminOrSuperAdmin(
-                anyString(),
-                eq(AuthzService.DEPT_WAREHOUSE),
-                eq(AuthzService.DEPT_PURCHASE),
-                eq(AuthzService.DEPT_PRODUCTION),
-                eq(AuthzService.DEPT_SALES));
+                eq(AuthzService.WARNING_DEPT_CODES),
+                anyString());
     }
 
     // ---------- D60/ADR-0002：生产补料自动建档——缺省供应商/零库存启用/规格材质写入 ----------

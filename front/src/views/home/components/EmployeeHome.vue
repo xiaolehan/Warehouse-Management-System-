@@ -181,6 +181,7 @@ import { getEmployeeWorkbenchAPI, updateEmployeeContactAPI } from '@/api/home'
 import { getNoticeDetailAPI, getNoticePageAPI } from '@/api/system'
 import { useUserStore } from '@/stores/user'
 import { getToken, normalizeDeptCode } from '@/utils/auth'
+import { WARNING_DEPT_CODES } from '@/utils/constants'
 
 const userStore = useUserStore()
 const router = useRouter()
@@ -280,7 +281,7 @@ const metricCards = computed(() => {
     }
   ]
 
-  if ([ 'purchase', 'sales', 'warehouse', 'production' ].includes(deptCode.value)) {
+  if (WARNING_DEPT_CODES.includes(deptCode.value)) {
     cards.push(
       {
         label: '低库存预警',
@@ -705,11 +706,6 @@ onMounted(() => {
 .metric-card strong {
   font-size: 1.35rem;
   word-break: break-word;
-}
-
-.metric-card strong.metric-value--alert {
-  color: #dc2626;
-  font-weight: 800;
 }
 
 .metric-desc {

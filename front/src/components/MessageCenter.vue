@@ -70,7 +70,6 @@ import { Finished, Delete, Check } from '@element-plus/icons-vue'
 import {
   deleteAllReadMessagesAPI,
   getMessagePageAPI,
-  getUnreadMessageCountAPI,
   markAllMessagesReadAPI,
   markMessageReadAPI
 } from '@/api/message'
@@ -89,8 +88,9 @@ const actionLoading = ref(false)
 const messageList = ref([])
 
 let pollingTimer = null
-// 浮窗只在未读数变化时弹：首轮拉取建立基线，存量未读不轰炸（非响应式，模板不用）
-let lastUnreadCount = null
+// 浮窗基线 = 未读 id 集合 + 未读总数（id 级，可检出同窗口 +1/-1 抵消）；首轮拉取建立，存量未读不轰炸（非响应式，模板不用）
+let baselineUnreadIds = null
+let baselineUnreadTotal = 0
 const notifiedMessageIds = new Set()
 
 const unreadBadgeValue = computed(() => {
@@ -142,62 +142,66 @@ const formatTime = (val) => {
 }
 
 // 新消息浮窗：≤3 条逐条弹（点击跳转），>3 条聚合一条（点击开邮箱）
-const notifyNewMessages = async (delta) => {
-  try {
-    const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false })
-    if (res.code !== 200) return
-    const fresh = (res.data?.records || []).filter((m) => !notifiedMessageIds.has(m.id)).map(withJumpPath)
-    if (!fresh.length) return
-    fresh.forEach((m) => notifiedMessageIds.add(m.id))
-    if (fresh.length <= 3) {
-      fresh.forEach((m) => {
-        ElNotification({
-          title: m.title || '新消息',
-          message: m.content || '',
-          type: 'warning',
-          position: 'bottom-right',
-          duration: 6000,
-          onClick: () => {
-            if (m.jumpPath) {
-              handleMessageClick(m)
-            } else {
-              drawerVisible.value = true
-            }
+const notifyNewMessages = (fresh, displayCount) => {
+  fresh.forEach((m) => notifiedMessageIds.add(m.id))
+  if (fresh.length <= 3) {
+    fresh.forEach((m) => {
+      ElNotification({
+        title: m.title || '新消息',
+        message: m.content || '',
+        type: 'warning',
+        position: 'bottom-right',
+        duration: 6000,
+        onClick: () => {
+          if (m.jumpPath) {
+            handleMessageClick(m)
+          } else {
+            drawerVisible.value = true
           }
-        })
+        }
       })
-      return
-    }
-    ElNotification({
-      title: '新消息提醒',
-      message: `您有 ${Math.max(fresh.length, delta)} 条新未读消息，点击查看站内邮箱。`,
-      type: 'warning',
-      position: 'bottom-right',
-      duration: 6000,
-      onClick: () => {
-        drawerVisible.value = true
-      }
     })
-  } catch {
-    // 浮窗失败不打断轮询
+    return
   }
+  ElNotification({
+    title: '新消息提醒',
+    message: `您有 ${displayCount} 条新未读消息，点击查看站内邮箱。`,
+    type: 'warning',
+    position: 'bottom-right',
+    duration: 6000,
+    onClick: () => {
+      drawerVisible.value = true
+    }
+  })
 }
 
 const loadUnreadCount = async () => {
   if (!showMessageCenter.value) return
   try {
-    const res = await getUnreadMessageCountAPI()
+    const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false })
     if (res.code !== 200) return
-    const newCount = Number(res.data || 0)
-    const prevCount = lastUnreadCount
-    unreadCount.value = newCount
-    // 先更新基线再弹窗（fire-and-forget），避免慢请求期间下一轮轮询重入重复拉取
-    lastUnreadCount = newCount
-    if (prevCount !== null && newCount !== prevCount) {
-      notifyNewMessages(newCount - prevCount)
+    const records = res.data?.records || []
+    const total = Number(res.data?.total ?? records.length)
+    const currentIds = new Set(records.map((m) => m.id))
+    unreadCount.value = total
+    if (baselineUnreadIds === null) {
+      // 首轮仅建基线，存量未读不轰炸
+      baselineUnreadIds = currentIds
+      baselineUnreadTotal = total
+      return
+    }
+    const fresh = records
+      .filter((m) => !baselineUnreadIds.has(m.id) && !notifiedMessageIds.has(m.id))
+      .map(withJumpPath)
+    const delta = total - baselineUnreadTotal
+    // 先更新基线再弹窗，避免慢请求期间下一轮轮询重入重复拉取
+    baselineUnreadIds = currentIds
+    baselineUnreadTotal = total
+    if (fresh.length) {
+      notifyNewMessages(fresh, Math.max(fresh.length, delta))
     }
   } catch {
-    // 瞬时失败保持上一次数，角标不清零
+    // 瞬时失败保持上一次基线与角标，不清零
   }
 }
 
@@ -331,7 +335,8 @@ watch(showMessageCenter, (visible) => {
   }
   stopPolling()
   unreadCount.value = 0
-  lastUnreadCount = null
+  baselineUnreadIds = null
+  baselineUnreadTotal = 0
   notifiedMessageIds.clear()
   routeAccessCache.clear()
   messageList.value = []

@@ -5,6 +5,7 @@ import router from "./router"
 import ElementPlus from "element-plus"
 import "element-plus/dist/index.css"
 import "@/assets/main.css" // 引入全局优化样式
+import "@/styles/home-metrics.css" // 首页 metric 卡片共享样式（预警数字红色）
 import permissionDirective from "./utils/permission" // 引入自定义权限指令
 
 const app = createApp(App)

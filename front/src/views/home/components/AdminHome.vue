@@ -91,6 +91,7 @@ import { getAdminHomeLatestNoticeAPI, getApprovalPendingReminderAPI, getNoticeDe
 import { getWorkRequirementOverdueReminderAPI, getWorkRequirementPendingReviewReminderAPI } from '@/api/workRequirement'
 import { useUserStore } from '@/stores/user'
 import { getToken, normalizeDeptCode } from '@/utils/auth'
+import { WARNING_DEPT_CODES } from '@/utils/constants'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -137,7 +138,7 @@ const metricCards = computed(() => {
     { label: '公告数量', value: noticeList.value.length },
   ]
 
-  if (deptCode.value === 'hr' || deptCode.value === 'finance') {
+  if (!WARNING_DEPT_CODES.includes(deptCode.value)) {
     return [...baseCards, { label: '上次登录', value: formatTime(summary.value.lastLoginTime) }]
   }
 
@@ -464,11 +465,6 @@ onMounted(() => {
   font-size: 1.35rem;
   color: #0f172a;
   word-break: break-word;
-}
-
-.metric-card strong.metric-value--alert {
-  color: #dc2626;
-  font-weight: 800;
 }
 
 .panel-grid {

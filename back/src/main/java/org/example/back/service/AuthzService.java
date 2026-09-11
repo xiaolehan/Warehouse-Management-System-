@@ -10,6 +10,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 
 @Service
@@ -25,6 +26,10 @@ public class AuthzService {
     public static final String DEPT_HR = "hr";
     public static final String DEPT_SYSTEM_MANAGEMENT = "system_management";
     public static final String DEPT_PRODUCTION = "production";
+
+    /** 预警中心/预警数可见部门（后端单一数据源；前端对应 front/src/utils/constants.js WARNING_DEPT_CODES） */
+    public static final List<String> WARNING_DEPT_CODES =
+            List.of(DEPT_WAREHOUSE, DEPT_PURCHASE, DEPT_PRODUCTION, DEPT_SALES);
 
     @Autowired
     private AuthService authService;

@@ -95,8 +95,7 @@ public class HomeService {
         summaryInfo.setCurrentLoginTime(summary.getCurrentLoginTime());
         summaryInfo.setLastLoginTime(summary.getLastLoginTime());
         String deptCode = userInfo.getDeptCode();
-        if (AuthzService.DEPT_PURCHASE.equals(deptCode) || AuthzService.DEPT_SALES.equals(deptCode)
-                || AuthzService.DEPT_WAREHOUSE.equals(deptCode) || AuthzService.DEPT_PRODUCTION.equals(deptCode)) {
+        if (AuthzService.WARNING_DEPT_CODES.contains(deptCode)) {
             summaryInfo.setLowStockCount(countLowStockGoods());
             summaryInfo.setZeroStockCount(countZeroStockGoods());
         }

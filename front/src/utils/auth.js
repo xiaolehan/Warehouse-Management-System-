@@ -107,9 +107,12 @@ export const isDeptEmployee = (role, deptCode) => isEmployeeRole(role) && Boolea
 
 export const canAccessRoles = (currentRole, allowRoles = []) => hasRole(currentRole, allowRoles)
 
-// 路由 meta 鉴权（roles + deptCodes），与 router.beforeEach 守卫同一判定逻辑，供组件侧预判跳转可达性
-export const canAccessRouteMeta = (meta = {}, currentRole = getRole(), currentDeptCode = getDeptCode()) => {
-  if (meta.roles && !canAccessRoles(currentRole, meta.roles)) return false
-  if (Array.isArray(meta.deptCodes) && meta.deptCodes.length > 0 && !hasDeptAccess(currentDeptCode, meta.deptCodes, currentRole)) return false
-  return true
+// 路由 meta 鉴权组合判定（roles + deptCodes）：守卫按 reason 出文案，组件侧用 canAccessRouteMeta 预判可达性
+export const checkRouteAccess = (meta = {}, currentRole = getRole(), currentDeptCode = getDeptCode()) => {
+  if (meta.roles && !canAccessRoles(currentRole, meta.roles)) return { ok: false, reason: 'role' }
+  if (Array.isArray(meta.deptCodes) && meta.deptCodes.length > 0 && !hasDeptAccess(currentDeptCode, meta.deptCodes, currentRole)) return { ok: false, reason: 'dept' }
+  return { ok: true, reason: null }
 }
+
+export const canAccessRouteMeta = (meta = {}, currentRole = getRole(), currentDeptCode = getDeptCode()) =>
+  checkRouteAccess(meta, currentRole, currentDeptCode).ok

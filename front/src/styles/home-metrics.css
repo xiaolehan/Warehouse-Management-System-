@@ -1,0 +1,5 @@
+/* 首页 metric 卡片共享样式（AdminHome/EmployeeHome 逐字重复段收口；定义不同的段仍留各组件内） */
+.metric-card strong.metric-value--alert {
+  color: #dc2626;
+  font-weight: 800;
+}
