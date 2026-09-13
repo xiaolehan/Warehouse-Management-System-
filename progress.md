@@ -5,6 +5,21 @@
 
 ---
 
+## 会话 31 — 2026-09-13
+
+### 阶段 22 超管审计强化（ADR-0009，D76–D80，grilling 三轮定案 → B1–B7/F1–F4 全部落地，225 单测绿 + curl E2E 全过）
+
+- **定案（grill-with-docs 三轮 + 追加）：** ① 操作日志可读性 = 服务端写入时生成「人话描述」落库（@AuditLog 新增 `detail` SpEL 属性）+ before/after 快照实填（请求参数 JSON / 返回结果 JSON，正则脱敏 password|pwd|secret|token → `******`），前端加描述列 + 动作/目标类型筛选，原始字段收进详情抽屉，历史记录兜底 模块·动作；② 超管 = 治理/审计角色真只读——业务写接口后端统一 403（保留：用户/公告/系统参数/IP 安全策略/价格偏离/作废/部门审批），前端白名单 + 菜单开放全部业务模块（财务模块仍排除），按钮禁用；③ 操作日志 + 登录日志手动删除三形态（单条/批量/按条件，物理删除，删除动作本身写操作日志留痕，仅超管）；④ 操作日志 xlsx 导出跟随筛选（仅超管，登录日志不导出，2 万行上限）；⑤ 日志永久保留、不做自动清理；⑥ 异常操作提醒整体挂起（阈值草案 500/±30% 作废，恢复重议）。
+- **B3–B5（基建/表达式/删除导出）：** AuditLogAspect 重写（@AfterReturning + SpEL 表达式缓存 + 参数名绑定 + `#result` + filterArgs 跳过 servlet/文件 + 500/4000 截断）；`sys_operation_log.detail` 加列（db.sql + 本地库）；22 个 detail 表达式覆盖 12 控制器；AuditService 删除六法 + 留痕（编程式落库，不走切面——删除条数切面拿不到）+ 导出（POI，跟随 ADR-0008 先例）。
+- **B6（真只读，本阶段最大工程量）：** `AuthzService.requireNotSuperAdminForBusinessWrite()` 首行插入 17 个 Service 共 66 处写方法。**教训：两行锚点 `replace_all` 会命中共享同一守卫+取数对的读方法**——PickListService.getById / EmployeeService.getById 被误插 deny 守卫，逐文件计数核对（期望值 vs grep 数）发现并回退；后续锚点一律带第三行上下文。
+- **B7：** AuthzServiceTest 4 + AuditServiceTest 9（删除留痕/空筛选闸/导出上限/表头行值）+ AuditLogAspectTest 7（SpEL 生成/失败兜底/截断/脱敏/参数过滤/after_data）+ GoodsServiceTest +1（守卫首语句序）——225/225 绿（191→+34）。**踩坑：** ① 切面单测无 SaTokenContext，`StpUtil.getLoginIdDefaultNull()` 抛异常被切面 catch-all 吞掉表现为 insert 零交互——`mockStatic` 打桩未登录；② 空 detail 用例不打桩 getSignature（strict-stubs 报 UnnecessaryStubbingException）→ lenient；③ `./mvnw compile -q | tail; echo $?` 管道陷阱拿到 tail 的退出码掩盖真实编译错误（UserInfoVO≠SysUser 赋值），判活必须看 BUILD SUCCESS 或 PIPESTATUS。
+- **F1–F3：** OperationLogView 重写（描述列/四筛选项/工具栏三删除+导出/抽屉快照 pre 块/JSON 错误体识别）；LoginLogView 删除三形态；router 白名单放 15 业务路径 + `/work-requirement/` 前缀；layout 超管菜单加「基础资料/业务单据/人事档案（只读）」三分组 + defaultOpeneds 联动。**F3 关键发现：** `hasRole` 存在 admin→superadmin 蕴含（路由需要），但 v-permission 指令同用该判定导致超管可点全部业务按钮，且 `{deptCodes}` 裸绑定（生产打卡）roleAllowed 短路为 true——指令改为：超管仅当绑定显式含 'superadmin' 才放行（保留写权页面无 v-permission，不受影响）；路由级语义不动。
+- **E2E（curl，全部通过）：** 超管写 403（建商品/销售确认出库/生产打卡——含旧盲区路径）+ 15 模块读全绿（page/getById，含 2 处误伤修复回归）+ 保留写权（改价格偏离阈值）+ detail 落库「重置用户密码：用户 #17」+ 脱敏 `[17,{"newPassword":"******"}]` + 删除三形态 + 留痕（模块=审计日志）+ 空筛选 400 + 非超管删日志 403 + 导出 xlsx（PK 头/UTF-8 文件名/2 万行上限）。测试数据：一次性用户 e2e_audit_temp 已删，其日志在删除 E2E 中自消，留痕条目保留（本就是审计轨迹）。
+- **遗留手测：** 浏览器复核超管菜单三「只读」分组渲染 + 业务页按钮禁用态（灰化+「无权限操作」tooltip）+ 操作日志页新列/筛选/删除/导出交互。
+- **下一步候选：** ① 阶段 4（盘点/余料/成品追溯，需 grilling）；② 阶段 16 已知问题（补料单终态后无法再补，待单独立项）；③ 异常操作提醒（本阶段挂起项，恢复时重议阈值）。
+
+---
+
 ## 会话 30 — 2026-09-11
 
 ### 财务端「年度经营统计」（ADR-0008，后端 1 模块 + 前端 1 页面，全量 204 测试绿 + curl E2E 正负测过）

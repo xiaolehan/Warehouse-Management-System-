@@ -66,6 +66,8 @@ mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 ## 验证习惯（改动后必做）
 
 - **后端**：`./mvnw compile`（编译）→ 重启 → curl E2E（登录→建单→列表→权限负测→清理）。库存类操作测试数据用完即清理、恢复原库存。改代码后若遇运行时 `Unresolved compilation problem`（javac 增量跳过 + IDE JDT 编译生成带错误标记的 class 残留 target），用 `./mvnw clean compile` 强制全编译。重启后确认 8080 为新 pid（`fuser -k 8080/tcp` 有时未杀净残留 java，需 `kill -9 <pid>` 强制清理再启动）。
+- **编译判成败别看 `$?` 接管道**：`./mvnw compile -q | tail; echo $?` 拿到的是 `tail` 的退出码，编译真实失败也显示 0——必须看输出里的 `BUILD SUCCESS`，或先跑命令再单独 `echo $?`（同「判活注意」的管道陷阱）。
+- **批量插入守卫慎用两行锚点 `replace_all`**：「守卫调用 + 取数」两行对在**读方法**里也会原样出现（如 `requireXxxAccess(); XxxEntity e = requireEntity(id);` 同时存在于 getById 与 confirm/delete），replace_all 会把读路径误插 deny 守卫。规则：插入后逐文件 `grep -c` 核对实际数 vs 预期数；锚点带第三行上下文区分读写；会话 31 曾误伤 PickListService/EmployeeService 的 getById，靠计数核对发现。
 - **前端**：`npm run build`（捕获编译错误）→ Vite 代理 E2E（或 dev HMR 手测）。
 - **跨 commit git 操作后**：重启 dev 服务器 + 浏览器硬刷新（Ctrl+Shift+R）+ 重新登录（后端重启会使旧 session token 失效）。
 - **权限改写后 E2E 必须覆盖目标角色实际进页面场景**：不仅测该角色直调操作 API（如 confirm-receive），必须测其加载列表（page）、查看详情（getById）等读接口。读权限（`requireXxxReadAccess`）与写权限（`requireXxxModuleAccess`）常分开，改一处易漏另一处——曾因 `page()` 仍用仅采购权限，导致仓储进"进货入库确认"页 403。
