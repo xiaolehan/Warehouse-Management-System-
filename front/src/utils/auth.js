@@ -5,6 +5,7 @@ const DEPT_CODE_KEY = "deptCode"
 const DEPT_NAME_KEY = "deptName"
 const USERNAME_KEY = "username"
 const REAL_NAME_KEY = "realName"
+const USER_ID_KEY = "userId"
 
 export const normalizeRole = (role) => String(role || "").trim().toLowerCase()
 
@@ -35,6 +36,13 @@ export const getDeptCode = () => normalizeDeptCode(localStorage.getItem(DEPT_COD
 
 export const getDeptName = () => localStorage.getItem(DEPT_NAME_KEY) || ""
 
+// 当前登录用户 id（D85 盘点行归属判断等场景）
+export const getUserId = () => {
+  const raw = localStorage.getItem(USER_ID_KEY)
+  const n = Number(raw)
+  return raw && Number.isFinite(n) ? n : null
+}
+
 export const getAuthContext = () => ({
   role: getRole(),
   deptId: getDeptId(),
@@ -54,6 +62,7 @@ export const setRole = (role) => {
 
 export const setUserInfo = (userInfo = {}) => {
   setRole(userInfo.role)
+  setOptionalStorage(USER_ID_KEY, userInfo.id)
   setOptionalStorage(USERNAME_KEY, userInfo.username)
   setOptionalStorage(REAL_NAME_KEY, userInfo.realName)
   setOptionalStorage(DEPT_ID_KEY, userInfo.deptId)
@@ -69,6 +78,7 @@ export const clearAuth = () => {
   localStorage.removeItem(DEPT_NAME_KEY)
   localStorage.removeItem(USERNAME_KEY)
   localStorage.removeItem(REAL_NAME_KEY)
+  localStorage.removeItem(USER_ID_KEY)
 }
 
 export const hasRole = (currentRole, allowRoles = []) => {

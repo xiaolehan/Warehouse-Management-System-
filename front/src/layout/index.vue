@@ -13,6 +13,7 @@
         :collapse-transition="false"
         :default-active="route.path"
         :default-openeds="defaultOpeneds"
+        unique-opened
       >
         <el-menu-item index="/home"><el-icon><HomeFilled /></el-icon><span>首页</span></el-menu-item>
 
@@ -70,6 +71,7 @@
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料入库确认</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货出库确认</span></el-menu-item>
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
+          <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>作废审批</span></el-menu-item>
           <el-sub-menu index="/notification">
@@ -128,6 +130,11 @@
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
+        <template v-else-if="isWarehouseEmployee">
+          <!-- D84：仓储员工录入实盘数（建单/审核仍 admin） -->
+          <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
+          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+        </template>
 
         <template v-else-if="showSuperAdminCenter">
           <el-sub-menu index="/system/super-admin-center">
@@ -166,6 +173,7 @@
             <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
             <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
             <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+            <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
             <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           </el-sub-menu>
           <el-sub-menu index="/super-read-hr">
@@ -271,7 +279,9 @@ const isProductionAdmin = computed(() => isDeptAdminRole.value && currentDeptCod
 const isSalesEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'sales')
 const isPurchaseEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'purchase')
 const isProductionEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'production')
-const isBizEmployee = computed(() => isSalesEmployee.value || isPurchaseEmployee.value || isProductionEmployee.value)
+// 仓储员工（D84）：盘点录入实盘数
+const isWarehouseEmployee = computed(() => isEmployee.value && currentDeptCode.value === 'warehouse')
+const isBizEmployee = computed(() => isSalesEmployee.value || isPurchaseEmployee.value || isProductionEmployee.value || isWarehouseEmployee.value)
 
 const toggleSidebar = () => {
   if (!showSidebar.value) {
@@ -307,6 +317,9 @@ const handleLogout = async () => {
 }
 
 .app-aside {
+  /* 品牌块固定 + 菜单区独立滚动：超管全展开超长时可上下滑动（会话 32） */
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background-color: #304156;
   color: white;
@@ -317,6 +330,7 @@ const handleLogout = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   min-height: 56px;
   padding: 12px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
@@ -341,7 +355,25 @@ const handleLogout = async () => {
 }
 
 .app-menu {
-  min-height: calc(100vh - 56px);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.app-menu::-webkit-scrollbar {
+  width: 6px;
+}
+
+.app-menu::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+}
+
+.app-menu::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .content-container {

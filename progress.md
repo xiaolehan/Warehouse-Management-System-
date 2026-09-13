@@ -5,6 +5,31 @@
 
 ---
 
+## 会话 32 — 2026-09-13
+
+### 阶段 22 手测闭环 + 侧边栏菜单滚动/手风琴（grilling 一轮定案，纯前端 3 处改动，build + 手测全过）
+
+- **手测闭环（阶段 22 遗留 3 项全过）：** 超管菜单三「（只读）」分组渲染 + defaultOpeneds 联动 ✅；业务页按钮对超管灰化禁用 + 「无权限操作」tooltip ✅；操作日志页描述列 / 动作+目标类型筛选 / 删除三形态确认弹窗 / xlsx 导出 ✅。阶段 22 至此完全闭环。
+- **新需求（用户手测中发现）：** 超管把各功能菜单全展开后菜单超出视口看不到底部项，还需手动逐个收起分组。根因：`.app-aside` `overflow:hidden` + `.app-menu` `min-height: calc(100vh - 56px)`——菜单超高部分被直接裁掉且无滚动出口。
+- **定案（grill-with-docs 一轮三题，均按推荐）：** ① 品牌块固定 + 菜单区独立滚动（flex 列布局，菜单区 `flex:1 + overflow-y:auto`），6px 半透明细滚动条（`::-webkit-scrollbar` + Firefox `scrollbar-width:thin`），不引 el-scrollbar；② 加 `unique-opened` 手风琴——展开一组自动收起其他组，顺带解决"逐个收起"痛点，defaultOpeneds 路由联动不受影响；③ 全角色统一生效（共享布局，菜单短的角色不触发滚动条、行为无变化）。
+- **改动（layout/index.vue 3 处）：** el-menu 加 `unique-opened`；`.app-aside` 改 `display:flex; flex-direction:column`（品牌块 `flex-shrink:0`）；`.app-menu` 弃 min-height calc 改 `flex:1; min-height:0; overflow-y:auto; overflow-x:hidden` + 滚动条美化。
+- **验证：** `npm run build` ✅（8.88s）；用户手测 5 点全过：超长滚动到底+品牌固定 / 手风琴互斥 / 路由联动自动展开回归 / 折叠态浮层菜单回归 / 其他角色无回归。
+- **域名纪律：** 纯 UI 修复，无领域词汇，不记 CONTEXT.md/ADR（可逆、无 trade-off）。
+- **下一步候选（仍待拍板）：** ① 阶段 4（盘点/余料/成品追溯，需 grilling 定范围）；② 阶段 16 已知问题（补料单部分到货终态后受 D59 约束无法再补，待单独立项）；③ 异常操作提醒（阶段 22 挂起项，恢复时重议阈值）。
+
+### 阶段 23 库存盘点模块（ADR-0010，D81–D84，grilling 三轮定案 → B1–B7/F1–F4 全部落地，247 单测绿 + curl E2E 全过，待浏览器手测）
+
+- **定案（grill-with-docs 三轮全「都按推荐」）：** ① 盘点单自选商品范围（物料+成品，可全选=全盘），主从表四态 盘点中1/待审核2/已完成3/已取消4，明细快照名称/规格/材质/单位，部分提交（≥1行）未盘行不调整，「上次盘点时间」查询派生辅助人工循环盘（自动排程留二期）；② **业务不冻结 + 差异=实盘−生效时点实时账面**（非建单快照——快照基准下盘点期间出入库会被重复调整，grilling R2 自己挖出的关键设计修正），明细存快照/实盘/生效时账面三值；③ 已完成终态不可作废、无删除仅取消、无审批层无站内消息无金额列；④ 盲盘导出 xlsx（默认无账面数可切明盘）+ 导出表即回填模板 + 页面逐行录入双通道；权限=仓储 admin 建单/提交/审核/取消、仓储 admin+员工录入、超管只读。
+- **后端（TDD 22 例 RED→GREEN）：** db.sql 19.x 两表（biz_stocktake + biz_stocktake_detail，明细三值+快照四列+goods_code——导出/导入按编码匹配，建表后才意识到的必需列，ALTER 补入）；Service 全链路 + 私有 increaseStock/decreaseStock（盘亏超额硬校验）+ 开单排他（一商品仅在一未完结单）+ selectLastStocktakeTimes 派生（仅计 actual_qty IS NOT NULL 行）；Controller 无 DELETE 端点，entry/import 不挂 @RequireAdmin（员工可录入，D84）。**踩坑：** strict-stubs 老坑再现（create 快乐路径打桩了永远走不到的 selectList → UnnecessaryStubbing，删桩即绿）；PageResult 字段是 records 不是 list。
+- **前端：** StocktakeView.vue（列表+筛选 / 建单对话框：类型筛选+最久未盘排最前+「从未盘点」橙标+未完结单商品禁选 / 详情：行内实盘录入、差异行橙底标色、盲盘导出+导入回填、待审核预估汇总注明「以审核生效时实时库存为准」、已完成三值+盈亏平未盘汇总）；路由 + 白名单 + 仓储 admin 菜单 + 超管只读分组 + **补仓储员工侧边栏缺口**（isBizEmployee 此前只覆盖销售/采购/生产，D84 要求员工可录入却无入口 → 新增 isWarehouseEmployee 菜单块：库存盘点+用户部门管理）。
+- **E2E（curl 全过）：** 建单(快照 3/0/0)→部分录入→盲盘导出表头无「账面数」→导入回填（合法 1 行写入/空白行跳过/未知编码行 400）→负数实盘 400→提交→驳回(空原因 400)→重提→审核生效：库存 3→5、三值 book=3/actual=5/finalBook=3/diff=2、未盘行全 NULL 不动库存→终态守卫（取消/再审全拒）→开单排他 400→取消流程（状态 4+原因+商品释放）→权限负测全 403 body（sales_admin 建单/读列表、superadmin 建单/审核、warehouse_employee 建单 403 但读列表 200）→lastStocktakeTime 派生（已盘两商品有时间、未盘商品无）。测试数据已清理、goods 29 库存复原 3。
+- **手测闭环 + D84 修订（用户反馈驱动）：** 用户手测通过，但指出「员工只能填实盘数、连提交审核都不行，一切收口绕回 admin」不合理。**修订：提交审核放开为仓储成员级（admin+员工）**，建单/审核生效/驳回/取消仍收口 admin——「录入+提交 ≠ 审核」双人制衡反而更纯粹。改动 3 处（Service.submit 守卫→requireDeptMemberOrSuperAdmin、Controller.submit 摘 @RequireAdmin、前端提交按钮 v-permission 去 roles 限制）+ 测试钉成员级守卫（RED→GREEN，247/247 全绿）。E2E：员工录入→提交 200 ✅；员工审核/驳回/取消 403 ✅；sales_employee 跨部门提交 403 ✅；测试单已清理（用户手测留的单 3/4 未动）。
+- **D85 责任到行 + 全程操作人留痕（用户手测后追加，AskUserQuestion 三题全按推荐）：** ① 明细行建单**逐行指定负责人**（每行必选，候选=仓储启用成员 admin+员工，新端点 GET assignee-options）；② **员工限录/限导本人负责行**（页面录入与 xlsx 导入同样硬校验，违规行报错带负责人名），admin 兜底可录任意行；③ 盘点中 admin 可**改派**（PUT /{id}/assign，@RequireAdmin+@AuditLog）；④ 行级盖**实际录入人+时间**章（导入同章），主单盖**提交人/取消人**章——负责人（计划）与实际录入人（实际）分离构成完整追溯。改动：db.sql 19.1（主单+4 列/明细+5 列，已执行）、实体/DTO（Create 改 items[goodsId+assigneeId]）/VO/Service（warehouseMemberMap/requireRowOwnership/stampCounter）/Controller（+2 端点）、前端（auth.js 补存 userId；建单对话框负责人分配区+「全部派给我」；详情负责人列 admin 下拉改派、录入人列带时间 tooltip、员工非本人行输入框禁用）。**TDD 30/30 → 全套 255/255 绿**（+8：改派×3/候选/建单负责人校验/员工本人行/他人行/导入他人行）。E2E 全过：员工录本人行 200/他人行 400/导入含他人行 400→改派后可录→员工提交（提交人=仓储员工）→admin 审核（库存 3→5、行录入人=仓储员工）；取消人盖章 ✅；sales_admin/superadmin/员工改派全 403 ✅。测试单 6/7/8 已清理，库存复原；用户手测单 3/4 未动（单 4 是 D85 前建的、行负责人为 NULL——员工不可录，admin 可录或改派后员工可录，ADR 已记此语义）。
+- **遗留手测：** 浏览器复核 员工账号「提交审核」按钮可用（原禁用态已解除）；建单对话框负责人分配（默认自己/全部派给我/必选校验）；详情页负责人列 admin 改派下拉、录入人列、员工非本人行禁用态。
+- **下一步候选（仍待拍板）：** ① 阶段 4 余料管理/成品追溯（盘点已先行落地，剩两项需 grilling 定范围）；② 阶段 16 已知问题（补料单部分到货终态后受 D59 约束无法再补，待单独立项）；③ 异常操作提醒（阶段 22 挂起项，恢复时重议阈值）。
+
+---
+
 ## 会话 31 — 2026-09-13
 
 ### 阶段 22 超管审计强化（ADR-0009，D76–D80，grilling 三轮定案 → B1–B7/F1–F4 全部落地，225 单测绿 + curl E2E 全过）

@@ -34,6 +34,7 @@ const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/business/qc',
   '/business/production',
   '/business/pick-list',
+  '/business/stocktake',
   '/business/stock-warning',
   // 人事档案 + 工作要求（只读）
   '/system/dept',
@@ -154,6 +155,12 @@ const router = createRouter({
           name: "BusinessPickList",
           component: () => import("../views/business/PickListView.vue"),
           meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'production'] }
+        },
+        {
+          path: "business/stocktake",
+          name: "BusinessStocktake",
+          component: () => import("../views/business/StocktakeView.vue"),
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse'] }
         },
         {
           path: "business/purchase-request",

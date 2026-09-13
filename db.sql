@@ -1604,3 +1604,75 @@ ALTER TABLE `sys_operation_log`
     ADD COLUMN `detail` VARCHAR(500) DEFAULT NULL COMMENT '操作描述（人话摘要，写入时由 @AuditLog detail 表达式生成）' AFTER `target_id`,
     MODIFY COLUMN `before_data` TEXT DEFAULT NULL COMMENT '请求参数快照(JSON)',
     MODIFY COLUMN `after_data` TEXT DEFAULT NULL COMMENT '返回结果快照(JSON)';
+
+-- =====================================================================
+-- 19. 阶段 23（D81-D84/ADR-0010）：库存盘点模块
+-- 盘点单主从表；明细三值口径：book_qty=建单账面快照 / actual_qty=实盘 / final_book_qty=生效时账面，
+-- 差异=实盘-生效时账面（非快照，防盘点期间并发业务重复调整）；无删除入口，只有取消（status=4）。
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS `biz_stocktake` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `stocktake_no` VARCHAR(30) NOT NULL COMMENT '盘点单号(ST开头)',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-盘点中, 2-待审核, 3-已完成, 4-已取消',
+    `remark` VARCHAR(500) DEFAULT NULL COMMENT '备注',
+    `operator_id` BIGINT DEFAULT NULL COMMENT '建单人ID(仓储管理员)',
+    `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '建单人姓名(冗余)',
+    `operation_time` DATETIME DEFAULT NULL COMMENT '建单时间',
+    `submit_time` DATETIME DEFAULT NULL COMMENT '提交审核时间',
+    `submitter_id` BIGINT DEFAULT NULL COMMENT '提交人ID(D85: admin+员工均可提交)',
+    `submitter_name` VARCHAR(50) DEFAULT NULL COMMENT '提交人姓名(冗余)',
+    `reviewer_id` BIGINT DEFAULT NULL COMMENT '审核人ID(仓储管理员)',
+    `reviewer_name` VARCHAR(50) DEFAULT NULL COMMENT '审核人姓名(冗余)',
+    `review_time` DATETIME DEFAULT NULL COMMENT '审核时间',
+    `reject_reason` VARCHAR(500) DEFAULT NULL COMMENT '驳回原因',
+    `cancel_reason` VARCHAR(500) DEFAULT NULL COMMENT '取消原因',
+    `canceler_id` BIGINT DEFAULT NULL COMMENT '取消人ID(D85)',
+    `canceler_name` VARCHAR(50) DEFAULT NULL COMMENT '取消人姓名(冗余)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_stocktake_no` (`stocktake_no`),
+    KEY `idx_stocktake_status` (`status`),
+    KEY `idx_stocktake_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存盘点单';
+
+CREATE TABLE IF NOT EXISTS `biz_stocktake_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `stocktake_id` BIGINT NOT NULL COMMENT '盘点单主表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_code` VARCHAR(20) DEFAULT NULL COMMENT '商品编码(建单快照, 导出/导入匹配键)',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(建单快照)',
+    `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格(建单快照)',
+    `material` VARCHAR(100) DEFAULT NULL COMMENT '材质(建单快照)',
+    `unit` VARCHAR(20) DEFAULT NULL COMMENT '单位(建单快照)',
+    `goods_type` VARCHAR(20) DEFAULT NULL COMMENT '商品类型快照: material-物料, product-成品',
+    `book_qty` INT NOT NULL COMMENT '建单账面快照(展示参考，非差异基准)',
+    `assignee_id` BIGINT DEFAULT NULL COMMENT '负责人ID(D85: 建单逐行指定，员工限录本人行)',
+    `assignee_name` VARCHAR(50) DEFAULT NULL COMMENT '负责人姓名(冗余)',
+    `actual_qty` INT DEFAULT NULL COMMENT '实盘数(NULL=未盘)',
+    `counter_id` BIGINT DEFAULT NULL COMMENT '实际录入人ID(D85: 页面录入/导入回填均盖章)',
+    `counter_name` VARCHAR(50) DEFAULT NULL COMMENT '实际录入人姓名(冗余)',
+    `count_time` DATETIME DEFAULT NULL COMMENT '录入时间',
+    `final_book_qty` INT DEFAULT NULL COMMENT '生效时账面(审核时写)',
+    `diff_qty` INT DEFAULT NULL COMMENT '差异=实盘-生效时账面(审核时写)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_sd_stocktake_id` (`stocktake_id`),
+    KEY `idx_sd_goods_id` (`goods_id`),
+    KEY `idx_sd_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存盘点单明细表';
+
+-- 19.1 D85 增量（已建库执行）：操作人留痕——主单提交人/取消人，明细负责人+实际录入人/时间
+-- ALTER TABLE `biz_stocktake`
+--     ADD COLUMN `submitter_id` BIGINT DEFAULT NULL COMMENT '提交人ID' AFTER `submit_time`,
+--     ADD COLUMN `submitter_name` VARCHAR(50) DEFAULT NULL COMMENT '提交人姓名(冗余)' AFTER `submitter_id`,
+--     ADD COLUMN `canceler_id` BIGINT DEFAULT NULL COMMENT '取消人ID' AFTER `cancel_reason`,
+--     ADD COLUMN `canceler_name` VARCHAR(50) DEFAULT NULL COMMENT '取消人姓名(冗余)' AFTER `canceler_id`;
+-- ALTER TABLE `biz_stocktake_detail`
+--     ADD COLUMN `assignee_id` BIGINT DEFAULT NULL COMMENT '负责人ID' AFTER `book_qty`,
+--     ADD COLUMN `assignee_name` VARCHAR(50) DEFAULT NULL COMMENT '负责人姓名(冗余)' AFTER `assignee_id`,
+--     ADD COLUMN `counter_id` BIGINT DEFAULT NULL COMMENT '实际录入人ID' AFTER `actual_qty`,
+--     ADD COLUMN `counter_name` VARCHAR(50) DEFAULT NULL COMMENT '实际录入人姓名(冗余)' AFTER `counter_id`,
+--     ADD COLUMN `count_time` DATETIME DEFAULT NULL COMMENT '录入时间' AFTER `counter_name`;
