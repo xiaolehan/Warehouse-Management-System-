@@ -26,6 +26,8 @@ public class SysOperationLog {
 
     private String targetId;
 
+    private String detail;
+
     private String beforeData;
 
     private String afterData;

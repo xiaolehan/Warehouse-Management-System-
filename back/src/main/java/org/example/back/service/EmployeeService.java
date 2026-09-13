@@ -109,6 +109,7 @@ public class EmployeeService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(EmployeeSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireEmployeeModuleAccess();
         SysDept dept = requireEditableDept(dto.getDeptId());
         validateUsernameUnique(dto.getUsername(), null);
@@ -121,6 +122,7 @@ public class EmployeeService {
 
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, EmployeeSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireEmployeeModuleAccess();
         assertEditableEmployeeId(id);
         SysDept dept = requireEditableDept(dto.getDeptId());
@@ -153,6 +155,7 @@ public class EmployeeService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireEmployeeModuleAccess();
         assertEditableEmployeeId(id);
         SysEmployee employee = requireEmployee(id);

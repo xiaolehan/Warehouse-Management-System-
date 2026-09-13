@@ -151,6 +151,7 @@ public class PurchaseRequestService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createDraft(ProductionDraftCreateDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionDraftAccess();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
@@ -289,6 +290,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(PurchaseRequestSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseAccess();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
@@ -323,6 +325,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void process(Long id, PurchaseRequestProcessDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PENDING) {
@@ -364,6 +367,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void updateArrivalPlan(Long id, PurchaseRequestProcessDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PURCHASING) {
@@ -383,6 +387,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void arrive(Long id, PurchaseRequestReceiveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PURCHASING) {
@@ -426,6 +431,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void confirmReceive(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseConfirmAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
@@ -503,6 +509,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void arriveCancel(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
@@ -522,6 +529,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void arriveReject(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseConfirmAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_AWAITING_CONFIRM) {
@@ -543,6 +551,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void reject(Long id, PurchaseRequestRejectDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PENDING) {
@@ -565,6 +574,7 @@ public class PurchaseRequestService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseAccess();
         BizPurchaseRequest entity = requireEntity(id);
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();

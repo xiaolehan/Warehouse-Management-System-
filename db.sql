@@ -199,8 +199,9 @@ CREATE TABLE `sys_operation_log` (
     `action` VARCHAR(50) DEFAULT NULL COMMENT '操作动作',
     `target_type` VARCHAR(50) DEFAULT NULL COMMENT '目标类型',
     `target_id` VARCHAR(64) DEFAULT NULL COMMENT '目标ID',
-    `before_data` TEXT DEFAULT NULL COMMENT '变更前数据(JSON)',
-    `after_data` TEXT DEFAULT NULL COMMENT '变更后数据(JSON)',
+    `detail` VARCHAR(500) DEFAULT NULL COMMENT '操作描述（人话摘要，写入时由 @AuditLog detail 表达式生成）',
+    `before_data` TEXT DEFAULT NULL COMMENT '请求参数快照(JSON)',
+    `after_data` TEXT DEFAULT NULL COMMENT '返回结果快照(JSON)',
     `request_uri` VARCHAR(200) DEFAULT NULL COMMENT '请求路径',
     `ip` VARCHAR(64) DEFAULT NULL COMMENT '来源IP',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录时间',
@@ -1593,3 +1594,13 @@ ALTER TABLE `biz_production_order`
 -- =====================================================================
 ALTER TABLE `sys_message`
     ADD COLUMN `target_route` VARCHAR(100) NULL COMMENT '跳转目标路由（前端优先使用，空则按 bizType 映射兜底）';
+
+-- =====================================================================
+-- 18. 阶段 22（D76/ADR-0009）：操作日志加「操作描述」列；
+-- before_data/after_data 语义定为「请求参数快照 / 返回结果快照」（原注释"变更前/后数据"名不副实——
+-- 切面从未赋值，本阶段开始真正写入）。
+-- =====================================================================
+ALTER TABLE `sys_operation_log`
+    ADD COLUMN `detail` VARCHAR(500) DEFAULT NULL COMMENT '操作描述（人话摘要，写入时由 @AuditLog detail 表达式生成）' AFTER `target_id`,
+    MODIFY COLUMN `before_data` TEXT DEFAULT NULL COMMENT '请求参数快照(JSON)',
+    MODIFY COLUMN `after_data` TEXT DEFAULT NULL COMMENT '返回结果快照(JSON)';

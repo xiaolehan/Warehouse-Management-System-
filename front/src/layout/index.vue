@@ -145,6 +145,34 @@
           </el-sub-menu>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户管理</span></el-menu-item>
           <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>
+          <el-menu-item index="/system/work-requirement"><el-icon><Tickets /></el-icon><span>工作要求</span></el-menu-item>
+
+          <!-- D77/ADR-0009：超管只读查看全部业务模块（按钮由 v-permission 禁用；财务模块除外） -->
+          <el-sub-menu index="/super-read-base">
+            <template #title><el-icon><GoodsFilled /></el-icon><span class="menu-title-text">基础资料（只读）</span></template>
+            <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
+            <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+            <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
+            <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          </el-sub-menu>
+          <el-sub-menu index="/super-read-biz">
+            <template #title><el-icon><ShoppingCart /></el-icon><span class="menu-title-text">业务单据（只读）</span></template>
+            <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料进货</span></el-menu-item>
+            <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
+            <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
+            <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
+            <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
+            <el-menu-item index="/business/production-order"><el-icon><Notebook /></el-icon><span>生产任务单</span></el-menu-item>
+            <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
+            <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
+            <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+            <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
+          </el-sub-menu>
+          <el-sub-menu index="/super-read-hr">
+            <template #title><el-icon><OfficeBuilding /></el-icon><span class="menu-title-text">人事档案（只读）</span></template>
+            <el-menu-item index="/system/dept"><el-icon><OfficeBuilding /></el-icon><span>全部门管理</span></el-menu-item>
+            <el-menu-item index="/system/employee"><el-icon><User /></el-icon><span>全员工管理</span></el-menu-item>
+          </el-sub-menu>
         </template>
       </el-menu>
     </el-aside>
@@ -213,13 +241,25 @@ const defaultOpeneds = computed(() => {
     return []
   }
 
-  return route.path.startsWith('/system/super-admin')
+  const openeds = []
+  if (route.path.startsWith('/system/super-admin')
     || route.path === '/system/security-ip-policy'
     || route.path === '/system/login-log'
     || route.path === '/system/operation-log'
-    || route.path === '/system/dept-approval'
-    ? ['/system/super-admin-center']
-    : []
+    || route.path === '/system/dept-approval') {
+    openeds.push('/system/super-admin-center')
+  }
+  // D77：超管只读业务分组的展开联动
+  if (route.path.startsWith('/base/')) {
+    openeds.push('/super-read-base')
+  }
+  if (route.path.startsWith('/business/')) {
+    openeds.push('/super-read-biz')
+  }
+  if (route.path === '/system/dept' || route.path === '/system/employee') {
+    openeds.push('/super-read-hr')
+  }
+  return openeds
 })
 const isFinanceAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'finance')
 const isSalesAdmin = computed(() => isDeptAdminRole.value && currentDeptCode.value === 'sales')

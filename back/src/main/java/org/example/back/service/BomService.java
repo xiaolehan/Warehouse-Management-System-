@@ -127,6 +127,7 @@ public class BomService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(BomSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
         String productName = dto.getGoodsName().trim();
         BaseGoods product = resolveOrCreateProduct(productName, dto.getUnit());
@@ -147,6 +148,7 @@ public class BomService {
 
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, BomSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
         BizBom bom = requireBom(id);
         String newName = dto.getGoodsName().trim();
@@ -189,6 +191,7 @@ public class BomService {
      */
     @Transactional(rollbackFor = Exception.class)
     public String delete(Long id, boolean force) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
         BizBom bom = requireBom(id);
         BaseGoods product = baseGoodsMapper.selectById(bom.getGoodsId());
@@ -388,6 +391,7 @@ public class BomService {
 
     /** 上传组件图片并持久化，返回 storedPath */
     public String uploadComponentImage(MultipartFile file) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
         return storageService.storeImagePermanent(file);
     }
@@ -431,6 +435,7 @@ public class BomService {
     /** 导入并落库：该成品已有 BOM 则整体覆盖明细，否则新建（BOM=成品，按成品名称匹配） */
     @Transactional(rollbackFor = Exception.class)
     public int importBom(String goodsName, String bomCode, List<BomDetailDTO> details) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
         if (details == null || details.isEmpty() || !StringUtils.hasText(goodsName)) {
             throw BusinessException.validateFail("导入数据或成品名称不能为空");

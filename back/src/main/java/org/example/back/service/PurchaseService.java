@@ -189,6 +189,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(PurchaseSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseModuleAccess();
         validateQuantity(dto.getQuantity());
 
@@ -260,6 +261,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void arrive(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseModuleAccess();
         BizPurchase entity = requirePurchase(id);
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_PENDING) {
@@ -282,6 +284,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void confirmReceive(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseAccess();
         BizPurchase entity = requirePurchase(id);
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_AWAITING) {
@@ -307,6 +310,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAdminOrSuperAdmin();
         BizPurchase purchase = requirePurchase(id);
         ensureNormalStatus(purchase.getBizStatus(), "进货单");
@@ -321,6 +325,7 @@ public class PurchaseService {
 
     @Transactional(rollbackFor = Exception.class)
     public void voidDocument(Long id, DocumentVoidDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseVoidExecutionAccess();
         BizPurchase purchase = requirePurchase(id);
         ensureNormalStatus(purchase.getBizStatus(), "进货单");

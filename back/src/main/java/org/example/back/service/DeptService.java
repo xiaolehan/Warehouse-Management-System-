@@ -103,6 +103,7 @@ public class DeptService {
 
     public void create(DeptSaveDTO dto) {
         cleanupExpiredRejectedDepts();
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_HR, "仅人事部门管理员可提交部门审批请求");
         LoginResponse.UserInfoVO requester = authzService.currentUser();
         SysDept dept = new SysDept();
@@ -117,6 +118,7 @@ public class DeptService {
 
     public void update(Long id, DeptSaveDTO dto) {
         cleanupExpiredRejectedDepts();
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireDeptModuleAccess();
         SysDept dept = requireDept(id);
         assertDeptApproved(dept);

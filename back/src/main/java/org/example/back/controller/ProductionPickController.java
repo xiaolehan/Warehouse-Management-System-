@@ -53,7 +53,8 @@ public class ProductionPickController {
     /** D73：手动终止生产任务单（仅生产管理员；同事务生成终止退料单） */
     @PostMapping("/{orderId}/terminate")
     @PreventDuplicateSubmit(message = "请勿重复提交终止")
-    @AuditLog(module = "生产任务单", action = "终止", targetType = "生产任务单")
+    @AuditLog(module = "生产任务单", action = "终止", targetType = "生产任务单",
+            detail = "'终止生产任务单 #' + #orderId + '，退料 ' + #dto.items?.size() + ' 行，原因：' + #dto.reason")
     public Result<Void> terminate(@PathVariable Long orderId, @Valid @RequestBody ProductionTerminateDTO dto) {
         productionPickService.terminate(orderId, dto);
         return Result.success();

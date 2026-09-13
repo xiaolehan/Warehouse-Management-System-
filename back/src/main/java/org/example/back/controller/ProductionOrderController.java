@@ -66,7 +66,8 @@ public class ProductionOrderController {
     /** 人工工序打卡（生产部门成员） */
     @PostMapping("/{id}/steps/{stepNo}/complete")
     @PreventDuplicateSubmit(message = "请勿重复提交工序打卡")
-    @AuditLog(module = "生产工序", action = "打卡", targetType = "生产任务单")
+    @AuditLog(module = "生产工序", action = "打卡", targetType = "生产任务单",
+            detail = "'工序打卡：生产任务单 #' + #id + '，第 ' + #stepNo + ' 道'")
     public Result<Void> completeStep(@PathVariable Long id, @PathVariable Integer stepNo) {
         productionStepService.complete(id, stepNo);
         return Result.success();
@@ -75,7 +76,8 @@ public class ProductionOrderController {
     /** 撤销打卡（本人或生产管理员） */
     @PostMapping("/{id}/steps/{stepNo}/revoke")
     @PreventDuplicateSubmit(message = "请勿重复提交撤销打卡")
-    @AuditLog(module = "生产工序", action = "撤销打卡", targetType = "生产任务单")
+    @AuditLog(module = "生产工序", action = "撤销打卡", targetType = "生产任务单",
+            detail = "'撤销打卡：生产任务单 #' + #id + '，第 ' + #stepNo + ' 道'")
     public Result<Void> revokeStep(@PathVariable Long id, @PathVariable Integer stepNo) {
         productionStepService.revoke(id, stepNo);
         return Result.success();
@@ -91,7 +93,8 @@ public class ProductionOrderController {
 
     /** D71：生产手工修正预计完工时间（仅未完结单；留痕 @AuditLog） */
     @PutMapping("/{id}/expected-completion")
-    @AuditLog(module = "生产任务单", action = "修正预计完工", targetType = "生产任务单")
+    @AuditLog(module = "生产任务单", action = "修正预计完工", targetType = "生产任务单",
+            detail = "'修正预计完工：生产任务单 #' + #id + ' → ' + #dto.expectedCompletionTime")
     public Result<Void> updateExpectedCompletion(@PathVariable Long id,
                                                  @RequestBody ExpectedCompletionDTO dto) {
         productionOrderService.updateExpectedCompletion(id, dto.getExpectedCompletionTime());

@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="oplog-page">
     <div class="paper-layer" aria-hidden="true">
       <span class="paper-grain"></span>
@@ -20,6 +20,12 @@
         <el-form-item label="模块" class="control-sm">
           <el-input v-model="searchForm.module" clearable placeholder="输入模块" />
         </el-form-item>
+        <el-form-item label="动作" class="control-sm">
+          <el-input v-model="searchForm.action" clearable placeholder="输入动作" />
+        </el-form-item>
+        <el-form-item label="目标类型" class="control-sm">
+          <el-input v-model="searchForm.targetType" clearable placeholder="输入目标类型" />
+        </el-form-item>
         <el-form-item label="时间区间" class="control-range">
           <el-date-picker
             v-model="searchForm.dateRange"
@@ -36,19 +42,39 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="tableData" border stripe v-loading="loading" empty-text="暂无操作日志">
-        <el-table-column prop="createTime" label="时间" width="180">
+      <div class="toolbar">
+        <span class="toolbar-tip">日志永久保留；删除为物理删除，删除动作本身会写一条操作日志留痕</span>
+        <div class="toolbar-actions">
+          <el-button type="primary" :icon="Download" :loading="exporting" @click="handleExport">导出</el-button>
+          <el-button type="danger" :icon="Delete" :disabled="selectedRows.length === 0" @click="handleBatchDelete">
+            批量删除{{ selectedRows.length > 0 ? `（${selectedRows.length}）` : '' }}
+          </el-button>
+          <el-button type="danger" plain :icon="Delete" @click="handleDeleteByQuery">按条件删除</el-button>
+        </div>
+      </div>
+
+      <el-table
+        :data="tableData"
+        border
+        stripe
+        v-loading="loading"
+        empty-text="暂无操作日志"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="46" />
+        <el-table-column prop="createTime" label="时间" width="170">
           <template #default="scope">{{ formatTime(scope.row.createTime) }}</template>
         </el-table-column>
-        <el-table-column prop="username" label="用户名" width="120" />
-        <el-table-column prop="module" label="模块" width="160" show-overflow-tooltip />
-        <el-table-column prop="action" label="动作" width="180" show-overflow-tooltip />
-        <el-table-column prop="targetType" label="目标类型" width="140" />
-        <el-table-column prop="targetId" label="目标 ID" width="120" />
-        <el-table-column prop="requestUri" label="请求路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column prop="username" label="用户名" width="110" />
+        <el-table-column prop="module" label="模块" width="130" show-overflow-tooltip />
+        <el-table-column prop="action" label="动作" width="130" show-overflow-tooltip />
+        <el-table-column label="操作描述" min-width="280" show-overflow-tooltip>
+          <template #default="scope">{{ detailText(scope.row) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="scope">
             <el-button link size="small" type="primary" @click="openDetail(scope.row)">详情</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -69,30 +95,49 @@
     <el-drawer v-model="detailVisible" title="操作日志详情" size="560px">
       <el-descriptions :column="1" border>
         <el-descriptions-item label="时间">{{ formatTime(detail.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="用户 ID">{{ detail.userId ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="用户名">{{ detail.username || '-' }}</el-descriptions-item>
         <el-descriptions-item label="模块">{{ detail.module || '-' }}</el-descriptions-item>
         <el-descriptions-item label="动作">{{ detail.action || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="操作描述">{{ detail.detail || '-' }}</el-descriptions-item>
         <el-descriptions-item label="目标类型">{{ detail.targetType || '-' }}</el-descriptions-item>
         <el-descriptions-item label="目标 ID">{{ detail.targetId || '-' }}</el-descriptions-item>
         <el-descriptions-item label="请求路径">{{ detail.requestUri || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="用户 ID">{{ detail.userId ?? '-' }}</el-descriptions-item>
         <el-descriptions-item label="IP">{{ detail.ip || '-' }}</el-descriptions-item>
       </el-descriptions>
+      <div class="snapshot-block">
+        <p class="snapshot-title">请求参数快照</p>
+        <pre class="snapshot-pre">{{ prettyJson(detail.beforeData) }}</pre>
+      </div>
+      <div class="snapshot-block">
+        <p class="snapshot-title">返回结果快照</p>
+        <pre class="snapshot-pre">{{ prettyJson(detail.afterData) }}</pre>
+      </div>
     </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
-import { getOperationLogDetailAPI, getOperationLogPageAPI } from '@/api/audit'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, Download, Delete } from '@element-plus/icons-vue'
+import {
+  deleteOperationLogAPI,
+  deleteOperationLogsAPI,
+  deleteOperationLogsByQueryAPI,
+  exportOperationLogsAPI,
+  getOperationLogDetailAPI,
+  getOperationLogPageAPI
+} from '@/api/audit'
+import { saveBlobAs, localDateString } from '@/utils/download'
 
 const loading = ref(false)
+const exporting = ref(false)
 const tableData = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(10)
+const selectedRows = ref([])
 
 const detailVisible = ref(false)
 const detail = reactive({})
@@ -100,6 +145,8 @@ const detail = reactive({})
 const searchForm = reactive({
   username: '',
   module: '',
+  action: '',
+  targetType: '',
   dateRange: []
 })
 
@@ -108,17 +155,37 @@ const formatTime = (val) => {
   return String(val).replace('T', ' ')
 }
 
+// D76：操作描述优先用落库 detail；历史无 detail 记录兜底 模块·动作
+const detailText = (row) => row.detail || `${row.module || '-'} · ${row.action || '-'}`
+
+const prettyJson = (val) => {
+  if (!val) return '-'
+  try {
+    return JSON.stringify(JSON.parse(val), null, 2)
+  } catch {
+    return val
+  }
+}
+
+const buildQueryParams = () => {
+  const hasRange = Array.isArray(searchForm.dateRange) && searchForm.dateRange.length === 2
+  return {
+    username: searchForm.username || undefined,
+    module: searchForm.module || undefined,
+    action: searchForm.action || undefined,
+    targetType: searchForm.targetType || undefined,
+    startDate: hasRange ? searchForm.dateRange[0] : undefined,
+    endDate: hasRange ? searchForm.dateRange[1] : undefined
+  }
+}
+
 const loadList = async () => {
   loading.value = true
   try {
-    const hasRange = Array.isArray(searchForm.dateRange) && searchForm.dateRange.length === 2
     const res = await getOperationLogPageAPI({
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      username: searchForm.username || undefined,
-      module: searchForm.module || undefined,
-      startDate: hasRange ? searchForm.dateRange[0] : undefined,
-      endDate: hasRange ? searchForm.dateRange[1] : undefined
+      ...buildQueryParams()
     })
     if (res.code !== 200) throw new Error(res.msg || '加载操作日志失败')
     tableData.value = res.data?.records || []
@@ -141,6 +208,98 @@ const openDetail = async (row) => {
   }
 }
 
+const handleSelectionChange = (rows) => {
+  selectedRows.value = rows
+}
+
+// ---------- D79：导出（跟随当前筛选条件；后端超限会返回 JSON 错误体，需识别） ----------
+const handleExport = async () => {
+  exporting.value = true
+  try {
+    const blob = await exportOperationLogsAPI(buildQueryParams())
+    if (blob.type && blob.type.includes('json')) {
+      const text = await blob.text()
+      let msg = '导出失败'
+      try { msg = JSON.parse(text).msg || msg } catch { /* 保留默认提示 */ }
+      throw new Error(msg)
+    }
+    await saveBlobAs(blob, `操作日志-${localDateString()}.xlsx`)
+    ElMessage.success('导出成功')
+  } catch (error) {
+    ElMessage.error(error.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
+// ---------- D78：删除三形态（单条 / 批量 / 按条件），物理删除且动作留痕 ----------
+const handleDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除该条操作日志吗？（${formatTime(row.createTime)} ${row.username || ''} ${row.module || ''}·${row.action || ''}）删除为物理移除，删除动作会留痕。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteOperationLogAPI(row.id)
+    if (res.code !== 200) throw new Error(res.msg || '删除失败')
+    ElMessage.success('已删除')
+    loadList()
+  } catch (error) {
+    ElMessage.error(error.message || '删除失败')
+  }
+}
+
+const handleBatchDelete = async () => {
+  const count = selectedRows.value.length
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${count} 条操作日志吗？删除为物理移除，删除动作会留痕。`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteOperationLogsAPI(selectedRows.value.map((row) => row.id))
+    if (res.code !== 200) throw new Error(res.msg || '批量删除失败')
+    ElMessage.success(`已删除 ${res.data ?? count} 条`)
+    loadList()
+  } catch (error) {
+    ElMessage.error(error.message || '批量删除失败')
+  }
+}
+
+const handleDeleteByQuery = async () => {
+  const params = buildQueryParams()
+  const hasFilter = Object.values(params).some((val) => val !== undefined)
+  if (!hasFilter) {
+    ElMessage.warning('按条件删除须至少设置一个筛选条件，防止误清空全部日志')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将按当前筛选条件删除操作日志，当前命中约 ${total.value} 条（以后端实际删除数为准）。删除为物理移除，删除动作会留痕。确定继续吗？`,
+      '按条件删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteOperationLogsByQueryAPI(params)
+    if (res.code !== 200) throw new Error(res.msg || '按条件删除失败')
+    ElMessage.success(`已删除 ${res.data ?? 0} 条`)
+    handleSearch()
+  } catch (error) {
+    ElMessage.error(error.message || '按条件删除失败')
+  }
+}
+
 const handleSearch = () => {
   currentPage.value = 1
   loadList()
@@ -149,6 +308,8 @@ const handleSearch = () => {
 const handleReset = () => {
   searchForm.username = ''
   searchForm.module = ''
+  searchForm.action = ''
+  searchForm.targetType = ''
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()
@@ -235,7 +396,7 @@ onMounted(() => {
 }
 
 :deep(.filter-row .control-sm .el-input) {
-  width: 140px;
+  width: 130px;
 }
 
 :deep(.filter-row .control-range .el-date-editor.el-input__wrapper),
@@ -246,6 +407,47 @@ onMounted(() => {
 :deep(.filter-row .control-actions .el-form-item__content) {
   display: inline-flex;
   gap: 8px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.toolbar-tip {
+  font-size: 12px;
+  color: rgba(51, 44, 35, 0.55);
+}
+
+.toolbar-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.snapshot-block {
+  margin-top: 16px;
+}
+
+.snapshot-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(51, 44, 35, 0.75);
+}
+
+.snapshot-pre {
+  margin: 0;
+  padding: 10px;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: rgba(51, 44, 35, 0.06);
+  border-radius: 6px;
 }
 
 .pager {
@@ -260,5 +462,3 @@ onMounted(() => {
   }
 }
 </style>
-
-

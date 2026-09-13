@@ -55,6 +55,7 @@ public class ProductionPickService {
 
     @Transactional(rollbackFor = Exception.class)
     public PickListVO createPick(Long orderId) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionMember();
         BizProductionOrder order = productionOrderMapper.selectById(orderId);
         if (order == null) {
@@ -115,6 +116,7 @@ public class ProductionPickService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void createReturn(Long orderId, ProductionReturnCreateDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionMember();
         BizProductionOrder order = productionOrderMapper.selectById(orderId);
         if (order == null) {
@@ -200,6 +202,7 @@ public class ProductionPickService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void terminate(Long orderId, ProductionTerminateDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireDeptAdminOrSuperAdmin(
                 AuthzService.DEPT_PRODUCTION, "仅生产研发部管理员可终止生产任务单");
         BizProductionOrder order = productionOrderMapper.selectById(orderId);

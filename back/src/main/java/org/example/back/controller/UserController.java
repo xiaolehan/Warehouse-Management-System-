@@ -63,7 +63,8 @@ public class UserController {
     }
 
     @PutMapping("/{id}/password")
-    @AuditLog(module = "用户管理", action = "重置密码", targetType = "用户")
+    @AuditLog(module = "用户管理", action = "重置密码", targetType = "用户",
+            detail = "'重置用户密码：用户 #' + #id")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交重置密码请求")
     public Result<Void> resetPassword(@PathVariable Long id, @Valid @RequestBody UserResetPasswordDTO dto) {
         userManageService.resetPassword(id, dto.getNewPassword());

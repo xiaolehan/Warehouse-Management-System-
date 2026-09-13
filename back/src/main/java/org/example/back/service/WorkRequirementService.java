@@ -282,6 +282,7 @@ public class WorkRequirementService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(WorkRequirementCreateDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireAdminOrSuperAdmin("仅管理员可创建工作要求");
         LoginResponse.UserInfoVO currentUser = authzService.currentUser();
 
@@ -346,6 +347,7 @@ public class WorkRequirementService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireAdminOrSuperAdmin("仅管理员可删除工作要求");
         LoginResponse.UserInfoVO currentUser = authzService.currentUser();
         WorkRequirement req = requireRequirement(id);

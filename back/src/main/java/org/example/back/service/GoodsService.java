@@ -141,6 +141,7 @@ public class GoodsService {
 
     // 建物料/成品仅仓储 admin；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）
     public void create(GoodsSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料/成品");
         boolean isProduct = GOODS_TYPE_PRODUCT.equals(normalizeType(dto.getType()));
         if (isProduct) {
@@ -175,6 +176,7 @@ public class GoodsService {
     //      二者均可改物料基本字段(名称/产品名/种类/供应商/单位)。
     // D68：销售部门(admin+员工)可编辑成品标准售价(并校验>0)，其余字段一概不动；物料不维护售价。
     public void update(Long id, GoodsSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireGoodsUpdateAccess();
         BaseGoods goods = requireGoods(id);
         boolean isPurchase = authzService.isDeptMember(AuthzService.DEPT_PURCHASE);
@@ -248,6 +250,7 @@ public class GoodsService {
     }
 
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
         BaseGoods goods = requireGoods(id);
         // D65/Q11：成品主数据有库存、存在有效 BOM 或被任何单据引用时不允许删除（与 BOM 删除级联同一口径）

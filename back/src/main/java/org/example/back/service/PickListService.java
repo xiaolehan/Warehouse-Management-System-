@@ -120,6 +120,7 @@ public class PickListService {
 
     @Transactional(rollbackFor = Exception.class)
     public void issue(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseIssueAccess();
         BizPickList entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PENDING) {
@@ -185,6 +186,7 @@ public class PickListService {
 
     @Transactional(rollbackFor = Exception.class)
     public void confirm(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePickListModuleAccess();
         BizPickList entity = requireEntity(id);
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
@@ -210,6 +212,7 @@ public class PickListService {
 
     @Transactional(rollbackFor = Exception.class)
     public void reject(Long id, PickListRejectDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseIssueAccess();
         BizPickList entity = requireEntity(id);
         if (entity.getStatus() != STATUS_PENDING) {
@@ -243,6 +246,7 @@ public class PickListService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePickListModuleAccess();
         BizPickList entity = requireEntity(id);
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();

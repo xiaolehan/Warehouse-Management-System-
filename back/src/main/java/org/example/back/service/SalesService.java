@@ -250,6 +250,7 @@ public class SalesService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(SalesSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesModuleAccess();
         validateQuantity(dto.getQuantity());
 
@@ -308,6 +309,7 @@ public class SalesService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void confirm(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesVoidExecutionAccess();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
@@ -341,6 +343,7 @@ public class SalesService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
         validateDeleteWindow(entity.getOperationTime(), "销售单");
@@ -392,6 +395,7 @@ public class SalesService {
 
     @Transactional(rollbackFor = Exception.class)
     public void voidDocument(Long id, DocumentVoidDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesVoidExecutionAccess();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");

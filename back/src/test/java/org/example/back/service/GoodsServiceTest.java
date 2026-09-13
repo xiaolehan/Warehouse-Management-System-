@@ -25,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -305,6 +306,19 @@ class GoodsServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.update(9L, dto));
         assertTrue(ex.getMessage().contains("售价必须大于0"), "实际: " + ex.getMessage());
         verify(baseGoodsMapper, never()).updateById(any(BaseGoods.class));
+    }
+
+    // ---------- D77/ADR-0009：超管真只读——守卫为业务写方法首语句，先于一切校验/落库 ----------
+    @Test
+    void create_superAdminForbidden_guardRunsFirst() {
+        doThrow(BusinessException.forbidden("超级管理员为只读审计角色，不可执行业务写操作"))
+                .when(authzService).requireNotSuperAdminForBusinessWrite();
+
+        GoodsSaveDTO dto = new GoodsSaveDTO();
+        dto.setGoodsName("x");
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.create(dto));
+        assertTrue(ex.getMessage().contains("只读审计角色"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
     }
 
     // ---------- D68：生产/财务等无写权限部门仍被拦截 ----------

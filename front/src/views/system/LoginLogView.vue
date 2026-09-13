@@ -42,7 +42,25 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="tableData" border stripe v-loading="loading" empty-text="暂无登录日志">
+      <div class="toolbar">
+        <span class="toolbar-tip">日志永久保留；删除为物理删除，删除动作会写入操作日志留痕</span>
+        <div class="toolbar-actions">
+          <el-button type="danger" :icon="Delete" :disabled="selectedRows.length === 0" @click="handleBatchDelete">
+            批量删除{{ selectedRows.length > 0 ? `（${selectedRows.length}）` : '' }}
+          </el-button>
+          <el-button type="danger" plain :icon="Delete" @click="handleDeleteByQuery">按条件删除</el-button>
+        </div>
+      </div>
+
+      <el-table
+        :data="tableData"
+        border
+        stripe
+        v-loading="loading"
+        empty-text="暂无登录日志"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="loginTime" label="登录时间" width="180">
           <template #default="scope">{{ formatTime(scope.row.loginTime) }}</template>
         </el-table-column>
@@ -59,9 +77,10 @@
           <template #default="scope">{{ scope.row.failReason || '-' }}</template>
         </el-table-column>
         <el-table-column prop="userAgent" label="UA" min-width="260" show-overflow-tooltip />
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="120" fixed="right">
           <template #default="scope">
             <el-button link size="small" type="primary" @click="openDetail(scope.row)">详情</el-button>
+            <el-button link size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -95,15 +114,22 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { Search, Refresh } from '@element-plus/icons-vue'
-import { getLoginLogDetailAPI, getLoginLogPageAPI } from '@/api/audit'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Refresh, Delete } from '@element-plus/icons-vue'
+import {
+  deleteLoginLogAPI,
+  deleteLoginLogsAPI,
+  deleteLoginLogsByQueryAPI,
+  getLoginLogDetailAPI,
+  getLoginLogPageAPI
+} from '@/api/audit'
 
 const loading = ref(false)
 const tableData = ref([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(10)
+const selectedRows = ref([])
 
 const detailVisible = ref(false)
 const detail = reactive({})
@@ -120,18 +146,24 @@ const formatTime = (val) => {
   return String(val).replace('T', ' ')
 }
 
+const buildQueryParams = () => {
+  const hasRange = Array.isArray(searchForm.dateRange) && searchForm.dateRange.length === 2
+  return {
+    username: searchForm.username || undefined,
+    ip: searchForm.ip || undefined,
+    successFlag: searchForm.successFlag,
+    startDate: hasRange ? searchForm.dateRange[0] : undefined,
+    endDate: hasRange ? searchForm.dateRange[1] : undefined
+  }
+}
+
 const loadList = async () => {
   loading.value = true
   try {
-    const hasRange = Array.isArray(searchForm.dateRange) && searchForm.dateRange.length === 2
     const res = await getLoginLogPageAPI({
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      username: searchForm.username || undefined,
-      ip: searchForm.ip || undefined,
-      successFlag: searchForm.successFlag,
-      startDate: hasRange ? searchForm.dateRange[0] : undefined,
-      endDate: hasRange ? searchForm.dateRange[1] : undefined
+      ...buildQueryParams()
     })
     if (res.code !== 200) throw new Error(res.msg || '加载登录日志失败')
     tableData.value = res.data?.records || []
@@ -151,6 +183,78 @@ const openDetail = async (row) => {
     detailVisible.value = true
   } catch (error) {
     ElMessage.error(error.message || '加载详情失败')
+  }
+}
+
+const handleSelectionChange = (rows) => {
+  selectedRows.value = rows
+}
+
+// ---------- D78：删除三形态（单条 / 批量 / 按条件），物理删除且动作留痕 ----------
+const handleDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除该条登录日志吗？（${formatTime(row.loginTime)} ${row.username || ''} ${row.ip || ''}）删除为物理移除，删除动作会留痕。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteLoginLogAPI(row.id)
+    if (res.code !== 200) throw new Error(res.msg || '删除失败')
+    ElMessage.success('已删除')
+    loadList()
+  } catch (error) {
+    ElMessage.error(error.message || '删除失败')
+  }
+}
+
+const handleBatchDelete = async () => {
+  const count = selectedRows.value.length
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${count} 条登录日志吗？删除为物理移除，删除动作会留痕。`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteLoginLogsAPI(selectedRows.value.map((row) => row.id))
+    if (res.code !== 200) throw new Error(res.msg || '批量删除失败')
+    ElMessage.success(`已删除 ${res.data ?? count} 条`)
+    loadList()
+  } catch (error) {
+    ElMessage.error(error.message || '批量删除失败')
+  }
+}
+
+const handleDeleteByQuery = async () => {
+  const params = buildQueryParams()
+  const hasFilter = Object.values(params).some((val) => val !== undefined)
+  if (!hasFilter) {
+    ElMessage.warning('按条件删除须至少设置一个筛选条件，防止误清空全部日志')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将按当前筛选条件删除登录日志，当前命中约 ${total.value} 条（以后端实际删除数为准）。删除为物理移除，删除动作会留痕。确定继续吗？`,
+      '按条件删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await deleteLoginLogsByQueryAPI(params)
+    if (res.code !== 200) throw new Error(res.msg || '按条件删除失败')
+    ElMessage.success(`已删除 ${res.data ?? 0} 条`)
+    handleSearch()
+  } catch (error) {
+    ElMessage.error(error.message || '按条件删除失败')
   }
 }
 
@@ -262,6 +366,23 @@ onMounted(() => {
 }
 
 :deep(.filter-row .control-actions .el-form-item__content) {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.toolbar-tip {
+  font-size: 12px;
+  color: rgba(51, 44, 35, 0.55);
+}
+
+.toolbar-actions {
   display: inline-flex;
   gap: 8px;
 }

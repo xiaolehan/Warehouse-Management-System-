@@ -165,6 +165,7 @@ public class ProductionOrderService {
 
     @Transactional(rollbackFor = Exception.class)
     public ProductionOrderVO create(ProductionOrderSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderWriteAccess();
         BaseGoods product = requireProduct(dto.getGoodsId());
         KuaiTaoResult kit = computeKit(dto.getGoodsId(), dto.getQuantity());
@@ -204,6 +205,7 @@ public class ProductionOrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void start(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         ensureStatus(order, BizProductionOrder.STATUS_PENDING, "仅待生产状态可开工");
@@ -222,6 +224,7 @@ public class ProductionOrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void complete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         if (order.getStatus() != BizProductionOrder.STATUS_IN_PROGRESS) {
@@ -245,6 +248,7 @@ public class ProductionOrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void receipt(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         if (order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
@@ -286,6 +290,7 @@ public class ProductionOrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateExpectedCompletion(Long id, LocalDateTime expectedCompletionTime) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         if (order.getStatus() == null || !BizProductionOrder.UNFINISHED_STATUSES.contains(order.getStatus())) {
@@ -300,6 +305,7 @@ public class ProductionOrderService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void voidOrder(Long id, String reason) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireOrderWriteAccess();
         BizProductionOrder order = requireOrder(id);
         if (order.getStatus() != BizProductionOrder.STATUS_PENDING

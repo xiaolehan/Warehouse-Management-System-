@@ -140,6 +140,7 @@ public class PurchaseReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(PurchaseReturnSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseReturnModuleAccess();
         validateQuantity(dto.getQuantity());
 
@@ -178,6 +179,7 @@ public class PurchaseReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void confirmOut(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseAccess();
         BizPurchaseReturn entity = requireEntity(id);
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_PENDING) {
@@ -205,6 +207,7 @@ public class PurchaseReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void complete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseReturnModuleAccess();
         BizPurchaseReturn entity = requireEntity(id);
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_AWAITING) {
@@ -227,6 +230,7 @@ public class PurchaseReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseReturnAdminOrSuperAdmin();
         BizPurchaseReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "进货退货单");
@@ -241,6 +245,7 @@ public class PurchaseReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void voidDocument(Long id, DocumentVoidDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseReturnVoidExecutionAccess();
         BizPurchaseReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "进货退货单");

@@ -3,6 +3,8 @@ import { ElMessage } from "element-plus"
 import { checkRouteAccess, getDeptCode, getRole, getToken, isSuperAdmin } from "@/utils/auth"
 import { WARNING_DEPT_CODES } from "@/utils/constants"
 
+// D77/ADR-0009：超管 = 治理/审计角色——开放全部业务模块页面只读进入（按钮由 v-permission 禁用），
+// 财务模块（销售统计/年度经营统计）与员工分布图表仍明确排除；业务写接口由后端统一 403 兜底。
 const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/',
   '/home',
@@ -16,8 +18,31 @@ const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/system/login-log',
   '/system/operation-log',
   '/assistant/project',
-  '/403'
+  '/403',
+  // 基础资料
+  '/base/supplier',
+  '/base/goods',
+  '/base/products',
+  '/base/bom',
+  // 业务单据
+  '/business/purchase',
+  '/business/purchase-return',
+  '/business/sales',
+  '/business/sales-return',
+  '/business/purchase-request',
+  '/business/production-order',
+  '/business/qc',
+  '/business/production',
+  '/business/pick-list',
+  '/business/stock-warning',
+  // 人事档案 + 工作要求（只读）
+  '/system/dept',
+  '/system/employee',
+  '/system/work-requirement'
 ])
+
+// 动态详情路由白名单（前缀匹配）：工作要求详情
+const SUPERADMIN_ALLOWED_PREFIXES = ['/work-requirement/']
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -253,8 +278,10 @@ router.beforeEach((to, from, next) => {
     if (!token) {
       return next('/login')
     } else {
-      if (isSuperAdmin(role) && !SUPERADMIN_ALLOWED_PATHS.has(to.path)) {
-        ElMessage.warning('超级管理员仅开放首页与超管中心模块')
+      if (isSuperAdmin(role)
+        && !SUPERADMIN_ALLOWED_PATHS.has(to.path)
+        && !SUPERADMIN_ALLOWED_PREFIXES.some((prefix) => to.path.startsWith(prefix))) {
+        ElMessage.warning('超级管理员仅开放首页、超管中心与业务模块只读查看')
         return next('/home')
       }
 

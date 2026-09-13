@@ -111,6 +111,7 @@ public class SalesReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(SalesReturnSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesReturnModuleAccess();
         validateQuantity(dto.getQuantity());
 
@@ -160,6 +161,7 @@ public class SalesReturnService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void confirm(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseAdminOrSuperAdmin("仅仓储管理员可确认销售退货入库");
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");
@@ -190,6 +192,7 @@ public class SalesReturnService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesReturnAdminOrSuperAdmin();
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");
@@ -206,6 +209,7 @@ public class SalesReturnService {
     @Transactional(rollbackFor = Exception.class)
     // 作废单据，更新单据状态并记录作废信息，同时根据前端请求决定是否创建对应的红冲单
     public void voidDocument(Long id, DocumentVoidDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesReturnVoidExecutionAccess();
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");

@@ -57,6 +57,7 @@ public class QcService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void record(QcSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireQcAccess();
         BizProductionOrder order = requireOrder(dto.getOrderId());
         ensureTestable(order);
@@ -90,6 +91,7 @@ public class QcService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void dispose(QcDisposeDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireQcAccess();
         BizProductionOrder order = requireOrder(dto.getOrderId());
         ensureTestable(order);

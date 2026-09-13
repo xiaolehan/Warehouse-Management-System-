@@ -55,7 +55,8 @@ public class DeptController {
     }
 
     @PutMapping("/{id}/approve")
-    @AuditLog(module = "部门管理", action = "审批通过", targetType = "部门申请")
+    @AuditLog(module = "部门管理", action = "审批通过", targetType = "部门申请",
+            detail = "'审批通过 部门申请 #' + #id + (#dto?.remark != null ? '，意见：' + #dto.remark : '')")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "请勿重复审批")
     public Result<Void> approve(@PathVariable Long id, @Valid @RequestBody(required = false) ApprovalDecisionDTO dto) {
         deptService.approve(id, dto);
@@ -63,7 +64,8 @@ public class DeptController {
     }
 
     @PutMapping("/{id}/reject")
-    @AuditLog(module = "部门管理", action = "审批驳回", targetType = "部门申请")
+    @AuditLog(module = "部门管理", action = "审批驳回", targetType = "部门申请",
+            detail = "'审批驳回 部门申请 #' + #id + (#dto?.remark != null ? '，意见：' + #dto.remark : '')")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "请勿重复审批")
     public Result<Void> reject(@PathVariable Long id, @Valid @RequestBody(required = false) ApprovalDecisionDTO dto) {
         deptService.reject(id, dto);

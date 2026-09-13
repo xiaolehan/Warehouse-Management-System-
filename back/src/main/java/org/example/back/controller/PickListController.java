@@ -48,7 +48,8 @@ public class PickListController {
 
     @PutMapping("/{id}/reject")
     @RequireAdmin("仅仓储管理员可驳回")
-    @AuditLog(module = "生产领料", action = "驳回", targetType = "领料单")
+    @AuditLog(module = "生产领料", action = "驳回", targetType = "领料单",
+            detail = "'驳回领料单 #' + #id + '，原因：' + #dto.reason")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交驳回请求")
     public Result<Void> reject(@PathVariable Long id, @Valid @RequestBody PickListRejectDTO dto) {
         pickListService.reject(id, dto);

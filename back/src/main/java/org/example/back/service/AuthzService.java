@@ -136,6 +136,16 @@ public class AuthzService {
         }
     }
 
+    /**
+     * D77/ADR-0009：超管 = 只读审计角色，业务写操作一律拒绝。
+     * 插入在各业务写方法入口（读接口与超管治理写权——用户/公告/系统参数/安全策略/三类审批——不加）。
+     */
+    public void requireNotSuperAdminForBusinessWrite() {
+        if (isSuperAdmin()) {
+            throw BusinessException.forbidden("超级管理员为只读审计角色，不可执行业务写操作");
+        }
+    }
+
     public void requireCurrentDept(Long targetDeptId, String message) {
         if (!hasDeptAccess(targetDeptId)) {
             throw BusinessException.forbidden(message);

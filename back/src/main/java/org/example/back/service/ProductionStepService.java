@@ -88,6 +88,7 @@ public class ProductionStepService {
     /** 打卡：人工工序标记完成（记录打卡人/时间） */
     @Transactional(rollbackFor = Exception.class)
     public void complete(Long orderId, int stepNo) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireStepAccess();
         BizProductionOrder order = requireOrder(orderId);
         ensureOperableStatus(order);
@@ -106,6 +107,7 @@ public class ProductionStepService {
     /** 撤销打卡：本人或生产管理员；状态回退并清空打卡人（update wrapper 显式置 null） */
     @Transactional(rollbackFor = Exception.class)
     public void revoke(Long orderId, int stepNo) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireStepAccess();
         BizProductionOrder order = requireOrder(orderId);
         ensureOperableStatus(order);

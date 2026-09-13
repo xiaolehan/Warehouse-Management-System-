@@ -89,6 +89,7 @@ public class SupplierService {
 
     @Transactional
     public void create(SupplierSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSupplierModuleAccess();
         checkSupplierNameUnique(dto.getSupplierName(), null);
         BaseSupplier supplier = new BaseSupplier();
@@ -103,6 +104,7 @@ public class SupplierService {
 
     @Transactional
     public void update(Long id, SupplierSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSupplierModuleAccess();
         BaseSupplier supplier = requireSupplier(id);
         checkSupplierNameUnique(dto.getSupplierName(), id);
@@ -118,6 +120,7 @@ public class SupplierService {
     }
 
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireSupplierModuleAccess();
         requireSupplier(id);
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();

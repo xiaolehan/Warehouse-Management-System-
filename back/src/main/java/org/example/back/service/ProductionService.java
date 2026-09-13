@@ -91,6 +91,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void create(ProductionSaveDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionWriteAccess();
         validateQuantity(dto.getQuantity());
 
@@ -121,6 +122,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionWriteAccess();
         BizProduction production = requireProduction(id);
         ensureNormalStatus(production.getBizStatus(), "生产入库单");
@@ -131,6 +133,7 @@ public class ProductionService {
 
     @Transactional(rollbackFor = Exception.class)
     public void voidDocument(Long id, DocumentVoidDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionWriteAccess();
         BizProduction production = requireProduction(id);
         ensureNormalStatus(production.getBizStatus(), "生产入库单");

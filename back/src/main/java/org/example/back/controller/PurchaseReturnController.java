@@ -47,7 +47,8 @@ public class PurchaseReturnController {
     }
 
     @PutMapping("/{id}/void")
-    @AuditLog(module = "进货退货管理", action = "作废/作废并红冲", targetType = "进货退货单")
+    @AuditLog(module = "进货退货管理", action = "作废/作废并红冲", targetType = "进货退货单",
+            detail = "((#dto?.createRedFlush == true) ? '作废并红冲' : '作废') + ' 进货退货单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
     @RequireAdmin("仅管理员可作废进货退货单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {

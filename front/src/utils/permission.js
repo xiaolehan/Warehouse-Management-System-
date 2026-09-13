@@ -1,10 +1,12 @@
-import { canAccessRoles, getDeptCode, getRole, hasDeptAccess } from '@/utils/auth'
+import { canAccessRoles, getDeptCode, getRole, hasDeptAccess, isSuperAdmin, normalizeRole } from '@/utils/auth'
 
 /**
  * 自定义指令：v-permission
  * 作用：处理按钮级别的权限控制
  * 用法：<el-button v-permission="['admin']">删除</el-button>
  * 详情：如果当前用户的角色不在指令绑定的数组内，该 DOM 元素将被直接移除。
+ * D77/ADR-0009：超管 = 只读审计角色——按钮/交互控件一律禁用，
+ * 除非绑定显式包含 'superadmin'（保留治理写权入口；路由级 hasRole 语义不变）。
  */
 export default {
   mounted(el, binding) {
@@ -25,9 +27,14 @@ export default {
     }
 
     if (allowRoles.length > 0 || allowDeptCodes.length > 0) {
-      const roleAllowed = allowRoles.length === 0 || canAccessRoles(role, allowRoles)
-      const deptAllowed = allowDeptCodes.length === 0 || hasDeptAccess(deptCode, allowDeptCodes, role)
-      const allowed = roleAllowed && deptAllowed
+      let allowed
+      if (isSuperAdmin(role)) {
+        allowed = allowRoles.map(normalizeRole).includes('superadmin')
+      } else {
+        const roleAllowed = allowRoles.length === 0 || canAccessRoles(role, allowRoles)
+        const deptAllowed = allowDeptCodes.length === 0 || hasDeptAccess(deptCode, allowDeptCodes, role)
+        allowed = roleAllowed && deptAllowed
+      }
 
       if (!allowed) {
         // 对可交互元素优先禁用并提示，其他元素再移除。

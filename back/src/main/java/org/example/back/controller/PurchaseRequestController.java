@@ -51,7 +51,8 @@ public class PurchaseRequestController {
      */
     @PostMapping("/draft")
     @RequireAdmin("仅生产研发部管理员可生成补料草稿")
-    @AuditLog(module = "采购申请", action = "生成补料草稿", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "生成补料草稿", targetType = "采购申请单",
+            detail = "'生成补料草稿：生产任务单 #' + #dto.productionOrderId + '，共 ' + #dto.details?.size() + ' 行明细'")
     @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交补料草稿")
     public Result<Long> createDraft(@Valid @RequestBody ProductionDraftCreateDTO dto) {
         return Result.success(purchaseRequestService.createDraft(dto));
@@ -59,7 +60,8 @@ public class PurchaseRequestController {
 
     @PostMapping
     @RequireAdmin("仅仓储管理员可创建采购申请单")
-    @AuditLog(module = "采购申请", action = "建单", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "建单", targetType = "采购申请单",
+            detail = "'仓储建采购申请，共 ' + #dto.details?.size() + ' 行明细'")
     @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交采购申请单")
     public Result<Void> create(@Valid @RequestBody PurchaseRequestSaveDTO dto) {
         purchaseRequestService.create(dto);
@@ -68,7 +70,8 @@ public class PurchaseRequestController {
 
     @PutMapping("/{id}/process")
     @RequireAdmin("仅采购管理员可认领采购申请单")
-    @AuditLog(module = "采购申请", action = "认领", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "认领", targetType = "采购申请单",
+            detail = "'认领采购申请 #' + #id + '，填写行级到货计划 ' + #dto.items?.size() + ' 行'")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交认领请求")
     public Result<Void> process(@PathVariable Long id, @Valid @RequestBody PurchaseRequestProcessDTO dto) {
         purchaseRequestService.process(id, dto);
@@ -80,7 +83,8 @@ public class PurchaseRequestController {
      */
     @PutMapping("/{id}/arrival-plan")
     @RequireAdmin("仅采购管理员可修改到货计划")
-    @AuditLog(module = "采购申请", action = "修改到货计划", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "修改到货计划", targetType = "采购申请单",
+            detail = "'修改到货计划：采购申请 #' + #id + '，共 ' + #dto.items?.size() + ' 行'")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交修改请求")
     public Result<Void> updateArrivalPlan(@PathVariable Long id, @Valid @RequestBody PurchaseRequestProcessDTO dto) {
         purchaseRequestService.updateArrivalPlan(id, dto);
@@ -89,7 +93,8 @@ public class PurchaseRequestController {
 
     @PutMapping("/{id}/arrive")
     @RequireAdmin("仅采购管理员可提交采购到货")
-    @AuditLog(module = "采购申请", action = "到货", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "到货", targetType = "采购申请单",
+            detail = "'到货提交：采购申请 #' + #id + '，共 ' + #dto.items?.size() + ' 行到货'")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交到货请求")
     public Result<Void> arrive(@PathVariable Long id, @Valid @RequestBody PurchaseRequestReceiveDTO dto) {
         purchaseRequestService.arrive(id, dto);
@@ -125,7 +130,8 @@ public class PurchaseRequestController {
 
     @PutMapping("/{id}/reject")
     @RequireAdmin("仅采购管理员可驳回采购申请单")
-    @AuditLog(module = "采购申请", action = "驳回", targetType = "采购申请单")
+    @AuditLog(module = "采购申请", action = "驳回", targetType = "采购申请单",
+            detail = "'驳回采购申请 #' + #id + '，原因：' + #dto.reason")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交驳回请求")
     public Result<Void> reject(@PathVariable Long id, @Valid @RequestBody PurchaseRequestRejectDTO dto) {
         purchaseRequestService.reject(id, dto);
