@@ -353,6 +353,22 @@ public class MessageService {
                 .eq(SysMessage::getIsRead, MESSAGE_UNREAD);
         sysMessageMapper.delete(wrapper);
     }
+    /**
+     * D87：按业务单据+标题白名单撤销未读消息。用于齐套类通知"撤旧发新"——
+     * 同一 biz（production_order）下仅撤齐套类标题，不动「关联销售单已取消」(D73) 等其他通知。
+     */
+    public void revokeUnreadByBizAndTitles(String bizType, Long bizId, java.util.Collection<String> titles) {
+        if (!StringUtils.hasText(bizType) || bizId == null || titles == null || titles.isEmpty()) {
+            return;
+        }
+        LambdaQueryWrapper<SysMessage> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysMessage::getBizType, bizType)
+                .eq(SysMessage::getBizId, bizId)
+                .in(SysMessage::getTitle, titles)
+                .eq(SysMessage::getIsRead, MESSAGE_UNREAD);
+        sysMessageMapper.delete(wrapper);
+    }
+
     public boolean hasUnreadBizMessage(String bizType, Long bizId) {
         if (!StringUtils.hasText(bizType) || bizId == null) {
             return false;
@@ -402,6 +418,11 @@ public class MessageService {
                 ROUTE_PICK_LIST);
     }
 
+    /** D87：齐套类通知标题——confirmReceive 重算时按标题白名单撤旧发新，保证互斥不堆积。 */
+    public static final String TITLE_KIT_COMPLETE = "物料已齐套可领料";
+    public static final String TITLE_KIT_INCOMPLETE = "补料部分到货仍缺料";
+    public static final List<String> KIT_FAMILY_TITLES = List.of(TITLE_KIT_COMPLETE, TITLE_KIT_INCOMPLETE);
+
     /**
      * D62：生产单物料齐套（补料入库确认后缺口清零）→ 通知生产部管理员可申请领料。
      * 绑 biz_type=production_order；作废/报废单由调用方守卫不发，作废时随 D60 预警一并撤回未读。
@@ -413,13 +434,39 @@ public class MessageService {
         }
         sendToDeptAdminsWithBiz(
                 productionDeptId,
-                "物料已齐套可领料",
+                TITLE_KIT_COMPLETE,
                 String.format(Locale.ROOT,
                         "生产任务单 %s（成品 %s×%d）所需物料已全部入库齐套（补料单 %s 已入库），请前往生产任务单详情申请领料。",
                         orderNo == null ? "-" : orderNo,
                         goodsName == null ? "-" : goodsName,
                         quantity == null ? 0 : quantity,
                         requestNo == null ? "-" : requestNo),
+                "production_order",
+                orderId,
+                ROUTE_PRODUCTION_ORDER);
+    }
+
+    /**
+     * D87：补料单部分入库后生产单仍缺料 → 通知生产部管理员可继续补料（D86 已解锁再补）。
+     * 与 sendKitCompleteToProductionAdmins 互斥（调用方先按 KIT_FAMILY_TITLES 撤旧再按结果发新）。
+     * 绑 biz_type=production_order；守卫（生产单终态等）由调用方负责。
+     */
+    public void sendKitIncompleteToProductionAdmins(String orderNo, String goodsName, Integer quantity,
+                                                    String requestNo, String shortageSummary, Long orderId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                TITLE_KIT_INCOMPLETE,
+                String.format(Locale.ROOT,
+                        "生产任务单 %s（成品 %s×%d）的补料单 %s 已入库，但仍缺：%s。可前往生产任务单详情继续补料。",
+                        orderNo == null ? "-" : orderNo,
+                        goodsName == null ? "-" : goodsName,
+                        quantity == null ? 0 : quantity,
+                        requestNo == null ? "-" : requestNo,
+                        StringUtils.hasText(shortageSummary) ? shortageSummary : "-"),
                 "production_order",
                 orderId,
                 ROUTE_PRODUCTION_ORDER);

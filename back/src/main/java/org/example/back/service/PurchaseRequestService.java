@@ -51,6 +51,13 @@ public class PurchaseRequestService {
     public static final int STATUS_REJECTED = 4;    // 已驳回
     public static final int STATUS_AWAITING_CONFIRM = 5;  // 待入库确认
 
+    /**
+     * D86：补料幂等守卫的在途状态集合——仅在途单（待采购/采购中/待入库确认）阻止再补料；
+     * 已入库(3)为终态不阻止（部分到货终态后剩余缺口可再补），已驳回(4)本就可重新发起。
+     */
+    public static final List<Integer> IN_FLIGHT_STATUSES =
+            List.of(STATUS_PENDING, STATUS_PURCHASING, STATUS_AWAITING_CONFIRM);
+
     public static final String SOURCE_PRODUCTION = "production";
     public static final String SOURCE_WAREHOUSE = "warehouse";
 
@@ -147,7 +154,7 @@ public class PurchaseRequestService {
     // ============================== 生产缺料草稿 ==============================
 
     /**
-     * 生产一键补料：从生产任务单缺料行生成采购申请草稿(DRAFT)。幂等——同一任务单只允许一张草稿。
+     * 生产一键补料：从生产任务单缺料行生成采购申请草稿(DRAFT)。幂等——同一任务单至多一张在途补料单（D86）。
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createDraft(ProductionDraftCreateDTO dto) {
@@ -155,8 +162,9 @@ public class PurchaseRequestService {
         requireProductionDraftAccess();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
-        // 幂等：同一生产任务单已有进行中/已入库的补料单则拒绝（仅 rejected 可重新补料）
-        List<BizPurchaseRequest> existing = listNonFinalByProductionOrder(dto.getProductionOrderId());
+        // 幂等（D86）：同一生产任务单已有在途补料单则拒绝；已入库/已驳回不占用名额，
+        // 部分到货终态后的剩余缺口可再次补料（重复补料由下方"无缺料"实时重算兜底拦截）
+        List<BizPurchaseRequest> existing = listInFlightByProductionOrder(dto.getProductionOrderId());
         if (!existing.isEmpty()) {
             throw BusinessException.validateFail(
                     String.format(Locale.ROOT, "该生产任务单已补料（单号 %s），请勿重复",
@@ -278,11 +286,15 @@ public class PurchaseRequestService {
         bizBomDetailMapper.updateById(bomDetail);
     }
 
-    private List<BizPurchaseRequest> listNonFinalByProductionOrder(Long productionOrderId) {
+    /**
+     * D86：在途补料单查询——同一生产任务单至多一张（createDraft 幂等守卫保证）。
+     * 仅含在途状态（1待采购/2采购中/5待入库确认）；已入库(3)/已驳回(4)不视为在途。
+     */
+    private List<BizPurchaseRequest> listInFlightByProductionOrder(Long productionOrderId) {
         LambdaQueryWrapper<BizPurchaseRequest> w = new LambdaQueryWrapper<>();
         w.eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
                 .eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
-                .ne(BizPurchaseRequest::getStatus, STATUS_REJECTED);
+                .in(BizPurchaseRequest::getStatus, IN_FLIGHT_STATUSES);
         return bizPurchaseRequestMapper.selectList(w);
     }
 
@@ -475,16 +487,16 @@ public class PurchaseRequestService {
             throw BusinessException.validateFail("采购申请单状态已变更，请刷新后重试");
         }
         messageService.revokeUnreadByBiz("purchase_request", id);
-        notifyKitCompleteIfReady(entity);
+        notifyKitAfterReceive(entity);
     }
 
     /**
-     * D62：生产补料入库确认后重算齐套，缺口清零即通知生产部管理员可申请领料。
-     * 仅 production 来源且生产单存在（未删除/未作废/未报废）时触发；仍缺料则沉默，
-     * 靠生产任务单列表实时齐套状态兜底。任何守卫命中都静默返回，不影响入库事务。
+     * D62+D87：生产补料入库确认后重算齐套——缺口清零发「物料已齐套可领料」，仍缺料发「补料部分到货仍缺料」（D86 已解锁再补）。
+     * 两通知互斥：先按标题白名单撤齐套类旧通知再按结果发新（不动 D73 销售取消等其他通知，亦不堆积）。
+     * 仅 production 来源且生产单存在（未删除/未作废/未报废/未终止）时触发。任何守卫命中都静默返回，不影响入库事务。
      * selectById 自带 @TableLogic 过滤，软删生产单同样返回 null。
      */
-    private void notifyKitCompleteIfReady(BizPurchaseRequest request) {
+    private void notifyKitAfterReceive(BizPurchaseRequest request) {
         if (!SOURCE_PRODUCTION.equals(request.getSourceType()) || request.getProductionOrderId() == null) {
             return;
         }
@@ -497,12 +509,23 @@ public class PurchaseRequestService {
             return;
         }
         List<KitShortageVO> shortage = productionOrderService.computeShortageForOrder(order.getId());
-        if (!shortage.isEmpty()) {
-            return;
+        messageService.revokeUnreadByBizAndTitles("production_order", order.getId(), MessageService.KIT_FAMILY_TITLES);
+        if (shortage.isEmpty()) {
+            messageService.sendKitCompleteToProductionAdmins(
+                    order.getOrderNo(), order.getGoodsName(), order.getQuantity(),
+                    request.getRequestNo(), order.getId());
+        } else {
+            messageService.sendKitIncompleteToProductionAdmins(
+                    order.getOrderNo(), order.getGoodsName(), order.getQuantity(),
+                    request.getRequestNo(), shortageSummary(shortage), order.getId());
         }
-        messageService.sendKitCompleteToProductionAdmins(
-                order.getOrderNo(), order.getGoodsName(), order.getQuantity(),
-                request.getRequestNo(), order.getId());
+    }
+
+    /** D87：仍缺料通知的缺口摘要——「物料名×缺口整数」顿号连接（缺口向上取整，与补料默认申请量口径一致）。 */
+    private static String shortageSummary(List<KitShortageVO> shortage) {
+        return shortage.stream()
+                .map(line -> (line.getGoodsName() == null ? "-" : line.getGoodsName()) + "×" + ceilDeficit(line.getDeficit()))
+                .collect(Collectors.joining("、"));
     }
 
     // ============================== 到货退回（撤回/驳回 → 采购中） ==============================

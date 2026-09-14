@@ -1,5 +1,6 @@
 package org.example.back.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
@@ -197,6 +198,41 @@ class PurchaseRequestServiceTest {
         // 不应抛异常：已驳回后可重新发起
         assertDoesNotThrow(() -> service.createDraft(dto));
         verify(bizPurchaseRequestMapper).insert(any(BizPurchaseRequest.class));
+    }
+
+    // ---------- 用例 3c：D86 幂等守卫口径——仅在途状态(1待采购/2采购中/5待入库确认)阻止再补料，已入库(3)放行 ----------
+    @Test
+    void createDraft_guardCoversOnlyInFlightStatuses() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // 在途单查询返回空（已入库单被查询条件过滤掉，不再占用幂等名额）
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
+        // 走到缺料计算即抛"无缺料"——借此确认守卫未拦截，且捕获守卫查询 wrapper
+        when(productionOrderService.computeShortageForOrder(7L)).thenReturn(List.of());
+
+        ProductionDraftCreateDTO dto = new ProductionDraftCreateDTO();
+        dto.setProductionOrderId(7L);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.createDraft(dto));
+        assertEquals("该生产任务单当前无缺料，无需补料", ex.getMessage());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaQueryWrapper<BizPurchaseRequest>> captor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(bizPurchaseRequestMapper).selectList(captor.capture());
+        LambdaQueryWrapper<BizPurchaseRequest> guardQuery = captor.getValue();
+        String sqlSegment = guardQuery.getSqlSegment();
+        assertTrue(sqlSegment.contains("status") && sqlSegment.contains("IN"),
+                "守卫查询应按 status IN 在途状态过滤（已入库终态应放行）, 实际: " + sqlSegment);
+        assertTrue(guardQuery.getParamNameValuePairs().containsValue(1)
+                        && guardQuery.getParamNameValuePairs().containsValue(2)
+                        && guardQuery.getParamNameValuePairs().containsValue(5),
+                "在途状态参数应含 1/2/5, 实际: " + guardQuery.getParamNameValuePairs());
+        assertFalse(guardQuery.getParamNameValuePairs().containsValue(3),
+                "已入库(3)不应出现在守卫参数中, 实际: " + guardQuery.getParamNameValuePairs());
     }
 
     // ---------- 用例 4：无缺料拒绝 ----------
@@ -699,11 +735,15 @@ class PurchaseRequestServiceTest {
 
         service.confirmReceive(30L);
 
-        verify(messageService).sendKitCompleteToProductionAdmins("PO-D62", "PTO153", 5, "PR-D62-TEST", 7L);
+        // D87：先按标题白名单撤齐套类旧通知，再发新（互斥不堆积）
+        org.mockito.InOrder inOrder = Mockito.inOrder(messageService);
+        inOrder.verify(messageService).revokeUnreadByBizAndTitles("production_order", 7L, MessageService.KIT_FAMILY_TITLES);
+        inOrder.verify(messageService).sendKitCompleteToProductionAdmins("PO-D62", "PTO153", 5, "PR-D62-TEST", 7L);
     }
 
+    // D87：仍缺料不再沉默——发「补料部分到货仍缺料」通知（与齐套通知互斥）
     @Test
-    void confirmReceive_skipsNotifyWhenShortageRemains() {
+    void confirmReceive_notifiesKitIncompleteWhenShortageRemains() {
         BizPurchaseRequest request = awaitingConfirmRequest(PurchaseRequestService.SOURCE_PRODUCTION);
         stubConfirmReceive(request, arrivedDetail());
 
@@ -721,6 +761,11 @@ class PurchaseRequestServiceTest {
 
         service.confirmReceive(30L);
 
+        org.mockito.InOrder inOrder = Mockito.inOrder(messageService);
+        inOrder.verify(messageService).revokeUnreadByBizAndTitles("production_order", 7L, MessageService.KIT_FAMILY_TITLES);
+        inOrder.verify(messageService).sendKitIncompleteToProductionAdmins(
+                eq("PO-D62"), eq("PTO153"), eq(5), eq("PR-D62-TEST"),
+                ArgumentMatchers.argThat(s -> s != null && s.contains("电阻10K") && s.contains("2")), eq(7L));
         verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
     }
 

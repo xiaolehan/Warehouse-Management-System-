@@ -54,6 +54,9 @@ public class ProductionOrderVO {
     /** 齐套明细（含缺料标红/黄） */
     private List<KitShortageVO> kitLines;
 
+    /** D87：在途补料单号（同一生产单至多一张，D86 守卫保证；无在途单为 null）——补料弹窗"已有在途补料单"提示用 */
+    private String inFlightRequestNo;
+
     /** 质检状态（首测/成品测） */
     private QcStateVO qcState;
 

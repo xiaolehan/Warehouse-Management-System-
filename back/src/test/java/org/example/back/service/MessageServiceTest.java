@@ -23,7 +23,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -144,5 +146,49 @@ class MessageServiceTest {
         ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
         verify(sysMessageMapper).insert(captor.capture());
         assertEquals("/system/void-approval", captor.getValue().getTargetRoute());
+    }
+
+    // ---------- D87：部分到货仍缺料通知 + 齐套类通知按标题白名单撤销 ----------
+
+    @Test
+    void sendKitIncomplete_writesBizFieldsAndTargetRoute() {
+        SysDept dept = new SysDept();
+        dept.setId(6L);
+        when(sysDeptMapper.selectOne(any())).thenReturn(dept);
+        SysUser admin = new SysUser();
+        admin.setId(21L);
+        when(sysUserMapper.selectList(any())).thenReturn(List.of(admin));
+
+        service.sendKitIncompleteToProductionAdmins("PO-1", "PTO153", 5, "PR-1", "板1×3、板2×2", 7L);
+
+        ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
+        verify(sysMessageMapper).insert(captor.capture());
+        SysMessage msg = captor.getValue();
+        assertEquals("补料部分到货仍缺料", msg.getTitle());
+        assertTrue(msg.getContent().contains("板1×3、板2×2"), "内容应含剩余缺口摘要, 实际: " + msg.getContent());
+        assertTrue(msg.getContent().contains("继续补料"), "内容应提示可继续补料, 实际: " + msg.getContent());
+        assertEquals("production_order", msg.getBizType());
+        assertEquals(7L, msg.getBizId());
+        assertEquals("/business/production-order", msg.getTargetRoute());
+    }
+
+    @Test
+    void revokeUnreadByBizAndTitles_deletesOnlyWhitelistedTitles() {
+        service.revokeUnreadByBizAndTitles("production_order", 7L,
+                List.of("物料已齐套可领料", "补料部分到货仍缺料"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<SysMessage>> captor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        verify(sysMessageMapper).delete(captor.capture());
+        var wrapper = captor.getValue();
+        String sqlSegment = wrapper.getSqlSegment();
+        assertTrue(sqlSegment.contains("title") && sqlSegment.contains("IN"),
+                "撤销查询应按 title IN 白名单过滤, 实际: " + sqlSegment);
+        assertTrue(wrapper.getParamNameValuePairs().containsValue("物料已齐套可领料")
+                        && wrapper.getParamNameValuePairs().containsValue("补料部分到货仍缺料"),
+                "白名单应含两个齐套类标题, 实际: " + wrapper.getParamNameValuePairs());
+        assertFalse(wrapper.getParamNameValuePairs().containsValue("关联销售单已取消"),
+                "D73 销售取消通知不得进入撤销白名单, 实际: " + wrapper.getParamNameValuePairs());
     }
 }

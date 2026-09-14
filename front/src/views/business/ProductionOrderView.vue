@@ -314,6 +314,12 @@
 
     <!-- 补料 -->
     <el-dialog v-model="draftVisible" :title="`补料 - ${draftRow.orderNo || ''}`" width="920px" top="6vh">
+      <!-- D87：已有在途补料单时提示并禁提交（其入库后可再补，D86；缺口行仍可查看） -->
+      <el-alert
+        v-if="draftInFlightNo"
+        :title="`已有在途补料单 ${draftInFlightNo}，待其入库后可再次补料`"
+        type="warning" :closable="false" style="margin-bottom: 8px"
+      />
       <template v-if="boundDraftLines.length">
         <el-divider content-position="left">已有物料缺口（{{ boundDraftLines.length }}）</el-divider>
         <el-table :data="boundDraftLines" border size="small">
@@ -401,7 +407,7 @@
       </template>
       <template #footer>
         <el-button @click="draftVisible = false">取消</el-button>
-        <el-button type="primary" :loading="draftSubmitting" @click="doCreateDraft">提交补料</el-button>
+        <el-button type="primary" :loading="draftSubmitting" :disabled="!!draftInFlightNo" @click="doCreateDraft">提交补料</el-button>
       </template>
     </el-dialog>
 
@@ -907,6 +913,8 @@ const draftRow = ref({})
 const draftLines = ref([])
 const draftSubmitting = ref(false)
 const materialOptions = ref([])
+// D87：在途补料单号（详情 VO 透出；非空时弹窗提示并禁提交）
+const draftInFlightNo = ref('')
 
 // D60：按未知物料拆两组——已有物料缺口 / 未知物料（新物料）
 const boundDraftLines = computed(() => draftLines.value.filter((l) => l.lineStatus !== 'unknown'))
@@ -933,11 +941,13 @@ function openDraftDialog(row) {
   draftVisible.value = true
   draftSubmitting.value = false
   draftLines.value = []
+  draftInFlightNo.value = ''
   loadMaterialOptions()
   // 拉详情拿 kitLines，映射成可编辑行；未知物料行预填 BOM 行信息（名称/规格/材质/备注），单位由生产现填
   getProductionOrderDetailAPI(row.id).then((res) => {
     if (res.code !== 200) return
     const vo = res.data || {}
+    draftInFlightNo.value = vo.inFlightRequestNo || ''
     draftLines.value = (vo.kitLines || [])
       .filter((l) => (l.deficit || 0) > 0)
       .map((l) => ({

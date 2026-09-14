@@ -80,6 +80,9 @@ public class ProductionOrderService {
     private BizSalesMapper bizSalesMapper;
 
     @Autowired
+    private org.example.back.mapper.BizPurchaseRequestMapper bizPurchaseRequestMapper;
+
+    @Autowired
     private AuthService authService;
 
     @Autowired
@@ -157,8 +160,21 @@ public class ProductionOrderService {
         }
         // D64：10 道工序行（人工行读步骤实例，第 6/8/10 道实时推导；历史单无实例返回 null，前端回落快照文字）
         vo.setStepList(productionStepService.listSteps(order));
+        // D87：在途补料单号（补料弹窗"已有在途补料单"提示用；同一生产单至多一张，D86 守卫保证）
+        vo.setInFlightRequestNo(findInFlightDraftRequestNo(order.getId()));
         fillSalesOrderNoBatch(List.of(vo));
         return vo;
+    }
+
+    /** D87：在途补料单号——生产来源 + 在途状态（1待采购/2采购中/5待入库确认），取最新一张；无则 null。 */
+    private String findInFlightDraftRequestNo(Long orderId) {
+        LambdaQueryWrapper<org.example.back.entity.BizPurchaseRequest> w = new LambdaQueryWrapper<>();
+        w.eq(org.example.back.entity.BizPurchaseRequest::getProductionOrderId, orderId)
+                .eq(org.example.back.entity.BizPurchaseRequest::getSourceType, PurchaseRequestService.SOURCE_PRODUCTION)
+                .in(org.example.back.entity.BizPurchaseRequest::getStatus, PurchaseRequestService.IN_FLIGHT_STATUSES)
+                .orderByDesc(org.example.back.entity.BizPurchaseRequest::getId);
+        List<org.example.back.entity.BizPurchaseRequest> inFlight = bizPurchaseRequestMapper.selectList(w);
+        return inFlight.isEmpty() ? null : inFlight.get(0).getRequestNo();
     }
 
     // ============================== 建单（含齐套预警） ==============================

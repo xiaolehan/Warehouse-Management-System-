@@ -68,6 +68,7 @@ class ProductionOrderServiceTest {
     @Mock private org.example.back.mapper.BizProductionMapper productionMapper;
     @Mock private AuthService authService;
     @Mock private org.example.back.mapper.BizSalesMapper bizSalesMapper;
+    @Mock private org.example.back.mapper.BizPurchaseRequestMapper bizPurchaseRequestMapper;
 
     @InjectMocks private ProductionOrderService service;
 
@@ -591,5 +592,46 @@ class ProductionOrderServiceTest {
 
         assertNotNull(vo.getQcState());
         assertEquals("ok", vo.getQcState().getFirstStatus());
+    }
+
+    // ---------- D87：在途补料单号透出（补料弹窗"已有在途补料单"提示用） ----------
+
+    @Test
+    void getById_fillsInFlightRequestNoWhenDraftInFlight() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        org.example.back.entity.BizPurchaseRequest inFlight = new org.example.back.entity.BizPurchaseRequest();
+        inFlight.setId(30L);
+        inFlight.setRequestNo("PR-INFLIGHT-1");
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of(inFlight));
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertEquals("PR-INFLIGHT-1", vo.getInFlightRequestNo());
+    }
+
+    @Test
+    void getById_inFlightRequestNoNullWhenNoDraft() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PRO-X");
+        order.setGoodsId(29L);
+        order.setGoodsName("PTO153");
+        order.setQuantity(2);
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(productionStepService.listSteps(order)).thenReturn(null);
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of());
+
+        ProductionOrderVO vo = service.getById(7L);
+
+        assertNull(vo.getInFlightRequestNo());
     }
 }
