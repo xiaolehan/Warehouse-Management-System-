@@ -165,11 +165,10 @@ const loadList = async () => {
       pageSize: pageSize.value,
       ...buildQueryParams()
     })
-    if (res.code !== 200) throw new Error(res.msg || '加载登录日志失败')
     tableData.value = res.data?.records || []
     total.value = Number(res.data?.total || 0)
-  } catch (error) {
-    ElMessage.error(error.message || '加载登录日志失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -178,11 +177,10 @@ const loadList = async () => {
 const openDetail = async (row) => {
   try {
     const res = await getLoginLogDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '加载详情失败')
     Object.assign(detail, res.data || {})
     detailVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -202,12 +200,11 @@ const handleDelete = async (row) => {
     return
   }
   try {
-    const res = await deleteLoginLogAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '删除失败')
+    await deleteLoginLogAPI(row.id)
     ElMessage.success('已删除')
     loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -224,11 +221,10 @@ const handleBatchDelete = async () => {
   }
   try {
     const res = await deleteLoginLogsAPI(selectedRows.value.map((row) => row.id))
-    if (res.code !== 200) throw new Error(res.msg || '批量删除失败')
     ElMessage.success(`已删除 ${res.data ?? count} 条`)
     loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '批量删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -250,11 +246,10 @@ const handleDeleteByQuery = async () => {
   }
   try {
     const res = await deleteLoginLogsByQueryAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '按条件删除失败')
     ElMessage.success(`已删除 ${res.data ?? 0} 条`)
     handleSearch()
-  } catch (error) {
-    ElMessage.error(error.message || '按条件删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 

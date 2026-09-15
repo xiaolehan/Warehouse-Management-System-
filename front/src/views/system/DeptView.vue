@@ -123,17 +123,14 @@ const loadList = async () => {
       deptName: searchForm.deptName || undefined
     }
     const res = await getDeptPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '部门查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       createTime: normalizeDateTime(item.createTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载部门失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -175,9 +172,6 @@ const handleAdd = () => {
 const handleEdit = async (row) => {
   try {
     const res = await getDeptDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '部门详情查询失败')
-    }
     const detail = res.data || {}
     dialogTitle.value = '编辑部门'
     Object.assign(form, {
@@ -189,8 +183,8 @@ const handleEdit = async (row) => {
     })
     formRef.value?.clearValidate()
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载部门详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -204,15 +198,16 @@ const handleSave = () => {
         phone: form.contactPhone || '',
         description: form.description || ''
       }
-      const res = form.id ? await updateDeptAPI(form.id, payload) : await createDeptAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
+      if (form.id) {
+        await updateDeptAPI(form.id, payload)
+      } else {
+        await createDeptAPI(payload)
       }
       ElMessage.success(form.id ? '修改成功' : '已提交审批请求')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }

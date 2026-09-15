@@ -85,12 +85,9 @@ const loadList = async () => {
   loading.value = true
   try {
     const res = await getSystemConfigListAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '加载参数失败')
-    }
     tableData.value = res.data || []
-  } catch (error) {
-    ElMessage.error(error.message || '加载参数失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -111,15 +108,12 @@ const handleSave = async () => {
   }
   saving.value = true
   try {
-    const res = await updatePriceDeviationThresholdAPI({ value })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '保存失败')
-    }
+    await updatePriceDeviationThresholdAPI({ value })
     ElMessage.success('阈值已更新')
     editVisible.value = false
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '保存失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     saving.value = false
   }

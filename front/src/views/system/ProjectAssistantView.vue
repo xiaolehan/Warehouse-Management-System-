@@ -424,7 +424,7 @@ const syncSelectedModelCode = (options = []) => {
 const loadAssistantModels = async () => {
   try {
     const res = await getAssistantModelsAPI()
-    if (res.code === 200 && Array.isArray(res.data)) {
+    if (Array.isArray(res.data)) {
       modelOptions.value = res.data
       syncSelectedModelCode(res.data)
       return
@@ -596,7 +596,7 @@ const ensureActiveConversation = async (question) => {
   try {
     const title = question.length > 50 ? question.substring(0, 50) + '...' : question
     const createRes = await createConversationAPI(title)
-    if (createRes.code === 200 && createRes.data) {
+    if (createRes.data) {
       currentConversationId.value = createRes.data.id
       conversations.value.unshift(createRes.data)
       return currentConversationId.value
@@ -809,16 +809,14 @@ const formatTime = (dateStr) => {
 const loadConversations = async (page = 1) => {
   try {
     const res = await listConversationsAPI(page, 20)
-    if (res.code === 200) {
-      const data = res.data
-      if (page === 1) {
-        conversations.value = data.records || []
-      } else {
-        conversations.value.push(...(data.records || []))
-      }
-      conversationPage.value = page
-      hasMoreConversations.value = (data.current || 1) < (data.pages || 1)
+    const data = res.data || {}
+    if (page === 1) {
+      conversations.value = data.records || []
+    } else {
+      conversations.value.push(...(data.records || []))
     }
+    conversationPage.value = page
+    hasMoreConversations.value = (data.current || 1) < (data.pages || 1)
   } catch (e) {
     console.error('加载会话列表失败', e)
   }
@@ -846,7 +844,7 @@ const viewConversation = async (conv) => {
 
   try {
     const res = await getConversationMessagesAPI(conv.id)
-    if (res.code === 200 && Array.isArray(res.data)) {
+    if (Array.isArray(res.data)) {
       messages.value = res.data.map(msg => ({
         role: msg.role,
         content: msg.content,
@@ -881,12 +879,10 @@ const startNewConversation = () => {
 
 const handleDeleteConversation = async (conv) => {
   try {
-    const res = await deleteConversationAPI(conv.id)
-    if (res.code === 200) {
-      conversations.value = conversations.value.filter(c => c.id !== conv.id)
-      if (currentConversationId.value === conv.id) {
-        startNewConversation()
-      }
+    await deleteConversationAPI(conv.id)
+    conversations.value = conversations.value.filter(c => c.id !== conv.id)
+    if (currentConversationId.value === conv.id) {
+      startNewConversation()
     }
   } catch (e) {
     console.error('删除会话失败', e)
@@ -912,22 +908,20 @@ const handleClearAllConversations = async () => {
   }
 
   try {
-    const res = await clearAllConversationsAPI()
-    if (res.code === 200) {
-      conversations.value = []
-      conversationPage.value = 1
-      hasMoreConversations.value = false
-      draftConversationState.value = null
-      currentConversationId.value = null
-      inputText.value = ''
-      isHistoryMode.value = false
-      messages.value = []
-      sidebarOpen.value = false
-      ElMessage.success('会话历史已清空')
-    }
+    await clearAllConversationsAPI()
+    conversations.value = []
+    conversationPage.value = 1
+    hasMoreConversations.value = false
+    draftConversationState.value = null
+    currentConversationId.value = null
+    inputText.value = ''
+    isHistoryMode.value = false
+    messages.value = []
+    sidebarOpen.value = false
+    ElMessage.success('会话历史已清空')
   } catch (e) {
     console.error('清空会话历史失败', e)
-    ElMessage.error('清空会话历史失败')
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -993,7 +987,7 @@ onMounted(async () => {
   await loadAssistantModels()
   try {
     const res = await getSuggestionsAPI()
-    if (res.code === 200 && Array.isArray(res.data)) {
+    if (Array.isArray(res.data)) {
       suggestions.value = res.data.slice(0, 6)
       refreshWelcomeSuggestions()
     }

@@ -191,9 +191,6 @@ const resetForm = () => {
 
 const loadDeptOptions = async () => {
   const res = await getDeptOptionsAPI()
-  if (res.code !== 200) {
-    throw new Error(res.msg || '部门列表加载失败')
-  }
   deptOptions.value = res.data || []
   if (!isSuperAdminUser.value) {
     searchForm.targetDeptId = userStore.deptId
@@ -213,17 +210,14 @@ const loadList = async () => {
       targetDeptId: searchForm.targetDeptId || undefined
     }
     const res = await getNoticePageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '公告查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       date: normalizeDateTime(item.date || item.publishTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载公告失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -263,9 +257,6 @@ const handleAdd = () => {
 
 const openByDetail = async (row, viewMode) => {
   const res = await getNoticeDetailAPI(row.id)
-  if (res.code !== 200) {
-    throw new Error(res.msg || '公告详情查询失败')
-  }
   const detail = res.data || {}
   isView.value = viewMode
   dialogTitle.value = viewMode ? '查看公告' : '编辑公告'
@@ -285,8 +276,8 @@ const openByDetail = async (row, viewMode) => {
 const handleView = async (row) => {
   try {
     await openByDetail(row, true)
-  } catch (error) {
-    ElMessage.error(error.message || '加载公告详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -297,8 +288,8 @@ const handleEdit = async (row) => {
   }
   try {
     await openByDetail(row, false)
-  } catch (error) {
-    ElMessage.error(error.message || '加载公告详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -313,14 +304,11 @@ const handleDelete = (row) => {
     type: 'warning'
   })
     .then(async () => {
-      const res = await deleteNoticeAPI(row.id)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '删除失败')
-      }
+      await deleteNoticeAPI(row.id)
       ElMessage.success('删除成功')
       await loadList()
     })
-    .catch(() => {})
+    .catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleSave = () => {
@@ -335,15 +323,16 @@ const handleSave = () => {
         status: form.status,
         publishTime: form.publishDate ? String(form.publishDate).replace(' ', 'T') : undefined
       }
-      const res = form.id ? await updateNoticeAPI(form.id, payload) : await createNoticeAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
+      if (form.id) {
+        await updateNoticeAPI(form.id, payload)
+      } else {
+        await createNoticeAPI(payload)
       }
       ElMessage.success(form.id ? '修改成功' : '新增成功')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -353,8 +342,8 @@ onMounted(async () => {
     resetForm()
     await loadDeptOptions()
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

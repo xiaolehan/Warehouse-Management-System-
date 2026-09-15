@@ -563,12 +563,11 @@ const loadList = async () => {
       status: searchForm.status || undefined
     }
     const res = await getProductionOrderPageAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载生产任务单失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -578,8 +577,8 @@ const loadOptions = async () => {
   try {
     const p = await getGoodsProductOptionsAPI({ hasBom: true }) // D67：只列有有效 BOM 的成品
     productOptions.value = (p.data || []).map((it) => ({ goodsId: it.id, goodsName: it.name || it.goodsName, unit: it.unit }))
-  } catch (error) {
-    ElMessage.error(error.message || '加载成品选项失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -613,7 +612,7 @@ watch(() => createForm.goodsId, async (goodsId) => {
   linkableLoading.value = true
   try {
     const res = await getLinkableSalesOptionsAPI({ goodsId })
-    if (res.code === 200) linkableSalesOptions.value = res.data || []
+    linkableSalesOptions.value = res.data || []
   } catch {
     // 选项加载失败不阻断建单，后端 create 仍会兜底校验
   } finally {
@@ -631,11 +630,10 @@ const handleCreate = () => {
         remark: createForm.remark || '',
         salesOrderId: createForm.salesOrderId || undefined
       })
-      if (res.code !== 200) throw new Error(res.msg || '下达失败')
       createResult.value = res.data || {}
       ElMessage.success('生产任务单已下达')
-    } catch (error) {
-      ElMessage.error(error.message || '下达生产任务单失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -647,12 +645,11 @@ const closeCreate = () => {
 
 const openDetail = async (row) => {
   const res = await getProductionOrderDetailAPI(row.id)
-  if (res.code !== 200) throw new Error(res.msg || '详情查询失败')
   detail.value = res.data || {}
   // 加载领料单状态（优先取 PICK 类型行，用于"领料已出库"标签展示）
   try {
     const pickRes = await getProductionPickListAPI(row.id)
-    if (pickRes.code === 200 && pickRes.data?.length) {
+    if (pickRes.data?.length) {
       const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
       pickListStatus.value = pickRow.status
     } else {
@@ -665,13 +662,17 @@ const openDetail = async (row) => {
 }
 
 const handleView = async (row) => {
-  try { await openDetail(row) } catch (error) { ElMessage.error(error.message) }
+  try {
+    await openDetail(row)
+  } catch {
+    // 业务错误已由拦截器统一提示
+  }
 }
 
 // D64：工序打卡 / 撤销（生产研发部成员；撤销限打卡本人或生产管理员）
 const refreshDetail = async () => {
   const res = await getProductionOrderDetailAPI(detail.value.id)
-  if (res.code === 200) detail.value = res.data || {}
+  detail.value = res.data || {}
   await loadList()
 }
 
@@ -682,12 +683,11 @@ const doStepComplete = async (row) => {
     return
   }
   try {
-    const res = await completeProductionStepAPI(detail.value.id, row.stepNo)
-    if (res.code !== 200) throw new Error(res.msg || '打卡失败')
+    await completeProductionStepAPI(detail.value.id, row.stepNo)
     ElMessage.success(`「${row.stepName}」已打卡`)
     await refreshDetail()
-  } catch (error) {
-    ElMessage.error(error.message || '打卡失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -698,12 +698,11 @@ const doStepRevoke = async (row) => {
     return
   }
   try {
-    const res = await revokeProductionStepAPI(detail.value.id, row.stepNo)
-    if (res.code !== 200) throw new Error(res.msg || '撤销失败')
+    await revokeProductionStepAPI(detail.value.id, row.stepNo)
     ElMessage.success(`「${row.stepName}」打卡已撤销`)
     await refreshDetail()
-  } catch (error) {
-    ElMessage.error(error.message || '撤销失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -715,18 +714,17 @@ const doApplyPick = async () => {
   }
   pickSubmitting.value = true
   try {
-    const res = await createProductionPickAPI(detail.value.id)
-    if (res.code !== 200) throw new Error(res.msg || '申请领料失败')
+    await createProductionPickAPI(detail.value.id)
     ElMessage.success('领料申请已提交，待仓储确认出库')
     // 刷新领料状态与列表（优先取 PICK 类型行）
     const pickRes = await getProductionPickListAPI(detail.value.id)
-    if (pickRes.code === 200 && pickRes.data?.length) {
+    if (pickRes.data?.length) {
       const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
       pickListStatus.value = pickRow.status
     }
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '申请领料失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     pickSubmitting.value = false
   }
@@ -752,8 +750,8 @@ async function doOpenReturn() {
     try {
       const res = await getGoodsMaterialOptionsAPI()
       returnMaterialOptions.value = res.data || []
-    } catch (e) {
-      ElMessage.error(e?.message || '加载物料选项失败')
+    } catch {
+      // 业务错误已由拦截器统一提示；加载失败不打开退料弹窗
       return
     }
   }
@@ -776,16 +774,15 @@ async function doSubmitReturn() {
   }
   returnSubmitting.value = true
   try {
-    const res = await createProductionReturnAPI(returnRow.value.id, {
+    await createProductionReturnAPI(returnRow.value.id, {
       remark: returnRemark.value || '',
       items
     })
-    if (res.code !== 200) throw new Error(res.msg || '退料提交失败')
     ElMessage.success('退料已提交，待仓储确认入库')
     returnVisible.value = false
     await loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '退料提交失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     returnSubmitting.value = false
   }
@@ -795,42 +792,33 @@ const handleStart = async (row) => {
   // 前置友好校验：领料单是否已全额出库（失败放行，由后端开工网关兜底返回准确错误）
   try {
     const res = await getProductionPickListAPI(row.id)
-    if (res.code === 200) {
-      const s = res.data?.[0]?.status
-      if (!s) {
-        ElMessage.warning('请先申请领料并由仓储确认出库')
-        return
-      }
-      if (s !== 2 && s !== 3) {
-        ElMessage.warning('领料单尚未全额出库，请等仓储确认')
-        return
-      }
+    const s = res.data?.[0]?.status
+    if (!s) {
+      ElMessage.warning('请先申请领料并由仓储确认出库')
+      return
     }
-    // res.code !== 200 → 放行，交由后端开工网关兜底返回准确错误
+    if (s !== 2 && s !== 3) {
+      ElMessage.warning('领料单尚未全额出库，请等仓储确认')
+      return
+    }
   } catch {
-    // 网络异常放行，后端兜底
+    // 网络/业务异常放行（业务错误拦截器已提示），后端开工网关兜底
   }
-  try {
-    ElMessageBox.confirm('确认开工？开工需该生产任务单的领料单已由仓储确认出库。', '开工确认', { type: 'warning' })
-    .then(async () => {
-      const res = await startProductionOrderAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '开工失败')
-      ElMessage.success('已开工')
-      await loadList()
-    }).catch((e) => { if (e && e.message) ElMessage.error(e.message) })
-  } catch (error) {
-    ElMessage.error(error.message || '开工失败')
-  }
+  ElMessageBox.confirm('确认开工？开工需该生产任务单的领料单已由仓储确认出库。', '开工确认', { type: 'warning' })
+  .then(async () => {
+    await startProductionOrderAPI(row.id)
+    ElMessage.success('已开工')
+    await loadList()
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleReceipt = (row) => {
   ElMessageBox.confirm(`确认生产任务单「${row.orderNo}」生产入库？入库后成品库存将增加 ${row.quantity} ${row.unit}，订单标记已完成。`, '入库确认', { type: 'warning' })
     .then(async () => {
-      const res = await receiptProductionOrderAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '入库失败')
+      await receiptProductionOrderAPI(row.id)
       ElMessage.success('已生产入库，成品库存已增加')
       await loadList()
-    }).catch((e) => { if (e && e.message) ElMessage.error(e.message) })
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleVoid = (row) => {
@@ -840,11 +828,10 @@ const handleVoid = (row) => {
     inputValidator: (v) => (v === '' ? false : true),
     inputErrorMessage: '作废原因不能为空'
   }).then(async ({ value }) => {
-    const res = await voidProductionOrderAPI(row.id, value)
-    if (res.code !== 200) throw new Error(res.msg || '作废失败')
+    await voidProductionOrderAPI(row.id, value)
     ElMessage.success('已作废')
     await loadList()
-  }).catch((e) => { if (e === 'cancel') return; if (e && e.message) ElMessage.error(e.message) })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 // D73：手动终止（仅生产管理员；预填已领未退净额，一个事务终止+生成退料单）
@@ -864,13 +851,12 @@ async function openTerminate(row) {
   terminateOpenReturnPickNo.value = ''
   try {
     const res = await getProductionReturnableAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '加载已领未退失败')
     const data = res.data || {}
     terminateItems.value = (data.items || []).map((it) => ({ ...it, maxQty: it.quantity }))
     terminateHasOpenReturn.value = !!data.hasOpenReturn
     terminateOpenReturnPickNo.value = data.openReturnPickNo || ''
-  } catch (e) {
-    ElMessage.error(e.message || '加载已领未退失败')
+  } catch {
+    // 业务错误已由拦截器统一提示；加载失败不打开终止弹窗
     return
   }
   terminateVisible.value = true
@@ -885,23 +871,21 @@ async function doTerminate() {
     await ElMessageBox.confirm('终止为终态操作，不可恢复。确认终止该生产任务单？', '终止确认', { type: 'warning' })
   } catch (e) {
     if (e === 'cancel') return
-    if (e && e.message) ElMessage.error(e.message)
   }
   terminateSubmitting.value = true
   try {
     const items = terminateItems.value
       .filter((i) => i.quantity > 0)
       .map((i) => ({ goodsId: i.goodsId, quantity: i.quantity }))
-    const res = await terminateProductionOrderAPI(terminateRow.value.id, {
+    await terminateProductionOrderAPI(terminateRow.value.id, {
       reason: terminateReason.value.trim(),
       items
     })
-    if (res.code !== 200) throw new Error(res.msg || '终止失败')
     ElMessage.success(items.length ? '已终止，退料单已提交仓储确认入库' : '已终止')
     terminateVisible.value = false
     await loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '终止失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     terminateSubmitting.value = false
   }
@@ -931,8 +915,8 @@ async function loadMaterialOptions() {
   try {
     const res = await getGoodsMaterialOptionsAPI()
     materialOptions.value = res.data || []
-  } catch (error) {
-    ElMessage.error(error.message || '加载物料选项失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -945,7 +929,6 @@ function openDraftDialog(row) {
   loadMaterialOptions()
   // 拉详情拿 kitLines，映射成可编辑行；未知物料行预填 BOM 行信息（名称/规格/材质/备注），单位由生产现填
   getProductionOrderDetailAPI(row.id).then((res) => {
-    if (res.code !== 200) return
     const vo = res.data || {}
     draftInFlightNo.value = vo.inFlightRequestNo || ''
     draftLines.value = (vo.kitLines || [])
@@ -960,7 +943,7 @@ function openDraftDialog(row) {
         remark: l.remark || '',
         unit: ''
       }))
-  }).catch(() => {})
+  }).catch(() => {}) // 业务错误已由拦截器统一提示
 }
 
 // 改绑回建档：清掉所选物料，回到内联建档表单
@@ -1008,13 +991,12 @@ function doCreateDraft() {
     productionOrderId: draftRow.value.id,
     details: items,
     remark: ''
-  }).then(async (res) => {
-    if (res.code !== 200) throw new Error(res.msg || '补料失败')
+  }).then(async () => {
     ElMessage.success('补料已提交，待采购')
     draftVisible.value = false
     await loadList()
-  }).catch((error) => {
-    ElMessage.error(error.message || '补料失败')
+  }).catch(() => {
+    // 业务错误已由拦截器统一提示
   }).finally(() => {
     draftSubmitting.value = false
   })
@@ -1035,13 +1017,12 @@ const openEcDialog = () => {
 const submitEc = async (time) => {
   ecSubmitting.value = true
   try {
-    const res = await updateExpectedCompletionAPI(detail.value.id, { expectedCompletionTime: time || null })
-    if (res.code !== 200) throw new Error(res.msg || '修正失败')
+    await updateExpectedCompletionAPI(detail.value.id, { expectedCompletionTime: time || null })
     ElMessage.success(time ? '预计完工时间已更新' : '已清空，恢复系统推算')
     ecVisible.value = false
     await refreshDetail()
-  } catch (error) {
-    ElMessage.error(error.message || '修正失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     ecSubmitting.value = false
   }

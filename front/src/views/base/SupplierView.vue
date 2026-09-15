@@ -17,7 +17,12 @@
     <el-table :data="tableData" border style="width: 100%" v-loading="loading">
       <el-table-column type="index" label="序号" width="60" />
       <el-table-column prop="supplierName" label="供应商名称" min-width="160" />
-      <el-table-column prop="contact" label="联系人" min-width="110" />
+      <el-table-column prop="contact" label="联系人" min-width="130">
+        <template #default="scope">
+          <span>{{ scope.row.contact }}</span>
+          <el-tag v-if="scope.row.contactMatched" type="warning" size="small" style="margin-left: 4px">命中</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="position" label="职务" min-width="110" />
       <el-table-column prop="phone" label="联系电话" min-width="140" />
       <el-table-column prop="address" label="联系地址" min-width="160" />
@@ -108,6 +113,17 @@ const rules = {
   supplierName: [{ required: true, message: '请输入供应商名称', trigger: 'blur' }]
 }
 
+// 联系人搜索命中时，列表行改展示命中的联系人（D89）：主联系人命中优先，否则取最早录入（id 最小）的命中者；
+// 前端找不到匹配（理论上仅英文名大小写场景）返回 null，回退展示后端填好的主联系人。
+const pickMatchedContact = (contacts, keyword) => {
+  if (!keyword || !Array.isArray(contacts)) return null
+  const matched = contacts
+    .filter((c) => c && c.contactPerson && c.contactPerson.includes(keyword))
+    .sort((a, b) => (a.id || 0) - (b.id || 0))
+  if (!matched.length) return null
+  return matched.find((c) => c.isDefault === 1) || matched[0]
+}
+
 const loadList = async () => {
   loading.value = true
   try {
@@ -118,19 +134,21 @@ const loadList = async () => {
       contact: searchForm.contact || undefined
     }
     const res = await getSupplierPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '供应商查询失败')
-    }
     const pageData = res.data || {}
-    tableData.value = (pageData.records || []).map((item) => ({
-      ...item,
-      contact: item.contact || '',
-      position: item.position || '',
-      phone: item.phone || ''
-    }))
+    const contactKeyword = searchForm.contact.trim()
+    tableData.value = (pageData.records || []).map((item) => {
+      const hit = contactKeyword ? pickMatchedContact(item.contacts, contactKeyword) : null
+      return {
+        ...item,
+        contact: hit ? (hit.contactPerson || '') : (item.contact || ''),
+        position: hit ? (hit.position || '') : (item.position || ''),
+        phone: hit ? (hit.contactPhone || '') : (item.phone || ''),
+        contactMatched: !!hit
+      }
+    })
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载供应商失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -185,9 +203,6 @@ const handleAdd = () => {
 
 const openByDetail = async (row, viewMode) => {
   const res = await getSupplierDetailAPI(row.id)
-  if (res.code !== 200) {
-    throw new Error(res.msg || '供应商详情查询失败')
-  }
   const detail = res.data || {}
   isView.value = viewMode
   dialogTitle.value = viewMode ? '供应商详情 (仅查看)' : '编辑供应商'
@@ -207,30 +222,27 @@ const openByDetail = async (row, viewMode) => {
 const handleView = async (row) => {
   try {
     await openByDetail(row, true)
-  } catch (error) {
-    ElMessage.error(error.message || '加载供应商详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleEdit = async (row) => {
   try {
     await openByDetail(row, false)
-  } catch (error) {
-    ElMessage.error(error.message || '加载供应商详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = (row) => {
   ElMessageBox.confirm('确认删除该供应商信息?', '警告', { type: 'warning' })
     .then(async () => {
-      const res = await deleteSupplierAPI(row.id)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '删除失败')
-      }
+      await deleteSupplierAPI(row.id)
       ElMessage.success('删除成功')
       await loadList()
     })
-    .catch(() => {})
+    .catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleSave = () => {
@@ -252,15 +264,12 @@ const handleSave = () => {
           position: c.position
         }))
       }
-      const res = form.id ? await updateSupplierAPI(form.id, payload) : await createSupplierAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
-      }
+      form.id ? await updateSupplierAPI(form.id, payload) : await createSupplierAPI(payload)
       ElMessage.success(form.id ? '修改成功' : '新增成功')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }

@@ -187,11 +187,10 @@ const loadList = async () => {
       pageSize: pageSize.value,
       ...buildQueryParams()
     })
-    if (res.code !== 200) throw new Error(res.msg || '加载操作日志失败')
     tableData.value = res.data?.records || []
     total.value = Number(res.data?.total || 0)
-  } catch (error) {
-    ElMessage.error(error.message || '加载操作日志失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -200,11 +199,10 @@ const loadList = async () => {
 const openDetail = async (row) => {
   try {
     const res = await getOperationLogDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '加载详情失败')
     Object.assign(detail, res.data || {})
     detailVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -217,16 +215,12 @@ const handleExport = async () => {
   exporting.value = true
   try {
     const blob = await exportOperationLogsAPI(buildQueryParams())
-    if (blob.type && blob.type.includes('json')) {
-      const text = await blob.text()
-      let msg = '导出失败'
-      try { msg = JSON.parse(text).msg || msg } catch { /* 保留默认提示 */ }
-      throw new Error(msg)
-    }
+    // 后端超限等业务失败返回 JSON 错误体，由 saveBlobAs 统一探测抛错（与各处导出同通道）
     await saveBlobAs(blob, `操作日志-${localDateString()}.xlsx`)
     ElMessage.success('导出成功')
   } catch (error) {
-    ElMessage.error(error.message || '导出失败')
+    // saveBlobAs 探测出的业务错误（JSON 错误体）在此提示；传输错误已由拦截器统一提示
+    if (!error?.isAxiosError) ElMessage.error(error.message || '导出失败')
   } finally {
     exporting.value = false
   }
@@ -244,12 +238,11 @@ const handleDelete = async (row) => {
     return
   }
   try {
-    const res = await deleteOperationLogAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '删除失败')
+    await deleteOperationLogAPI(row.id)
     ElMessage.success('已删除')
     loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -266,11 +259,10 @@ const handleBatchDelete = async () => {
   }
   try {
     const res = await deleteOperationLogsAPI(selectedRows.value.map((row) => row.id))
-    if (res.code !== 200) throw new Error(res.msg || '批量删除失败')
     ElMessage.success(`已删除 ${res.data ?? count} 条`)
     loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '批量删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -292,11 +284,10 @@ const handleDeleteByQuery = async () => {
   }
   try {
     const res = await deleteOperationLogsByQueryAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '按条件删除失败')
     ElMessage.success(`已删除 ${res.data ?? 0} 条`)
     handleSearch()
-  } catch (error) {
-    ElMessage.error(error.message || '按条件删除失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 

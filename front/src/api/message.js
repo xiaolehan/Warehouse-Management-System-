@@ -1,6 +1,7 @@
 import request from '@/utils/request'
 
-export const getMessagePageAPI = (params) => request.get('/system/messages/page', { params })
+// config 可传 { silent: true } 豁免全局错误提示（ADR-0012，仅轮询等有意静默场景用）
+export const getMessagePageAPI = (params, config) => request.get('/system/messages/page', { params, ...config })
 
 export const getUnreadMessageCountAPI = () => request.get('/system/messages/unread-count')
 

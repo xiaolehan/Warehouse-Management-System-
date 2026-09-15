@@ -341,12 +341,11 @@ const loadList = async () => {
       keyword: searchForm.keyword || undefined
     }
     const res = await getWorkRequirementPageAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (e) {
-    ElMessage.error(e.message || '加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -365,10 +364,9 @@ const handleAdd = async () => {
   createFormRef.value?.clearValidate()
   try {
     const res = await getDeptEmployeesAPI()
-    if (res.code !== 200) throw new Error(res.msg || '员工列表加载失败')
     employeeOptions.value = res.data || []
-  } catch (e) {
-    ElMessage.error(e.message || '员工列表加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
   createDialogVisible.value = true
 }
@@ -385,13 +383,12 @@ const handleCreate = () => {
         targetScope: createForm.targetScope,
         employeeUserIds: createForm.targetScope === 'selected' ? createForm.employeeUserIds : undefined
       }
-      const res = await createWorkRequirementAPI(payload)
-      if (res.code !== 200) throw new Error(res.msg || '发布失败')
+      await createWorkRequirementAPI(payload)
       ElMessage.success('发布成功')
       createDialogVisible.value = false
       await loadList()
-    } catch (e) {
-      ElMessage.error(e.message || '发布失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -399,12 +396,11 @@ const handleCreate = () => {
 const handleDetail = async (row) => {
   try {
     const res = await getWorkRequirementDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '详情加载失败')
     detail.value = res.data || {}
     await loadAttachmentUrls(detail.value)
     detailDialogVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '详情加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -415,14 +411,13 @@ const handleDelete = (row) => {
     type: 'warning'
   }).then(async () => {
     try {
-      const res = await deleteWorkRequirementAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '删除失败')
+      await deleteWorkRequirementAPI(row.id)
       ElMessage.success('删除成功')
       await loadList()
-    } catch (e) {
-      ElMessage.error(e.message || '删除失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
-  }).catch(() => {})
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleReview = (assignRow, approved) => {
@@ -433,21 +428,18 @@ const handleReview = (assignRow, approved) => {
     type: approved ? 'success' : 'warning'
   }).then(async () => {
     try {
-      const res = await reviewWorkRequirementAPI(assignRow.assignId, { approved })
-      if (res.code !== 200) throw new Error(res.msg || '审核失败')
+      await reviewWorkRequirementAPI(assignRow.assignId, { approved })
       ElMessage.success(approved ? '已通过' : '已驳回')
       const [detailRes] = await Promise.all([
         getWorkRequirementDetailAPI(detail.value.id),
         loadList()
       ])
-      if (detailRes.code === 200) {
-        detail.value = detailRes.data || {}
-        await loadAttachmentUrls(detail.value)
-      }
-    } catch (e) {
-      ElMessage.error(e.message || '审核失败')
+      detail.value = detailRes.data || {}
+      await loadAttachmentUrls(detail.value)
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
-  }).catch(() => {})
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 onMounted(() => { loadList() })

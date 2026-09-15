@@ -172,11 +172,10 @@ const loadList = async () => {
       endDate: hasDate ? searchForm.dateRange[1] : undefined
     }
     const res = await getPickListPageAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     tableData.value = res.data?.records || []
     total.value = res.data?.total || 0
-  } catch (e) {
-    ElMessage.error(e.message || '加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -193,11 +192,10 @@ const handleCurrentChange = (v) => { currentPage.value = v; loadList() }
 const handleView = async (row) => {
   try {
     const res = await getPickListDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     viewData.value = res.data
     viewVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -217,21 +215,19 @@ const handleIssue = (row) => {
     '发料确认', { type: 'warning' }
   )
     .then(async () => {
-      const res = await issuePickListAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '发料失败')
+      await issuePickListAPI(row.id)
       ElMessage.success('发料成功')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleConfirm = (row) => {
   ElMessageBox.confirm('确认已收到物料？', '确认收货', { type: 'warning' })
     .then(async () => {
-      const res = await confirmPickListAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '确认失败')
+      await confirmPickListAPI(row.id)
       ElMessage.success('已确认收货')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleReject = (row) => {
@@ -244,13 +240,12 @@ const submitReject = async () => {
   if (!rejectForm.reason) return ElMessage.warning('请填写驳回原因')
   submitting.value = true
   try {
-    const res = await rejectPickListAPI(rejectForm.id, { reason: rejectForm.reason })
-    if (res.code !== 200) throw new Error(res.msg || '驳回失败')
+    await rejectPickListAPI(rejectForm.id, { reason: rejectForm.reason })
     ElMessage.success('已驳回')
     rejectVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '驳回失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -259,11 +254,10 @@ const submitReject = async () => {
 const handleDelete = (row) => {
   ElMessageBox.confirm('确认撤销该领料申请？', '警告', { type: 'warning' })
     .then(async () => {
-      const res = await deletePickListAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '撤销失败')
+      await deletePickListAPI(row.id)
       ElMessage.success('已撤销')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 onMounted(loadList)

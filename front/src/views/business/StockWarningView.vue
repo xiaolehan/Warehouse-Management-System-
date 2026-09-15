@@ -65,7 +65,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { getStockWarningPageAPI, getSupplierOptionsAPI } from '@/api/base'
 import { useUserStore } from '@/stores/user'
@@ -101,12 +100,9 @@ const applyRouteQuery = () => {
 const loadSuppliers = async () => {
   try {
     const res = await getSupplierOptionsAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '供应商下拉加载失败')
-    }
     suppliers.value = res.data || []
-  } catch (error) {
-    ElMessage.error(error.message || '供应商下拉加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -121,13 +117,10 @@ const loadList = async () => {
       warningType: searchForm.warningType || undefined
     }
     const res = await getStockWarningPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '预警商品查询失败')
-    }
     tableData.value = res.data?.records || []
     total.value = res.data?.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '预警商品查询失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }

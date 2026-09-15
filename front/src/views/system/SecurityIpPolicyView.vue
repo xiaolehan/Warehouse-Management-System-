@@ -189,11 +189,10 @@ const loadList = async () => {
       status: searchForm.status,
       allowFlag: searchForm.allowFlag
     })
-    if (res.code !== 200) throw new Error(res.msg || '加载策略失败')
     tableData.value = res.data?.records || []
     total.value = Number(res.data?.total || 0)
-  } catch (error) {
-    ElMessage.error(error.message || '加载策略失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -233,7 +232,6 @@ const handleAdd = () => {
 const handleEdit = async (row) => {
   try {
     const res = await getIpPolicyDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '加载策略详情失败')
     const data = res.data || {}
     dialogMode.value = 'edit'
     formModel.id = data.id
@@ -245,35 +243,31 @@ const handleEdit = async (row) => {
     formModel.remark = data.remark || ''
     formRef.value?.clearValidate()
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载策略详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(`确认删除策略“${row.policyName}”吗？`, '删除确认', { type: 'warning' })
-    const res = await deleteIpPolicyAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '删除失败')
+    await deleteIpPolicyAPI(row.id)
     ElMessage.success('删除成功')
     loadList()
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close' && error?.message) {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
 const handleStatusChange = async (row, enabled) => {
   const originalStatus = row.status
   try {
-    const res = await updateIpPolicyStatusAPI(row.id, Boolean(enabled))
-    if (res.code !== 200) throw new Error(res.msg || '状态更新失败')
+    await updateIpPolicyStatusAPI(row.id, Boolean(enabled))
     row.status = enabled ? 1 : 0
     ElMessage.success('状态更新成功')
-  } catch (error) {
+  } catch {
+    // 业务错误已由拦截器统一提示
     row.status = originalStatus
-    ElMessage.error(error.message || '状态更新失败')
     loadList()
   }
 }
@@ -291,16 +285,17 @@ const submitForm = () => {
         priority: Number(formModel.priority || 100),
         remark: formModel.remark || ''
       }
-      const res = dialogMode.value === 'add'
-        ? await createIpPolicyAPI(payload)
-        : await updateIpPolicyAPI(formModel.id, payload)
+      if (dialogMode.value === 'add') {
+        await createIpPolicyAPI(payload)
+      } else {
+        await updateIpPolicyAPI(formModel.id, payload)
+      }
 
-      if (res.code !== 200) throw new Error(res.msg || '保存失败')
       ElMessage.success('保存成功')
       dialogVisible.value = false
       loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     } finally {
       saving.value = false
     }

@@ -133,9 +133,6 @@ const isReadOnlyRow = (row) => row?.readOnly === true
 
 const loadDeptOptions = async () => {
   const res = await getDeptOptionsAPI()
-  if (res.code !== 200) {
-    throw new Error(res.msg || '加载部门下拉失败')
-  }
   depts.value = res.data || []
 }
 
@@ -149,14 +146,11 @@ const loadList = async () => {
       deptId: searchForm.deptId || undefined
     }
     const res = await getEmployeePageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '员工查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载员工失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -202,9 +196,6 @@ const handleAdd = () => {
 const handleEdit = async (row) => {
   try {
     const res = await getEmployeeDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '员工详情查询失败')
-    }
     const detail = res.data || {}
     dialogTitle.value = '编辑员工'
     Object.assign(form, {
@@ -219,22 +210,19 @@ const handleEdit = async (row) => {
     })
     formRef.value?.clearValidate()
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载员工详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = (row) => {
   ElMessageBox.confirm('确认删除该员工档案?', '提示', { type: 'warning' })
     .then(async () => {
-      const res = await deleteEmployeeAPI(row.id)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '删除失败')
-      }
+      await deleteEmployeeAPI(row.id)
       ElMessage.success('删除成功')
       await loadList()
     })
-    .catch(() => {})
+    .catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleSave = () => {
@@ -250,15 +238,16 @@ const handleSave = () => {
         email: form.email || '',
         status: form.status
       }
-      const res = form.id ? await updateEmployeeAPI(form.id, payload) : await createEmployeeAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
+      if (form.id) {
+        await updateEmployeeAPI(form.id, payload)
+      } else {
+        await createEmployeeAPI(payload)
       }
       ElMessage.success(form.id ? '修改成功' : '新增成功，初始密码为 123456')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -267,8 +256,8 @@ onMounted(async () => {
   try {
     await loadDeptOptions()
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

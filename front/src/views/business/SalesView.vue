@@ -329,16 +329,13 @@ const buildOperationTime = (selectedDate) => {
 
 const loadGoodsOptions = async () => {
   const res = await getGoodsOptionsAPI({ type: 'product' }) // D67：销售下单只选成品
-  if (res.code !== 200) {
-    throw new Error(res.msg || '加载成品下拉失败')
-  }
   goodsOptions.value = res.data || []
 }
 
 const loadPriceDeviationThreshold = async () => {
   try {
     const res = await getPriceDeviationThresholdAPI()
-    if (res.code === 200 && res.data != null) {
+    if (res.data != null) {
       const v = Number(res.data)
       if (Number.isFinite(v) && v > 0 && v < 1) {
         priceDeviationThreshold.value = v
@@ -362,17 +359,14 @@ const loadList = async () => {
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
     const res = await getSalesPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       salesDate: normalizeDateTime(item.salesDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载销售数据失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -412,9 +406,6 @@ const handleAdd = () => {
 const handleView = async (row) => {
   try {
     const res = await getSalesDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询详情失败')
-    }
     const detail = res.data || {}
     dialogType.value = 'view'
     currentViewId.value = row.id
@@ -429,40 +420,26 @@ const handleView = async (row) => {
       taxIncluded: detail.taxIncluded ?? 0
     })
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = (row) => {
   ElMessageBox.confirm('删除后该销售单库存将自动回补，确认继续吗？', '警告', { type: 'warning' }).then(async () => {
-    const res = await deleteSalesAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
+    await deleteSalesAPI(row.id)
     ElMessage.success('删除成功')
     row.__uiDeleted = true
     row.isDeleted = 1
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleConfirm = (row) => {
   ElMessageBox.confirm('确认出库将从库存扣减该销售数量，确认继续吗？', '确认出库', { type: 'warning' }).then(async () => {
-    const res = await confirmSalesAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '确认失败')
-    }
+    await confirmSalesAPI(row.id)
     ElMessage.success('已确认出库')
     loadList()
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleVoid = async (row) => {
@@ -474,22 +451,17 @@ const handleVoid = async (row) => {
       inputValue: ''
     })
 
-    const res = await createApprovalOrderAPI({
+    await createApprovalOrderAPI({
       bizType: 'sales',
       bizId: row.id,
       requestAction: 'void',
       reason: value || ''
     })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '操作失败')
-    }
 
     ElMessage.success('作废审批已提交，等待仓储管理员处理')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -509,15 +481,12 @@ const submitForm = () => {
         taxIncluded: dialogForm.taxIncluded ?? 0,
         remark: dialogForm.remark || ''
       }
-      const res = await createSalesAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '新增失败')
-      }
+      await createSalesAPI(payload)
       ElMessage.success('销售完成')
       dialogVisible.value = false
       loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '新增失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -527,8 +496,8 @@ onMounted(async () => {
     await loadGoodsOptions()
     await loadPriceDeviationThreshold()
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

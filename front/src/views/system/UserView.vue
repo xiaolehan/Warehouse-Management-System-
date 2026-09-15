@@ -193,9 +193,6 @@ const resetForm = () => {
 
 const loadDeptOptions = async () => {
   const res = await getDeptOptionsAPI()
-  if (res.code !== 200) {
-    throw new Error(res.msg || '部门下拉加载失败')
-  }
   deptOptions.value = res.data || []
   if (isSuperAdminUser.value) {
     searchForm.role = 'management'
@@ -218,14 +215,11 @@ const loadList = async () => {
       status: !isSuperAdminUser.value && searchForm.status !== null ? searchForm.status : undefined
     }
     const res = await getUserPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '用户查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载用户失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -276,9 +270,6 @@ const handleAdd = () => {
 const handleEdit = async (row) => {
   try {
     const res = await getUserDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '用户详情查询失败')
-    }
     const detail = res.data || {}
     dialogTitle.value = '编辑用户'
     Object.assign(form, {
@@ -293,8 +284,8 @@ const handleEdit = async (row) => {
     })
     formRef.value?.clearValidate()
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载用户详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -305,14 +296,11 @@ const handleDelete = (row) => {
   }
   ElMessageBox.confirm('确认删除该用户?', '提示', { type: 'warning' })
     .then(async () => {
-      const res = await deleteUserAPI(row.id)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '删除失败')
-      }
+      await deleteUserAPI(row.id)
       ElMessage.success('删除成功')
       await loadList()
     })
-    .catch(() => {})
+    .catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleStatusChange = async (row, val) => {
@@ -323,14 +311,11 @@ const handleStatusChange = async (row, val) => {
   const oldVal = row.status
   row.status = val
   try {
-    const res = await updateUserStatusAPI(row.id, { status: val ? 1 : 0 })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '状态更新失败')
-    }
+    await updateUserStatusAPI(row.id, { status: val ? 1 : 0 })
     ElMessage.success('状态已更新')
-  } catch (error) {
+  } catch {
+    // 业务错误已由拦截器统一提示
     row.status = oldVal
-    ElMessage.error(error.message || '状态更新失败')
   }
 }
 
@@ -349,14 +334,10 @@ const handleResetPassword = async (row) => {
         return true
       }
     })
-    const res = await resetUserPasswordAPI(row.id, { newPassword: value })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '设置密码失败')
-    }
+    await resetUserPasswordAPI(row.id, { newPassword: value })
     ElMessage.success('密码设置成功')
-  } catch (error) {
-    if (error === 'cancel') return
-    ElMessage.error(error.message || '设置密码失败')
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -373,15 +354,16 @@ const handleSave = () => {
         phone: form.phone || '',
         email: form.email || ''
       }
-      const res = form.id ? await updateUserAPI(form.id, payload) : await createUserAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
+      if (form.id) {
+        await updateUserAPI(form.id, payload)
+      } else {
+        await createUserAPI(payload)
       }
       ElMessage.success(form.id ? '修改成功' : '新增成功，初始密码为 123456')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -391,8 +373,8 @@ onMounted(async () => {
     await loadDeptOptions()
     resetForm()
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

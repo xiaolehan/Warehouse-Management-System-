@@ -489,9 +489,6 @@ const dismissOverdueReminder = () => {
 const loadWorkbench = async () => {
   try {
     const res = await getEmployeeWorkbenchAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '员工工作台加载失败')
-    }
     summary.value = { ...summary.value, ...(res.data?.summary || {}) }
     profile.value = { ...profile.value, ...(res.data?.profile || {}) }
     deptContact.value = { ...deptContact.value, ...(res.data?.deptContact || {}) }
@@ -504,8 +501,8 @@ const loadWorkbench = async () => {
     editingContact.value = !(savedContact.value.phone && savedContact.value.email)
     workRequirements.value = Array.isArray(res.data?.workRequirements) ? res.data.workRequirements : []
     syncDismissedTaskReminder()
-  } catch (error) {
-    ElMessage.error(error.message || '员工工作台加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -530,19 +527,16 @@ const handleSaveContact = () => {
     if (!valid) return
     savingContact.value = true
     try {
-      const res = await updateEmployeeContactAPI({
+      await updateEmployeeContactAPI({
         phone: contactForm.phone || '',
         email: contactForm.email || ''
       })
-      if (res.code !== 200) {
-        throw new Error(res.msg || '联系方式保存失败')
-      }
       ElMessage.success('联系方式已保存')
       await loadWorkbench()
       editingContact.value = false
       contactFormRef.value?.clearValidate()
-    } catch (error) {
-      ElMessage.error(error.message || '联系方式保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     } finally {
       savingContact.value = false
     }
@@ -553,12 +547,9 @@ const loadNotices = async () => {
   noticeLoading.value = true
   try {
     const res = await getNoticePageAPI({ pageNum: 1, pageSize: 6 })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '公告加载失败')
-    }
     noticeList.value = res.data?.records || []
-  } catch (error) {
-    ElMessage.error(error.message || '公告加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     noticeLoading.value = false
   }
@@ -567,13 +558,10 @@ const loadNotices = async () => {
 const openNotice = async (row) => {
   try {
     const res = await getNoticeDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '公告详情加载失败')
-    }
     noticeDetail.value = res.data || {}
     noticeDialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '公告详情加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 

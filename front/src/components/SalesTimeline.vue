@@ -65,13 +65,10 @@ const load = async () => {
   loading.value = true
   try {
     const res = await getSalesTimelineAPI(props.salesId)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '履约进度加载失败')
-    }
     timeline.value = res.data || null
-  } catch (error) {
+  } catch {
     timeline.value = null
-    ElMessage.error(error.message || '履约进度加载失败')
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }

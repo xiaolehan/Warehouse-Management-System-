@@ -16,4 +16,5 @@ export const getWorkRequirementAssignDetailAPI = (assignId) => request.get(`/hom
 export const acceptWorkRequirementAPI = (assignId) => request.put(`/home/work-requirements/${assignId}/accept`)
 export const rejectWorkRequirementAPI = (assignId) => request.put(`/home/work-requirements/${assignId}/reject`)
 export const submitWorkRequirementAPI = (assignId, data) => request.put(`/home/work-requirements/${assignId}/submit`, data)
-export const downloadWorkRequirementAttachmentAPI = (attachmentId) => request.get(`/upload/work-requirement/attachments/${attachmentId}`, { responseType: 'blob' })
+// silent：附件批量加载（Promise.all）按个降级为空串，多附件同时失败时不靠全局提示轰炸（ADR-0012 豁免）
+export const downloadWorkRequirementAttachmentAPI = (attachmentId) => request.get(`/upload/work-requirement/attachments/${attachmentId}`, { responseType: 'blob', silent: true })

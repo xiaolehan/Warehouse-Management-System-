@@ -69,24 +69,16 @@ const formatCurrency = (value) => {
 
 const formatRate = (value) => `${Number(value).toFixed(1)}%`
 
-// 项目异常封装为 HTTP 200 + body code，拦截器只认 HTTP 状态码——必须显式校验 code
-const normalizeBizRes = (res, fallbackMsg) => {
-  if (!res || res.code !== 200) {
-    throw new Error(res?.msg || fallbackMsg)
-  }
-  return res.data
-}
-
 const fetchData = async () => {
   loading.value = true
   try {
     const res = await getAnnualStatsAPI()
-    statsList.value = normalizeBizRes(res, '加载年度经营统计失败') || []
+    statsList.value = res.data || []
     await nextTick()
     await initChart()
     updateChart()
-  } catch (error) {
-    ElMessage.error(error.message || '加载年度经营统计失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -135,7 +127,8 @@ const handleExport = async () => {
     await saveBlobAs(blob, `年度经营统计-${localDateString()}.xlsx`)
     ElMessage.success('导出成功')
   } catch (error) {
-    ElMessage.error(error.message || '导出失败')
+    // saveBlobAs 探测出的业务错误（JSON 错误体）在此提示；传输错误已由拦截器统一提示
+    if (!error?.isAxiosError) ElMessage.error(error.message || '导出失败')
   } finally {
     exporting.value = false
   }

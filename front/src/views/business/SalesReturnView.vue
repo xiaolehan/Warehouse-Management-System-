@@ -298,9 +298,6 @@ const buildOperationTime = (selectedDate) => {
 
 const loadSourceSalesOptions = async () => {
   const res = await getReturnableSalesOptionsAPI()
-  if (res.code !== 200) {
-    throw new Error(res.msg || '加载来源销售单失败')
-  }
   sourceSalesOptions.value = res.data || []
 }
 
@@ -326,17 +323,14 @@ const loadList = async () => {
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
     const res = await getSalesReturnPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       returnDate: normalizeDateTime(item.returnDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载销售退货数据失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -377,9 +371,6 @@ const handleAdd = () => {
 const handleView = async (row) => {
   try {
     const res = await getSalesReturnDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询详情失败')
-    }
     const detail = res.data || {}
     dialogType.value = 'view'
     selectedSourceSales.value = {
@@ -397,40 +388,26 @@ const handleView = async (row) => {
       reason: detail.reason || detail.remark || ''
     })
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = (row) => {
   ElMessageBox.confirm('删除此退货记录？', '确认', { type: 'warning' }).then(async () => {
-    const res = await deleteSalesReturnAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
+    await deleteSalesReturnAPI(row.id)
     ElMessage.success('删除成功')
     row.__uiDeleted = true
     row.isDeleted = 1
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleConfirm = (row) => {
   ElMessageBox.confirm('确认入库将把退货数量加回库存，确认继续吗？', '确认入库', { type: 'warning' }).then(async () => {
-    const res = await confirmSalesReturnAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '确认失败')
-    }
+    await confirmSalesReturnAPI(row.id)
     ElMessage.success('已确认入库')
     loadList()
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleVoid = async (row) => {
@@ -442,22 +419,17 @@ const handleVoid = async (row) => {
       inputValue: ''
     })
 
-    const res = await createApprovalOrderAPI({
+    await createApprovalOrderAPI({
       bizType: 'sales_return',
       bizId: row.id,
       requestAction: 'void',
       reason: value || ''
     })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '操作失败')
-    }
 
     ElMessage.success('作废审批已提交，等待仓储管理员处理')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -466,10 +438,12 @@ const submitForm = () => {
     if (!valid) {
       return
     }
+    // 本地校验（非 API 错误）：退货数量不可超出来源单可退数量
+    if (selectedSourceSales.value && dialogForm.quantity > selectedSourceSales.value.returnableQuantity) {
+      ElMessage.warning(`退货数量超出可退数量，最多可退 ${selectedSourceSales.value.returnableQuantity}`)
+      return
+    }
     try {
-      if (selectedSourceSales.value && dialogForm.quantity > selectedSourceSales.value.returnableQuantity) {
-        throw new Error(`退货数量超出可退数量，最多可退 ${selectedSourceSales.value.returnableQuantity}`)
-      }
       const payload = {
         sourceSalesId: dialogForm.sourceSalesId,
         customerName: dialogForm.customerName || undefined,
@@ -478,16 +452,13 @@ const submitForm = () => {
         operationTime: buildOperationTime(dialogForm.returnDate),
         remark: dialogForm.reason || ''
       }
-      const res = await createSalesReturnAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '新增失败')
-      }
+      await createSalesReturnAPI(payload)
       ElMessage.success('销售退货新增成功')
       dialogVisible.value = false
       await loadSourceSalesOptions()
       loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '新增失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -501,8 +472,8 @@ onMounted(async () => {
   }
   try {
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

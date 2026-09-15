@@ -586,7 +586,8 @@ const handleExport = async () => {
     const blob = await exportStocktakeAPI(detail.value.id, exportBlind.value)
     await saveBlobAs(blob, `盘点表-${detail.value.stocktakeNo}-${localDateString()}.xlsx`)
   } catch (e) {
-    ElMessage.error(e.message || '导出失败')
+    // saveBlobAs 探测出的业务错误（JSON 错误体）在此提示；传输错误已由拦截器统一提示
+    if (!e?.isAxiosError) ElMessage.error(e.message || '导出失败')
   } finally {
     exporting.value = false
   }

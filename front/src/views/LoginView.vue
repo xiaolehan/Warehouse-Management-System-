@@ -117,8 +117,9 @@ const handleLogin = () => {
       submitting.value = true
       try {
         const res = await loginAPI(form)
-        if (res.code !== 200 || !res.data?.token) {
-          throw new Error(res.msg || '登录失败')
+        if (!res.data?.token) {
+          ElMessage.error('登录失败：服务响应异常')
+          return
         }
 
         userStore.setToken(res.data.token)
@@ -130,8 +131,8 @@ const handleLogin = () => {
           : (currentRole === 'admin' ? '管理员' : '普通员工')
         ElMessage.success(`登录成功，当前角色：${roleText}`)
         router.push('/')
-      } catch (error) {
-        ElMessage.error(error.message || '登录失败')
+      } catch {
+        // 业务错误已由拦截器统一提示
       } finally {
         submitting.value = false
       }

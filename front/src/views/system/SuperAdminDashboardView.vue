@@ -87,7 +87,6 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { ArrowRight, Stamp, Lock, Notebook, Document } from '@element-plus/icons-vue'
 import { getEnabledIpPoliciesAPI, getIpPolicyPageAPI } from '@/api/security'
 import { getLoginLogPageAPI, getOperationLogPageAPI } from '@/api/audit'
@@ -125,20 +124,14 @@ const loadDashboard = async () => {
       getDeptPageAPI({ pageNum: 1, pageSize: 5, status: 1 })
     ])
 
-    if (enabledRes.code !== 200) throw new Error(enabledRes.msg || '加载启用策略失败')
-    if (policyRes.code !== 200) throw new Error(policyRes.msg || '加载策略总数失败')
-    if (loginRes.code !== 200) throw new Error(loginRes.msg || '加载登录日志总数失败')
-    if (operationRes.code !== 200) throw new Error(operationRes.msg || '加载操作日志失败')
-    if (deptApprovalRes.code !== 200) throw new Error(deptApprovalRes.msg || '加载部门审批失败')
-
     metrics.enabledPolicyCount = Array.isArray(enabledRes.data) ? enabledRes.data.length : 0
     metrics.policyTotal = Number(policyRes.data?.total || 0)
     metrics.loginLogTotal = Number(loginRes.data?.total || 0)
     metrics.operationLogTotal = Number(operationRes.data?.total || 0)
     metrics.pendingDeptApprovalCount = Number(deptApprovalRes.data?.total || 0)
     recentOperations.value = operationRes.data?.records || []
-  } catch (error) {
-    ElMessage.error(error.message || '加载超管总览失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }

@@ -235,12 +235,9 @@ const rules = computed(() => {
 const loadSuppliers = async () => {
   try {
     const res = await getSupplierOptionsAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '供应商下拉加载失败')
-    }
     suppliers.value = res.data || []
-  } catch (error) {
-    ElMessage.error(error.message || '供应商下拉加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -258,14 +255,11 @@ const loadList = async () => {
       supplierId: searchForm.supplierId || undefined
     }
     const res = await getGoodsPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || `${goodsNoun.value}查询失败`)
-    }
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || `加载${goodsNoun.value}失败`)
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -323,9 +317,6 @@ const handleAdd = () => {
 
 const openByDetail = async (row, viewMode) => {
   const res = await getGoodsDetailAPI(row.id)
-  if (res.code !== 200) {
-    throw new Error(res.msg || `${goodsNoun.value}详情查询失败`)
-  }
   const detail = res.data || {}
   isView.value = viewMode
   isAddMode.value = false
@@ -352,33 +343,27 @@ const openByDetail = async (row, viewMode) => {
 const handleView = async (row) => {
   try {
     await openByDetail(row, true)
-  } catch (error) {
-    ElMessage.error(error.message || `加载${goodsNoun.value}详情失败`)
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleEdit = async (row) => {
   try {
     await openByDetail(row, false)
-  } catch (error) {
-    ElMessage.error(error.message || `加载${goodsNoun.value}详情失败`)
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = async (row) => {
   try {
     await ElMessageBox.confirm(`确认删除该${goodsNoun.value}资料?`, '警告', { type: 'warning' })
-    const res = await deleteGoodsAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
+    await deleteGoodsAPI(row.id)
     ElMessage.success('删除成功')
     await loadList()
-  } catch (error) {
-    // 用户取消（'cancel'）不提示；后端拒绝（如有库存/被单据引用）须展示其 message
-    if (error !== 'cancel' && error?.message) {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 用户取消删除或业务错误已由拦截器统一提示
   }
 }
 
@@ -424,15 +409,16 @@ const handleSave = () => {
       if (!form.id) {
         payload.status = 1
       }
-      const res = form.id ? await updateGoodsAPI(form.id, payload) : await createGoodsAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
+      if (form.id) {
+        await updateGoodsAPI(form.id, payload)
+      } else {
+        await createGoodsAPI(payload)
       }
       ElMessage.success(form.id ? '修改成功' : '新增成功')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }

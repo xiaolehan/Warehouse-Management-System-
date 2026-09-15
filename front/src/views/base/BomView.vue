@@ -91,7 +91,6 @@
                     <el-upload
                       :http-request="uploadImageRequest" :show-file-list="false"
                       accept="image/*" :on-success="(res, uf) => onImageSuccess(scope.row, res, uf)"
-                      :on-error="onImageError"
                     >
                       <el-button v-if="!scope.row.image" size="small" type="primary" plain :icon="Picture">上传图</el-button>
                       <template v-else>
@@ -351,17 +350,16 @@ const uploadImageRequest = (options) => {
     .catch((e) => options.onError(e))
 }
 
-// 明细行组件图片上传成功
+// 明细行组件图片上传成功（业务失败已被拦截器提示并走 onError 通道，这里只处理成功载荷）
 const onImageSuccess = (row, res) => {
-  if (res && res.code === 200 && res.data?.path) {
+  if (res?.data?.path) {
     row.image = res.data.path
     loadImg(res.data.path)
     ElMessage.success('图片上传成功')
   } else {
-    ElMessage.error(res?.msg || '图片上传失败')
+    ElMessage.error('图片上传失败')
   }
 }
-const onImageError = () => ElMessage.error('图片上传失败')
 
 const loadList = async () => {
   loading.value = true
@@ -373,14 +371,11 @@ const loadList = async () => {
       goodsName: searchForm.goodsName || undefined
     }
     const res = await getBomPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || 'BOM 查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载 BOM 失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -390,8 +385,8 @@ const loadOptions = async () => {
   try {
     const m = await getGoodsMaterialOptionsAPI()
     materialOptions.value = (m.data || []).map(normalizeOpt)
-  } catch (error) {
-    ElMessage.error(error.message || '加载物料选项失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -459,9 +454,6 @@ const handleAdd = () => {
 
 const loadBom = async (row) => {
   const res = await getBomDetailAPI(row.id)
-  if (res.code !== 200) {
-    throw new Error(res.msg || 'BOM 详情查询失败')
-  }
   return res.data || {}
 }
 
@@ -472,8 +464,8 @@ const handleView = async (row) => {
     detail.value = d
     detailVisible.value = true
     preloadImgs(d.details)
-  } catch (error) {
-    ElMessage.error(error.message || '加载 BOM 详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -503,8 +495,8 @@ const handleEdit = async (row) => {
     preloadImgs(form.details)
     formRef.value?.clearValidate()
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载 BOM 详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -513,9 +505,6 @@ const handleEdit = async (row) => {
 const handleDelete = async (row) => {
   try {
     const check = await getBomDeleteCheckAPI(row.id)
-    if (check.code !== 200) {
-      throw new Error(check.msg || '删除前检查失败')
-    }
     const unfinished = check.data?.unfinishedOrderCount || 0
     const hasUnfinished = unfinished > 0
     const message = hasUnfinished
@@ -526,15 +515,10 @@ const handleDelete = async (row) => {
       confirmButtonText: hasUnfinished ? '仍要删除' : '确定'
     })
     const res = await deleteBomAPI(row.id, hasUnfinished)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
     ElMessage.success(res.data || '删除成功')
     await loadList()
-  } catch (error) {
-    if (error !== 'cancel' && error?.message) {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -575,15 +559,12 @@ const handleSave = () => {
     }
     try {
       const payload = buildPayload()
-      const res = form.id ? await updateBomAPI(form.id, payload) : await createBomAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '保存失败')
-      }
+      form.id ? await updateBomAPI(form.id, payload) : await createBomAPI(payload)
       ElMessage.success(form.id ? '修改成功' : '新增成功')
       dialogVisible.value = false
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '保存失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -595,7 +576,8 @@ const handleExport = async (row) => {
     const blob = await getBomExportAPI(row.id)
     await saveBlobAs(blob, `${row.bomCode}.xlsx`)
   } catch (error) {
-    ElMessage.error(error.message || '导出失败')
+    // saveBlobAs 探测出的业务错误（JSON 错误体）在此提示；传输错误已由拦截器统一提示
+    if (!error?.isAxiosError) ElMessage.error(error.message || '导出失败')
   }
 }
 
@@ -604,7 +586,8 @@ const downloadTemplate = async () => {
     const blob = await getBomTemplateAPI()
     await saveBlobAs(blob, 'BOM导入模板.xlsx')
   } catch (error) {
-    ElMessage.error(error.message || '模板下载失败')
+    // saveBlobAs 探测出的业务错误（JSON 错误体）在此提示；传输错误已由拦截器统一提示
+    if (!error?.isAxiosError) ElMessage.error(error.message || '模板下载失败')
   }
 }
 
@@ -634,20 +617,16 @@ const importRequest = (options) => {
     .catch((e) => options.onError(e))
 }
 
+// 业务失败已被拦截器提示并走 onError 通道，onSuccess 收到的必为成功载荷
 const onImportSuccess = (res) => {
-  if (res && res.code === 200) {
-    ElMessage.success(`导入成功，共 ${res.data?.imported || 0} 行明细（已覆盖该成品 BOM）`)
-    importVisible.value = false
-    importUploadRef.value?.clearFiles()
-    loadList()
-  } else {
-    ElMessage.error(res?.msg || '导入失败')
-    importUploadRef.value?.clearFiles()
-  }
+  ElMessage.success(`导入成功，共 ${res.data?.imported || 0} 行明细（已覆盖该成品 BOM）`)
+  importVisible.value = false
+  importUploadRef.value?.clearFiles()
+  loadList()
 }
 
 const onImportError = () => {
-  ElMessage.error('导入失败，请检查文件格式')
+  // 业务/网络错误已由拦截器统一提示，这里只清理文件列表
   importUploadRef.value?.clearFiles()
 }
 

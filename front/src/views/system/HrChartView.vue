@@ -69,7 +69,6 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { getHrEmployeeDistributionAPI } from '@/api/hr'
 import { loadECharts } from '@/utils/echartsLoader'
@@ -163,9 +162,6 @@ const loadData = async () => {
   loading.value = true
   try {
     const res = await getHrEmployeeDistributionAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '员工图表加载失败')
-    }
     chartData.value = {
       totalEmployeeCount: res.data?.totalEmployeeCount ?? 0,
       deptCount: res.data?.deptCount ?? 0,
@@ -176,8 +172,8 @@ const loadData = async () => {
     }
     await nextTick()
     await initCharts()
-  } catch (error) {
-    ElMessage.error(error.message || '员工图表加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }

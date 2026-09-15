@@ -181,8 +181,8 @@ const notifyNewMessages = (fresh, displayCount) => {
 const loadUnreadCount = async () => {
   if (!showMessageCenter.value) return
   try {
-    const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false })
-    if (res.code !== 200) return
+    // 角标轮询（15s）属有意静默场景：silent 豁免全局错误提示，失败保持上次基线（ADR-0012 豁免口）
+    const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false }, { silent: true })
     const records = res.data?.records || []
     const total = Number(res.data?.total ?? records.length)
     const currentIds = new Set(records.map((m) => m.id))
@@ -213,12 +213,9 @@ const loadMessages = async () => {
   listLoading.value = true
   try {
     const res = await getMessagePageAPI({ pageNum: 1, pageSize: 50 })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '消息加载失败')
-    }
     messageList.value = (res.data?.records || []).map(withJumpPath)
-  } catch (error) {
-    ElMessage.error(error.message || '消息加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     listLoading.value = false
   }
@@ -237,14 +234,11 @@ const handleRead = async (message) => {
   actionLoading.value = true
   try {
     const res = await markMessageReadAPI(message.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '消息已读失败')
-    }
     notifiedMessageIds.delete(message.id)
     await refreshMessageState(true)
     return true
-  } catch (error) {
-    ElMessage.error(error.message || '消息已读失败')
+  } catch {
+    // 业务错误已由拦截器统一提示；已读失败返回 false 不跳转（避免状态分叉）
     return false
   } finally {
     actionLoading.value = false
@@ -272,14 +266,11 @@ const handleReadAll = async () => {
   actionLoading.value = true
   try {
     const res = await markAllMessagesReadAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '一键已读失败')
-    }
     notifiedMessageIds.clear()
     ElMessage.success('全部未读消息已标记为已读')
     await refreshMessageState(true)
-  } catch (error) {
-    ElMessage.error(error.message || '一键已读失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     actionLoading.value = false
   }
@@ -296,13 +287,10 @@ const handleDeleteRead = async () => {
   actionLoading.value = true
   try {
     const res = await deleteAllReadMessagesAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除已读消息失败')
-    }
     ElMessage.success('已删除全部已读消息')
     await refreshMessageState(true)
-  } catch (error) {
-    ElMessage.error(error.message || '删除已读消息失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     actionLoading.value = false
   }

@@ -134,12 +134,9 @@ const rules = {
 const loadDeptOptions = async () => {
   try {
     const res = await getRegisterDeptOptionsAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '部门列表加载失败')
-    }
     deptOptions.value = res.data || []
-  } catch (error) {
-    ElMessage.error(error.message || '部门列表加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -151,8 +148,8 @@ const handleRegister = () => {
         await registerAPI({ username: form.username, realName: form.realName, password: form.password, deptId: form.deptId })
         ElMessage.success('注册成功，请登录')
         router.push('/login')
-      } catch (error) {
-        ElMessage.error(error?.response?.data?.msg || error.message || '注册失败')
+      } catch {
+        // 业务错误已由拦截器统一提示
       } finally {
         submitting.value = false
       }

@@ -85,7 +85,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { getHomeSummaryAPI } from '@/api/home'
 import { getAdminHomeLatestNoticeAPI, getApprovalPendingReminderAPI, getNoticeDetailAPI } from '@/api/system'
 import { getWorkRequirementOverdueReminderAPI, getWorkRequirementPendingReviewReminderAPI } from '@/api/workRequirement'
@@ -277,42 +276,34 @@ const dismissReminder = (item) => {
 const loadSummary = async () => {
   try {
     const res = await getHomeSummaryAPI()
-    if (res.code === 200) {
-      summary.value = { ...summary.value, ...res.data }
-      syncDismissedReminders()
-    }
+    summary.value = { ...summary.value, ...res.data }
+    syncDismissedReminders()
   } catch {
-    ElMessage.error('首页摘要加载失败')
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const loadWorkRequirementReminder = async () => {
   try {
     const res = await getWorkRequirementPendingReviewReminderAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '工作要求审核提醒加载失败')
-    }
     workRequirementReminder.value = {
       count: Number(res.data?.count || 0),
       signature: res.data?.signature || ''
     }
-  } catch (error) {
-    ElMessage.error(error.message || '工作要求审核提醒加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const loadOverdueReminder = async () => {
   try {
     const res = await getWorkRequirementOverdueReminderAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '工作要求超时提醒加载失败')
-    }
     overdueReminder.value = {
       count: Number(res.data?.count || 0),
       signature: res.data?.signature || ''
     }
-  } catch (error) {
-    ElMessage.error(error.message || '工作要求超时提醒加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -323,15 +314,12 @@ const loadApprovalReminder = async () => {
   }
   try {
     const res = await getApprovalPendingReminderAPI()
-    if (res.code !== 200) {
-      throw new Error(res.msg || '作废审批提醒加载失败')
-    }
     approvalReminder.value = {
       count: Number(res.data?.count || 0),
       signature: res.data?.signature || ''
     }
-  } catch (error) {
-    ElMessage.error(error.message || '作废审批提醒加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -339,11 +327,9 @@ const loadNotices = async () => {
   noticeLoading.value = true
   try {
     const res = await getAdminHomeLatestNoticeAPI(4)
-    if (res.code === 200) {
-      noticeList.value = res.data || []
-    }
+    noticeList.value = res.data || []
   } catch {
-    ElMessage.error('公告加载失败')
+    // 业务错误已由拦截器统一提示
   } finally {
     noticeLoading.value = false
   }
@@ -352,13 +338,10 @@ const loadNotices = async () => {
 const openNotice = async (row) => {
   try {
     const res = await getNoticeDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '公告详情加载失败')
-    }
     noticeDetail.value = res.data || {}
     noticeDialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '公告详情加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 

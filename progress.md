@@ -5,6 +5,36 @@
 
 ---
 
+## 会话 37 — 2026-09-15
+
+### 前端业务错误提示单通道根治（/grill-with-docs 一轮三题全按推荐，ADR-0012/D90）——问题 #1 修复
+
+- **起因（用户原话）：** 要求详细描述会话 35 确诊的问题 #1（`.catch(() => {})` 静默吞错）→ 讲透后选 A 立即修 → 路线按推荐走 B 拦截器单通道根治 → Q2=A 保留空 catch（吞 ElMessageBox 取消用）→ Q3=A 写 ADR-0012。
+- **问题诊断（两层失败模型）：** ① request.js 响应拦截器只透传不识 body code——后端 GlobalExceptionHandler 把**所有**异常包成 HTTP 200+`{code,msg}`（curl 实证：未登录/越权也是 HTTP 200+body 401/403），业务错误到了页面必须逐处手写 `res.code` 检查（全站 172 处，漏一处即无声失败）；② 为吞 ElMessageBox 取消写的 19 处 `.catch(() => {})` 顺带吞了业务错误——症状即"删除被商品引用的供应商，无任何提示、删不掉"。
+- **决策（ADR-0012）：** 拦截器统一识别业务错误 → `ElMessage.error` + reject，**单通道**，页面 catch 零错误样板；`{ silent: true }` 单请求豁免（仅两处：MessageCenter 15s 角标轮询防 toast 轰炸、工作需求附件批量加载按个降级为空串）；blob/arraybuffer 透传 + `saveBlobAs` 探测 JSON 错误体抛普通 Error，页面 catch 以 `!error?.isAxiosError` 区分业务错误（页面提示）与传输错误（拦截器已提示）；el-upload 双通道保留（http-request 手动回调 + WorkRequirementDetailView 原生 `:action` XHR 各在页面侧识别 code——后者绕过 axios，其 `response.code===200` 检查是活代码）。
+- **执行：** 39 文件清扫（4 批并行 agent + 我自留 9 个特殊文件）：172 处死 `res.code` 检查删除、约 130 处重复错误 toast 清除、31 处空 catch 保留并统一注释「取消或业务错误已统一提示」；成功 toast / 本地校验 toast（warning）/ 状态回滚与 finally 一律保留；PurchaseReturn/SalesReturn 本地校验移出 try 并统一 warning severity。
+- **跨批一致性评审抓回 2 处：** ① AnnualStatsView 导出 catch 被误静默（blob 业务错误唯一提示通道被掐）→ 补回 `!isAxiosError` 守卫范式；② SalesReturnView 本地校验用了 error → 对齐 PurchaseReturnView 的 warning。另把 OperationLogView 内联 blob 探测去重归 saveBlobAs、BomView 两个下载 catch 补齐同款守卫。
+- **验证：** 不变量 grep 全零（`.code === 200` 仅剩拦截器本体 + el-upload 原生 XHR 1 处）；31 处空 catch 全带统一注释；13 处 `ElMessage.error` 逐一核过全部合理（拦截器 3 / saveBlobAs 守卫 4 / el-upload 2 / 本地校验 1 / 路由守卫 1 / 登录兜底 1）；`npm run build` ✓。
+- **留档：** ADR-0012 新建 + CONTEXT.md「业务错误」词条 + task_plan D90 + test-plan 问题 #1 → ✅ 已修复；未提交 git（等用户拍板）。
+- **后续项（已记 ADR）：** body code 401 → 跳 /login（当前与 HTTP 401 不对称：仅 toast）；AI 助手查询失败双通道（toast+聊天气泡）评审项；SuperAdminHome 未使用的 `useRouter`；SalesChartView echarts 运行时错误不再 toast（行为变化备注）。
+- **下一步：** 用户浏览器硬刷新回归手测（重点：删除被引用供应商有提示 / 导出超限有提示 / 正常操作无多余 toast）→ 优化批下一项清单。
+
+---
+
+## 会话 36 — 2026-09-15
+
+### 供应商联系人搜索命中展示（/grill-with-docs 两轮四题全按推荐，D89）
+
+- **需求（用户原话）：** 供应商管理列表一供应商多联系人（XX 公司：张三主/李四），搜"李四"能搜出该行但联系人/手机号仍显示张三；要求搜中谁展示谁；操作栏「查看」弹窗多联系人功能保持不动。
+- **根因：** `SupplierService.page()` 联系人姓名只做 `IN` 子查询**过滤**供应商行，行扁平三列恒由 `fillContacts()` 填主联系人（is_default=1 优先/否则首条）——搜索语义与展示语义无关。
+- **grill 决策（入 D89）：** R1：行语义=一行一供应商、命中联系人出镜（否掉一行一联系人：行语义翻倍+分页变怪）；多命中主联系人优先否则 id 最小；加轻量「命中」tag 防"误当主联系人"。R2：纯前端实现（分页行自带 `contacts` 数组）+ tag 跟姓名后；默认口径：tag 随搜索词出现/消失、命中主联系人本人也带 tag、空字段留空不回退、与名称搜索并存互不影响、无落库。
+- **改动（仅 SupplierView.vue 一处）：** `pickMatchedContact` 助手（includes 匹配 + id 升序 + 主联系人优先）+ `loadList` 映射覆盖三列并置 `contactMatched` + 联系人列自定义模板带 warning「命中」tag；前端未匹配到静默回退主联系人。
+- **验证：** 纯逻辑 node 7/7 PASS（多命中 tie-break/空职务/contacts 缺失/大小写回退）；`npm run build` ✓；真实 API 驱动 E2E 3/3（建双联系人供应商→搜"李四"行展示李四/222/销售+命中标、搜"张"张三 tie-break 优先、无词张三无标）；测试供应商已删、残留 0。test-plan 问题表录入 #2（✅ 已修复）。
+- **注意：** 会话 35 确诊的问题 #1（`.catch(() => {})` 静默吞错）同在 SupplierView.vue，属"优化批"待修，本次刻意未动。
+- **下一步：** 用户浏览器硬刷新手测确认；等优化批修改清单。
+
+---
+
 ## 会话 35 — 2026-09-15
 
 ### 阶段 25 测试暂停转优化（用户拍板）+ 环境重置备重测 + 问题#1 确诊（零代码改动）

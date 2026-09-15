@@ -254,9 +254,6 @@ const buildOperationTime = (selectedDate) => {
 
 const loadSourcePurchaseOptions = async () => {
   const res = await getReturnablePurchaseOptionsAPI()
-  if (res.code !== 200) {
-    throw new Error(res.msg || '加载来源进货单失败')
-  }
   sourcePurchaseOptions.value = res.data || []
 }
 
@@ -280,17 +277,14 @@ const loadList = async () => {
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
     const res = await getPurchaseReturnPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       returnDate: normalizeDateTime(item.returnDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载退货数据失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -326,21 +320,19 @@ const confirmStatusTagType = (status) => ({
 const handleConfirmOut = (row) => {
   ElMessageBox.confirm('确认出库后将减少库存，不可撤销。是否继续？', '确认出库', { type: 'warning' })
     .then(async () => {
-      const res = await confirmOutPurchaseReturnAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '确认出库失败')
+      await confirmOutPurchaseReturnAPI(row.id)
       ElMessage.success('已确认出库，库存已减少')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleComplete = (row) => {
   ElMessageBox.confirm('确认退货成功？将完成该退货单。', '确认退货成功', { type: 'warning' })
     .then(async () => {
-      const res = await completePurchaseReturnAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '确认退货成功失败')
+      await completePurchaseReturnAPI(row.id)
       ElMessage.success('已确认退货成功')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 // 新增退货单
@@ -356,9 +348,6 @@ const handleAdd = () => {
 const handleView = async (row) => {
   try {
     const res = await getPurchaseReturnDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询详情失败')
-    }
     const detail = res.data || {}
     dialogType.value = 'view'
     selectedSourcePurchase.value = {
@@ -375,25 +364,18 @@ const handleView = async (row) => {
       reason: detail.reason || detail.remark || ''
     })
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const handleDelete = (row) => {
   ElMessageBox.confirm('撤销此退货单，相应库存将会扣回，继续吗？', '确认', { type: 'warning' }).then(async () => {
-    const res = await deletePurchaseReturnAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
+    await deletePurchaseReturnAPI(row.id)
     ElMessage.success('删除成功')
     row.__uiDeleted = true
     row.isDeleted = 1
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 // 作废单据
 const handleVoid = async (row) => {
@@ -405,22 +387,17 @@ const handleVoid = async (row) => {
       inputValue: ''
     })
 
-    const res = await createApprovalOrderAPI({
+    await createApprovalOrderAPI({
       bizType: 'purchase_return',
       bizId: row.id,
       requestAction: 'void',
       reason: value || ''
     })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '操作失败')
-    }
 
     ElMessage.success('作废审批已提交，等待仓储管理员处理')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -429,10 +406,12 @@ const submitForm = () => {
     if (!valid) {
       return
     }
+    // 本地校验前置（非 API 错误，不入 try）：退货数量超可退
+    if (selectedSourcePurchase.value && dialogForm.returnQuantity > selectedSourcePurchase.value.returnableQuantity) {
+      ElMessage.warning(`退货数量超出可退数量，最多可退 ${selectedSourcePurchase.value.returnableQuantity}`)
+      return
+    }
     try {
-      if (selectedSourcePurchase.value && dialogForm.returnQuantity > selectedSourcePurchase.value.returnableQuantity) {
-        throw new Error(`退货数量超出可退数量，最多可退 ${selectedSourcePurchase.value.returnableQuantity}`)
-      }
       const payload = {
         sourcePurchaseId: dialogForm.sourcePurchaseId,
         quantity: dialogForm.returnQuantity,
@@ -440,16 +419,13 @@ const submitForm = () => {
         operationTime: buildOperationTime(dialogForm.returnDate),
         remark: dialogForm.reason || ''
       }
-      const res = await createPurchaseReturnAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '新增失败')
-      }
+      await createPurchaseReturnAPI(payload)
       ElMessage.success('退货开单成功')
       dialogVisible.value = false
       await loadSourcePurchaseOptions()
       loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '新增失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -463,8 +439,8 @@ onMounted(async () => {
   }
   try {
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示（loadList 内部已兜底，此 catch 实际不可达）
   }
 })
 </script>

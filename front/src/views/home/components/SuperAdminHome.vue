@@ -63,7 +63,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { getHomeSummaryAPI } from '@/api/home'
 import { getDeptPageAPI } from '@/api/system'
 import { getToken } from '@/utils/auth'
@@ -109,21 +108,16 @@ const dismissDeptApprovalReminder = () => {
 const loadSummary = async () => {
   try {
     const res = await getHomeSummaryAPI()
-    if (res.code === 200) {
-      summary.value = { ...summary.value, ...res.data }
-      syncDismissedReminder()
-    }
+    summary.value = { ...summary.value, ...res.data }
+    syncDismissedReminder()
   } catch {
-    ElMessage.error('首页摘要加载失败')
+    // 业务错误已由拦截器统一提示
   }
 }
 
 const loadDeptApprovalReminder = async () => {
   try {
     const res = await getDeptPageAPI({ pageNum: 1, pageSize: 50, status: 1 })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '部门审批提醒加载失败')
-    }
 
     const records = Array.isArray(res.data?.records) ? res.data.records : []
     const signature = Number(res.data?.total || 0) > 0
@@ -134,8 +128,8 @@ const loadDeptApprovalReminder = async () => {
       count: Number(res.data?.total || 0),
       signature
     }
-  } catch (error) {
-    ElMessage.error(error.message || '部门审批提醒加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 

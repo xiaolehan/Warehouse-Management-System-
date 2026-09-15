@@ -383,7 +383,6 @@ const applyAllDate = ref(null)
 const openArrivalPlanDialog = async (row, mode) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '查询明细失败')
     processForm.id = row.id
     processForm.mode = mode
     processForm.items = (res.data?.details || []).map(d => ({
@@ -395,8 +394,8 @@ const openArrivalPlanDialog = async (row, mode) => {
     }))
     applyAllDate.value = null
     processVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '加载明细失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 const handleProcess = (row) => openArrivalPlanDialog(row, 'process')
@@ -441,11 +440,10 @@ const loadList = async () => {
       endDate: hasDate ? searchForm.dateRange[1] : undefined
     }
     const res = await getPurchaseRequestPageAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     tableData.value = res.data?.records || []
     total.value = res.data?.total || 0
-  } catch (e) {
-    ElMessage.error(e.message || '加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -463,14 +461,13 @@ const handleCurrentChange = (v) => { currentPage.value = v; loadList() }
 const handleShortage = async () => {
   try {
     const res = await getShortageGoodsAPI()
-    if (res.code !== 200) throw new Error(res.msg || '查询缺货商品失败')
     shortageGoods.value = (res.data || []).map(g => ({ ...g, quantity: 1 }))
     addForm.remark = ''
     addForm.details = shortageGoods.value
     selectedDetails.value = []
     addVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '查询缺货商品失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -485,13 +482,12 @@ const submitAdd = async () => {
   }
   submitting.value = true
   try {
-    const res = await createPurchaseRequestAPI(payload)
-    if (res.code !== 200) throw new Error(res.msg || '创建失败')
+    await createPurchaseRequestAPI(payload)
     ElMessage.success('采购申请单已提交，已通知采购管理员')
     addVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '创建失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -502,10 +498,9 @@ const handleManual = async () => {
   if (!goodsOptions.value.length) {
     try {
       const res = await getGoodsMaterialOptionsAPI()
-      if (res.code !== 200) throw new Error(res.msg || '加载商品失败')
       goodsOptions.value = res.data || []
-    } catch (e) {
-      ElMessage.error(e.message || '加载商品失败')
+    } catch {
+      // 业务错误已由拦截器统一提示；加载失败不打开弹窗
       return
     }
   }
@@ -528,13 +523,12 @@ const submitManual = async () => {
   }
   submitting.value = true
   try {
-    const res = await createPurchaseRequestAPI(payload)
-    if (res.code !== 200) throw new Error(res.msg || '创建失败')
+    await createPurchaseRequestAPI(payload)
     ElMessage.success('采购申请单已提交，已通知采购管理员')
     manualVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '创建失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -543,11 +537,10 @@ const submitManual = async () => {
 const handleView = async (row) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     viewData.value = res.data
     viewVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -563,18 +556,16 @@ const submitProcess = async () => {
   submitting.value = true
   try {
     if (processForm.mode === 'process') {
-      const res = await processPurchaseRequestAPI(processForm.id, payload)
-      if (res.code !== 200) throw new Error(res.msg || '认领失败')
+      await processPurchaseRequestAPI(processForm.id, payload)
       ElMessage.success('已认领，状态变为采购中')
     } else {
-      const res = await updateArrivalPlanAPI(processForm.id, payload)
-      if (res.code !== 200) throw new Error(res.msg || '修改失败')
+      await updateArrivalPlanAPI(processForm.id, payload)
       ElMessage.success('到货计划已更新')
     }
     processVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '提交失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -583,7 +574,6 @@ const submitProcess = async () => {
 const handleArrive = async (row) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '查询明细失败')
     receiveForm.id = row.id
     receiveForm.items = (res.data?.details || []).map(d => ({
       detailId: d.id,
@@ -594,8 +584,8 @@ const handleArrive = async (row) => {
       expectedArrivalTime: d.expectedArrivalTime
     }))
     receiveVisible.value = true
-  } catch (e) {
-    ElMessage.error(e.message || '加载明细失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -611,13 +601,12 @@ const submitArrive = async () => {
   }
   submitting.value = true
   try {
-    const res = await arrivePurchaseRequestAPI(receiveForm.id, payload)
-    if (res.code !== 200) throw new Error(res.msg || '到货提交失败')
+    await arrivePurchaseRequestAPI(receiveForm.id, payload)
     ElMessage.success('到货已提交，待仓储管理员确认入库')
     receiveVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '到货提交失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -626,31 +615,28 @@ const submitArrive = async () => {
 const handleConfirmReceive = (row) => {
   ElMessageBox.confirm('确认入库后将逐条增加库存，不可撤销。是否继续？', '确认入库', { type: 'warning' })
     .then(async () => {
-      const res = await confirmReceivePurchaseRequestAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '确认入库失败')
+      await confirmReceivePurchaseRequestAPI(row.id)
       ElMessage.success('已确认入库，库存已增加')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleArriveCancel = (row) => {
   ElMessageBox.confirm('撤回到货后单据回到采购中，可重新提交到货。是否继续？', '撤回到货', { type: 'warning' })
     .then(async () => {
-      const res = await arriveCancelPurchaseRequestAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '撤回失败')
+      await arriveCancelPurchaseRequestAPI(row.id)
       ElMessage.success('已撤回到货')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleArriveReject = (row) => {
   ElMessageBox.confirm('驳回入库后单据回到采购中，采购可重新处理。是否继续？', '驳回入库', { type: 'warning' })
     .then(async () => {
-      const res = await arriveRejectPurchaseRequestAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '驳回失败')
+      await arriveRejectPurchaseRequestAPI(row.id)
       ElMessage.success('已驳回入库')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleReject = (row) => {
@@ -663,13 +649,12 @@ const submitReject = async () => {
   if (!rejectForm.reason) return ElMessage.warning('请填写驳回原因')
   submitting.value = true
   try {
-    const res = await rejectPurchaseRequestAPI(rejectForm.id, { reason: rejectForm.reason })
-    if (res.code !== 200) throw new Error(res.msg || '驳回失败')
+    await rejectPurchaseRequestAPI(rejectForm.id, { reason: rejectForm.reason })
     ElMessage.success('已驳回')
     rejectVisible.value = false
     loadList()
-  } catch (e) {
-    ElMessage.error(e.message || '驳回失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
   }
@@ -678,11 +663,10 @@ const submitReject = async () => {
 const handleDelete = (row) => {
   ElMessageBox.confirm('确认撤销该采购申请？', '警告', { type: 'warning' })
     .then(async () => {
-      const res = await deletePurchaseRequestAPI(row.id)
-      if (res.code !== 200) throw new Error(res.msg || '撤销失败')
+      await deletePurchaseRequestAPI(row.id)
       ElMessage.success('已撤销')
       loadList()
-    }).catch(() => {})
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 onMounted(loadList)

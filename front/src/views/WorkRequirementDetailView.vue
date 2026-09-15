@@ -261,12 +261,11 @@ const loadDetail = async () => {
   loading.value = true
   try {
     const res = await getWorkRequirementAssignDetailAPI(assignId.value)
-    if (res.code !== 200) throw new Error(res.msg || '加载失败')
     info.value = res.data || {}
     await loadAttachmentUrls(info.value.attachments || [])
     syncSubmitState()
-  } catch (e) {
-    ElMessage.error(e.message || '加载失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -275,29 +274,28 @@ const loadDetail = async () => {
 const handleAccept = () => {
   ElMessageBox.confirm('确认接受该工作要求？', '确认', { type: 'info' }).then(async () => {
     try {
-      const res = await acceptWorkRequirementAPI(assignId.value)
-      if (res.code !== 200) throw new Error(res.msg || '操作失败')
+      await acceptWorkRequirementAPI(assignId.value)
       ElMessage.success('已接受')
       await loadDetail()
-    } catch (e) {
-      ElMessage.error(e.message || '操作失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
-  }).catch(() => {})
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleReject = () => {
   ElMessageBox.confirm('确认拒收该工作要求？拒收后将无法再接受。', '警告', { type: 'warning' }).then(async () => {
     try {
-      const res = await rejectWorkRequirementAPI(assignId.value)
-      if (res.code !== 200) throw new Error(res.msg || '操作失败')
+      await rejectWorkRequirementAPI(assignId.value)
       ElMessage.success('已拒收')
       await loadDetail()
-    } catch (e) {
-      ElMessage.error(e.message || '操作失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
-  }).catch(() => {})
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
+// TODO(ADR-0012): 个案待评审 —— el-upload 直传走独立 XHR，不经 axios 拦截器，此处 code 检查与错误提示仍有效
 const handleUploadSuccess = (response, file) => {
   if (response.code === 200 && response.data?.token) {
     submitForm.newAttachmentTokens.push(response.data.token)
@@ -332,16 +330,15 @@ const handleSubmit = () => {
   submitFormRef.value?.validate(async (valid) => {
     if (!valid) return
     try {
-      const res = await submitWorkRequirementAPI(assignId.value, {
+      await submitWorkRequirementAPI(assignId.value, {
         executeResult: submitForm.executeResult,
         existingAttachmentIds: submitForm.existingAttachmentIds,
         newAttachmentTokens: submitForm.newAttachmentTokens
       })
-      if (res.code !== 200) throw new Error(res.msg || '提交失败')
       ElMessage.success('提交成功，等待审核')
       await loadDetail()
-    } catch (e) {
-      ElMessage.error(e.message || '提交失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }

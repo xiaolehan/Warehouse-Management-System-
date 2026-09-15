@@ -166,12 +166,11 @@ const loadList = async () => {
     }
     // 质检范围：生产中 + 待入库
     const res = await getProductionOrderPageAPI(params)
-    if (res.code !== 200) throw new Error(res.msg || '查询失败')
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).filter((r) => r.status === 2 || r.status === 3)
     total.value = (pageData.total || 0)
-  } catch (error) {
-    ElMessage.error(error.message || '加载质检列表失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -185,7 +184,6 @@ const handleCurrentChange = () => loadList()
 const openQc = async (row) => {
   try {
     const res = await getProductionOrderDetailAPI(row.id)
-    if (res.code !== 200) throw new Error(res.msg || '详情查询失败')
     detail.value = res.data || {}
     qcState.value = detail.value.qcState || null
     // 记录里的处置显示为中文
@@ -194,8 +192,8 @@ const openQc = async (row) => {
     recordForm.result = 'OK'
     recordForm.reason = ''
     qcVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载质检详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -203,18 +201,17 @@ const doRecord = async () => {
   if (!recordForm.testPoint) { ElMessage.warning('请选择测点'); return }
   if (recordForm.result === 'NG' && !recordForm.reason) { ElMessage.warning('NG 时必须填写不合格原因'); return }
   try {
-    const res = await recordQcAPI({
+    await recordQcAPI({
       orderId: detail.value.id,
       testPoint: recordForm.testPoint,
       result: recordForm.result,
       reason: recordForm.reason || undefined
     })
-    if (res.code !== 200) throw new Error(res.msg || '提交失败')
     ElMessage.success('测试结果已录入')
     await openQc(detail.value)
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '提交测试结果失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -226,15 +223,14 @@ const doDispose = async (testPoint, disposition) => {
     '处置确认', { type: 'warning' }
   ).then(async () => {
     try {
-      const res = await disposeQcAPI({ orderId: detail.value.id, testPoint, disposition })
-      if (res.code !== 200) throw new Error(res.msg || '处置失败')
+      await disposeQcAPI({ orderId: detail.value.id, testPoint, disposition })
       ElMessage.success(`已${dn}`)
       await openQc(detail.value)
       await loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '处置失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
-  }).catch(() => {})
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : 'danger')

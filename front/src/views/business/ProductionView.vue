@@ -238,9 +238,6 @@ const buildOperationTime = (selectedDate) => {
 
 const loadGoodsOptions = async () => {
   const res = await getGoodsOptionsAPI({ type: 'product' }) // D67：生产入库只选成品
-  if (res.code !== 200) {
-    throw new Error(res.msg || '加载成品下拉失败')
-  }
   goodsOptions.value = res.data || []
 }
 
@@ -256,17 +253,14 @@ const loadList = async () => {
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
     const res = await getProductionPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = (pageData.records || []).map((item) => ({
       ...item,
       productionDate: normalizeDateTime(item.productionDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载生产入库数据失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -305,9 +299,6 @@ const handleAdd = () => {
 const handleView = async (row) => {
   try {
     const res = await getProductionDetailAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '查询详情失败')
-    }
     const detail = res.data || {}
     dialogType.value = 'view'
     Object.assign(dialogForm, {
@@ -318,8 +309,8 @@ const handleView = async (row) => {
       remark: detail.remark || ''
     })
     dialogVisible.value = true
-  } catch (error) {
-    ElMessage.error(error.message || '加载详情失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -329,17 +320,10 @@ const handleDelete = (row) => {
     cancelButtonText: '取消',
     type: 'warning'
   }).then(async () => {
-    const res = await deleteProductionAPI(row.id)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '删除失败')
-    }
+    await deleteProductionAPI(row.id)
     ElMessage.success('删除成功')
     loadList()
-  }).catch((error) => {
-    if (error?.message) {
-      ElMessage.error(error.message)
-    }
-  })
+  }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
 const handleVoid = async (row) => {
@@ -351,17 +335,12 @@ const handleVoid = async (row) => {
       inputValue: ''
     })
 
-    const res = await voidProductionAPI(row.id, { reason: value || '', createRedFlush: false })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '操作失败')
-    }
+    await voidProductionAPI(row.id, { reason: value || '', createRedFlush: false })
 
     ElMessage.success('已作废')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -379,15 +358,12 @@ const submitForm = () => {
         operationTime: buildOperationTime(dialogForm.productionDate),
         remark: dialogForm.remark || ''
       }
-      const res = await createProductionAPI(payload)
-      if (res.code !== 200) {
-        throw new Error(res.msg || '新增失败')
-      }
+      await createProductionAPI(payload)
       ElMessage.success('新增成功')
       dialogVisible.value = false
       loadList()
-    } catch (error) {
-      ElMessage.error(error.message || '新增失败')
+    } catch {
+      // 业务错误已由拦截器统一提示
     }
   })
 }
@@ -396,8 +372,8 @@ onMounted(async () => {
   try {
     await loadGoodsOptions()
     await loadList()
-  } catch (error) {
-    ElMessage.error(error.message || '初始化失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 })
 </script>

@@ -170,14 +170,11 @@ const loadList = async () => {
       status: searchForm.status === null ? undefined : searchForm.status
     }
     const res = await getApprovalOrderPageAPI(params)
-    if (res.code !== 200) {
-      throw new Error(res.msg || '审批查询失败')
-    }
     const pageData = res.data || {}
     tableData.value = pageData.records || []
     total.value = pageData.total || 0
-  } catch (error) {
-    ElMessage.error(error.message || '加载审批列表失败')
+  } catch {
+    // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
   }
@@ -216,16 +213,11 @@ const handleApprove = async (row) => {
       inputValue: ''
     })
 
-    const res = await approveApprovalOrderAPI(row.id, { remark: value || '' })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '审批失败')
-    }
+    await approveApprovalOrderAPI(row.id, { remark: value || '' })
     ElMessage.success('审批通过')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
@@ -237,16 +229,11 @@ const handleReject = async (row) => {
       inputValue: ''
     })
 
-    const res = await rejectApprovalOrderAPI(row.id, { remark: value || '' })
-    if (res.code !== 200) {
-      throw new Error(res.msg || '驳回失败')
-    }
+    await rejectApprovalOrderAPI(row.id, { remark: value || '' })
     ElMessage.success('已驳回审批申请')
     await loadList()
-  } catch (error) {
-    if (error?.message && error.message !== 'cancel') {
-      ElMessage.error(error.message)
-    }
+  } catch {
+    // 取消或业务错误已统一提示
   }
 }
 
