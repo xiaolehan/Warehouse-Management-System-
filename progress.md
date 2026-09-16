@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 38 — 2026-09-16
+
+### 优化批三项落地（/grill-with-docs 两轮六题全按推荐，D91–D93）——供应商筛选打字过滤 + 首页预警卡片可点 + 员工菜单手术
+
+- **交接恢复：** /tmp 交接文件已被 WSL 清空（老坑再现），progress.md 记录完整无损接续；dev 服务未运行、空库基线、备份两份在手。
+- **需求 1（D91）：** 所有可见物料管理界面的供应商搜索下拉改「可输入文字模糊匹配」。调研：全站搜索区供应商下拉仅 2 处（物料管理 GoodsView、库存预警中心 StockWarningView，后者仅仓储 admin 可见该筛选）；选项全量加载不分页。定案 A：两处 el-select 加 `filterable`（仍按 id 精确查单家，零后端）；否掉自由文本 LIKE（一对多变语义+逐页动后端）。进货/退货页供应商本就是自由文本（单据搜索场景），不动。
+- **需求 2（D92）：** 首页「低库存预警」「零库存预警」卡片可点直达。调研：卡片在 AdminHome+EmployeeHome（仅仓储/采购/销售/生产四部门显示，超管首页无此模块）；预警中心页已支持 `?type=low|zero` 路由参数初始化，首页计数与预警页口径一致（均排除成品）。**关键障碍两道 guard**：前端路由 `roles:['admin']` + 后端 `GoodsService.requireGoodsPageAccess` warningOnly 分支 admin 级——只放前端会 API 403。定案 A：两卡带 `to`（type=low/zero）可点+悬浮范式；前后端 guard 同步放开四部门**成员**；顺带修正 StockWarningView `isWarehouseAdmin` 原仅判部门（员工会误得供应商筛选+工作台标记）改判 admin+warehouse。
+- **需求 3（D93）：** ①四员工菜单块移除「用户部门管理」——调研实证该路由 `roles:['admin','superadmin']` 不含员工，菜单项是点了 403 的**死链**（员工从来进不去），纯清理，admin 页面不动；②仓储员工菜单+物料管理/成品管理/预警中心（顺序：物料/成品/库存盘点/预警），页面门控天然只读（GoodsView isWarehouse=admin&&warehouse 员工无写按钮；进价列仅采购可见；预警中心供应商筛选仅仓储 admin）。
+- **改动清单：** 前端 7 文件（GoodsView/StockWarningView/router/AdminHome/EmployeeHome/layout + EmployeeHome go helper），后端 1 文件（GoodsService warningOnly 分支→requireAnyDeptMemberOrSuperAdmin）。
+- **验证：** `npm run build` ✓ 8.82s；`./mvnw compile` BUILD SUCCESS ✓；curl E2E **10/10 PASS**（四部门员工预警中心读 200←原 403 / 仓储 admin+超管回归 200 / 财务+人事员工负测 403 body / 普通物料列表守卫不变）。E2E 脚本 `/tmp/wms-e2e-d92.sh`。
+- **坑一枚：** 登录端点是 `/api/auth/login` 不是 `/api/user/login`（后者被拦截器挡 401 误当登录失败）。
+- **环境：** 前后端 dev 已重启在跑（8080/5173），供手测。
+- **下一步：** 用户浏览器硬刷新手测（重点：①物料管理/预警中心供应商下拉打字过滤；②admin+员工首页点预警卡片直达带过滤；③四角色员工菜单无「用户部门管理」、仓储员工新三项只读）→ 拍板提交 → 优化批下一项或空库全量重测。
+
+---
+
 ## 会话 37 — 2026-09-15
 
 ### 前端业务错误提示单通道根治（/grill-with-docs 一轮三题全按推荐，ADR-0012/D90）——问题 #1 修复

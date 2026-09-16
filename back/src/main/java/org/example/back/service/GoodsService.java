@@ -62,9 +62,10 @@ public class GoodsService {
 
     private void requireGoodsPageAccess(boolean warningOnly) {
         if (warningOnly) {
-            authzService.requireAnyDeptAdminOrSuperAdmin(
+            // D92：预警中心读权限放开到四部门成员——首页预警卡片全员可点直达，数据本就是成员可见物料列表的预警子集
+            authzService.requireAnyDeptMemberOrSuperAdmin(
                     AuthzService.WARNING_DEPT_CODES,
-                    "仅仓储、采购、生产或销售部门管理员可访问预警中心"
+                    "仅仓储、采购、生产或销售部门成员可访问预警中心"
             );
             return;
         }

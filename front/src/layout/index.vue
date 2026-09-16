@@ -110,7 +110,6 @@
           <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
-          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
 
         <!-- 业务部门员工（D32）：销售/采购员工可建单与查看，库存变更仍由仓储/admin 确认 -->
@@ -120,7 +119,6 @@
           <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
-          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
         <template v-else-if="isPurchaseEmployee">
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
@@ -128,12 +126,13 @@
           <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
-          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
         <template v-else-if="isWarehouseEmployee">
-          <!-- D84：仓储员工录入实盘数（建单/审核仍 admin） -->
+          <!-- D84：仓储员工录入实盘数（建单/审核仍 admin）；D93：开放物料/成品/预警中心只读视图 -->
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
-          <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
+          <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
         </template>
 
         <template v-else-if="showSuperAdminCenter">

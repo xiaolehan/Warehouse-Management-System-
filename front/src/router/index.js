@@ -148,7 +148,7 @@ const router = createRouter({
           path: "business/stock-warning",
           name: "BusinessStockWarning",
           component: () => import("../views/business/StockWarningView.vue"),
-          meta: { roles: ['admin'], deptCodes: WARNING_DEPT_CODES }
+          meta: { roles: ['admin', 'employee'], deptCodes: WARNING_DEPT_CODES }
         },
         {
           path: "business/pick-list",

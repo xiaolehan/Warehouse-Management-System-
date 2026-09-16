@@ -15,7 +15,8 @@
       </header>
 
       <section class="metric-grid">
-        <article v-for="item in metricCards" :key="item.label" class="metric-card">
+        <article v-for="item in metricCards" :key="item.label" class="metric-card"
+          :class="{ 'metric-card--clickable': item.to }" @click="item.to && go(item.to)">
           <span class="metric-label">{{ item.label }}</span>
           <strong :class="{ 'metric-value--alert': item.alert && Number(item.value) > 0 }">{{ item.value }}</strong>
           <span class="metric-desc">{{ item.description }}</span>
@@ -287,13 +288,15 @@ const metricCards = computed(() => {
         label: '低库存预警',
         value: summary.value.lowStockCount ?? 0,
         description: '需优先跟进的预警商品',
-        alert: true
+        alert: true,
+        to: { path: '/business/stock-warning', query: { type: 'low' } }
       },
       {
         label: '零库存预警',
         value: summary.value.zeroStockCount ?? 0,
         description: '已无现货可用商品',
-        alert: true
+        alert: true,
+        to: { path: '/business/stock-warning', query: { type: 'zero' } }
       }
     )
   } else {
@@ -446,6 +449,11 @@ const overdueTagType = (label) => {
 
 const goWorkRequirement = (item) => {
   router.push(`/work-requirement/${item.assignId}`)
+}
+
+// D92：预警卡片点击直达预警中心（带预警类型过滤）
+const go = (to) => {
+  router.push(to)
 }
 
 const getTaskReminderStorageKey = (userId) => {
@@ -689,6 +697,17 @@ onMounted(() => {
   padding: 22px;
   display: grid;
   gap: 10px;
+}
+
+/* D92：预警卡片可点击直达预警中心（沿用 notice-item 悬浮范式） */
+.metric-card--clickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card--clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 45px -34px rgba(15, 23, 42, 0.5);
 }
 
 .metric-card strong {

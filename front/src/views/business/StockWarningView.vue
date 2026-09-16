@@ -19,7 +19,7 @@
         <el-input v-model="searchForm.goodsName" placeholder="请输入商品名称" clearable />
       </el-form-item>
       <el-form-item v-if="canUseSupplierFilter" label="供应商">
-        <el-select v-model="searchForm.supplierId" style="width: 180px;" clearable>
+        <el-select v-model="searchForm.supplierId" style="width: 180px;" clearable filterable>
           <el-option v-for="sup in suppliers" :key="sup.id" :label="sup.name" :value="sup.id" />
         </el-select>
       </el-form-item>
@@ -68,7 +68,7 @@ import { useRoute } from 'vue-router'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { getStockWarningPageAPI, getSupplierOptionsAPI } from '@/api/base'
 import { useUserStore } from '@/stores/user'
-import { normalizeDeptCode } from '@/utils/auth'
+import { isAdminRole, normalizeDeptCode } from '@/utils/auth'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -78,7 +78,8 @@ const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
-const isWarehouseAdmin = computed(() => normalizeDeptCode(userStore.deptCode) === 'warehouse')
+// D92：预警中心放开员工只读后，供应商筛选/工作台标记须真按「仓储 admin」判定（此前仅看部门，员工会误得管理员视图）
+const isWarehouseAdmin = computed(() => isAdminRole(userStore.role) && normalizeDeptCode(userStore.deptCode) === 'warehouse')
 const canUseSupplierFilter = computed(() => isWarehouseAdmin.value)
 
 const searchForm = reactive({

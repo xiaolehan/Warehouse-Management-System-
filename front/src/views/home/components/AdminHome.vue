@@ -13,7 +13,8 @@
       </header>
 
       <section class="metric-grid">
-        <article v-for="item in metricCards" :key="item.label" class="metric-card">
+        <article v-for="item in metricCards" :key="item.label" class="metric-card"
+          :class="{ 'metric-card--clickable': item.to }" @click="item.to && go(item.to)">
           <span class="metric-label">{{ item.label }}</span>
           <strong :class="{ 'metric-value--alert': item.alert && Number(item.value) > 0 }">{{ item.value }}</strong>
         </article>
@@ -143,8 +144,8 @@ const metricCards = computed(() => {
 
   return [
     ...baseCards,
-    { label: '低库存预警', value: summary.value.lowStockCount ?? 0, alert: true },
-    { label: '零库存预警', value: summary.value.zeroStockCount ?? 0, alert: true },
+    { label: '低库存预警', value: summary.value.lowStockCount ?? 0, alert: true, to: { path: '/business/stock-warning', query: { type: 'low' } } },
+    { label: '零库存预警', value: summary.value.zeroStockCount ?? 0, alert: true, to: { path: '/business/stock-warning', query: { type: 'zero' } } },
     { label: '上次登录', value: formatTime(summary.value.lastLoginTime) }
   ]
 })
@@ -437,6 +438,17 @@ onMounted(() => {
   padding: 22px;
   display: grid;
   gap: 8px;
+}
+
+/* D92：预警卡片可点击直达预警中心（沿用 action-card 悬浮范式） */
+.metric-card--clickable {
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.metric-card--clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 22px 45px -34px rgba(15, 23, 42, 0.5);
 }
 
 .metric-label {
