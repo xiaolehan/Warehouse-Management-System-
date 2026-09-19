@@ -47,8 +47,8 @@ public class ProductionController {
     }
 
     @PutMapping("/{id}/void")
-    @AuditLog(module = "生产入库", action = "作废/作废并红冲", targetType = "生产入库单",
-            detail = "((#dto?.createRedFlush == true) ? '作废并红冲' : '作废') + ' 生产入库单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
+    @AuditLog(module = "生产入库", action = "作废", targetType = "生产入库单",
+            detail = "'作废 生产入库单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
     @RequireAdmin("仅管理员可作废生产入库单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {

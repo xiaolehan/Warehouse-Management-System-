@@ -4,7 +4,7 @@
       <div class="toolbar">
         <div class="toolbar-title">
           <span class="title-text">年度经营统计</span>
-          <span class="title-tip">采购额按入库确认时间归年 · 销售额按开单时间归年 · 退货按自身发生年冲减 · 已排除作废/红冲单</span>
+          <span class="title-tip">采购额按入库确认时间归年 · 销售额按开单时间归年 · 退货按自身发生年冲减 · 已排除作废单</span>
         </div>
         <el-button type="primary" :icon="Download" :loading="exporting" @click="handleExport">导出</el-button>
       </div>

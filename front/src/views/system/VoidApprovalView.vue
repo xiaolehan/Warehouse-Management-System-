@@ -140,7 +140,7 @@ const bizTypeLabel = (val) => {
 }
 
 const actionLabel = (val) => {
-  if (val === 'void_red') return '作废并红冲' // D74：入口已隐藏，历史记录仍可辨识
+  if (val === 'void_red') return '作废并冲抵' // D74：入口已隐藏，历史记录仍可辨识
   return actionOptions.find((item) => item.value === val)?.label || val || '-'
 }
 

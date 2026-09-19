@@ -4,7 +4,11 @@
       <div class="search-box">
         <div class="top-right-help">
           <span class="help-label">作废:</span>
-          <el-tooltip content="当天单据可直接删除；历史单据的作废会提交给仓储管理员审批，通过后才执行。" placement="left">
+          <el-tooltip content="当天未生效单据可直接删除；已生效或历史单据的作废会提交给仓储管理员审批，通过后才执行。" placement="left">
+            <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
+          </el-tooltip>
+          <span class="help-label">冲抵:</span>
+          <el-tooltip content="冲抵单=作废时系统生成的负数留痕记录（数量/金额为负），用于抵消原单的库存与金额；该功能已停用，如出现即为历史数据，不可删除、不可再作废，无需操作。" placement="left">
             <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
         </div>
@@ -44,7 +48,13 @@
         <el-table-column prop="purchaseDate" label="进货日期" width="180" />
         <el-table-column label="入库状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="confirmStatusTagType(row.confirmStatus)">{{ row.confirmStatusText }}</el-tag>
+            <!-- D97：已作废/已冲抵单据状态列直接展示终态，避免与确认状态歧义 -->
+            <el-tag v-if="row.bizStatus === 2" type="info" size="small">已作废</el-tag>
+            <el-tooltip v-else-if="row.bizStatus === 3" content="作废时系统生成的负数冲抵记录，用于抵消原单的库存与金额" placement="top">
+              <el-tag type="info" size="small">已冲抵</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="confirmStatusTagType(row.confirmStatus)">{{ row.confirmStatusText }}</el-tag>
+            <el-tag v-if="voidPendingIds.has(row.id)" type="warning" size="small" style="margin-left: 4px">作废审批中</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="operator" label="操作人" width="100" />
@@ -53,35 +63,51 @@
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
-              <el-button
-                v-if="scope.row.confirmStatus === 1"
-                v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }"
-                size="small" type="success" link @click="handleArrive(scope.row)">到货确认</el-button>
-              <el-button
-                v-if="scope.row.confirmStatus === 2"
-                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
-                size="small" type="success" link @click="handleConfirmReceive(scope.row)">确认入库</el-button>
-              <el-button
-                v-if="showDeleteAction(scope.row)"
-                v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
-                size="small"
-                type="danger"
-                link
-                @click="handleDelete(scope.row)"
-              >
-                删除
-              </el-button>
-              <template v-else-if="showVoidActions(scope.row)">
+              <!-- D98：作废审批中冻结主流程（禁用+提示）；已作废/冲抵单据不再出现确认按钮 -->
+              <el-tooltip v-if="scope.row.confirmStatus === 1 && scope.row.bizStatus === 1" :disabled="!voidPendingIds.has(scope.row.id)" content="作废审批中，待仓储管理员处理" placement="top">
+                <span>
+                  <el-button
+                    v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }"
+                    size="small" type="success" link
+                    :disabled="voidPendingIds.has(scope.row.id)"
+                    @click="handleArrive(scope.row)">到货确认</el-button>
+                </span>
+              </el-tooltip>
+              <el-tooltip v-if="scope.row.confirmStatus === 2 && scope.row.bizStatus === 1" :disabled="!voidPendingIds.has(scope.row.id)" content="作废审批中，待仓储管理员处理" placement="top">
+                <span>
+                  <el-button
+                    v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                    size="small" type="success" link
+                    :disabled="voidPendingIds.has(scope.row.id)"
+                    @click="handleConfirmReceive(scope.row)">确认入库</el-button>
+                </span>
+              </el-tooltip>
+              <el-tooltip v-if="showDeleteAction(scope.row)" content="当天未生效错单可删除（不留痕）；已生效或历史错单请用作废（留痕+仓储审批）" placement="top">
                 <el-button
                   v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
                   size="small"
-                  type="warning"
+                  type="danger"
                   link
-                  :disabled="!canVoid(scope.row)"
-                  @click="handleVoid(scope.row)"
+                  @click="handleDelete(scope.row)"
                 >
-                  作废
+                  删除
                 </el-button>
+              </el-tooltip>
+              <template v-else-if="showVoidActions(scope.row)">
+                <el-tooltip :content="voidPendingIds.has(scope.row.id) ? '作废审批中，待仓储管理员处理' : '已生效或历史错单作废留痕，仓储审批通过后生效'" placement="top">
+                  <span>
+                    <el-button
+                      v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }"
+                      size="small"
+                      type="warning"
+                      link
+                      :disabled="!canVoid(scope.row) || voidPendingIds.has(scope.row.id)"
+                      @click="handleVoid(scope.row)"
+                    >
+                      作废
+                    </el-button>
+                  </span>
+                </el-tooltip>
               </template>
               <span v-else :class="['action-disabled', stateTextClass(scope.row)]">{{ resolveState(scope.row)?.label || '不可操作' }}</span>
             </div>
@@ -141,6 +167,14 @@
         </span>
       </template>
     </el-dialog>
+
+    <VoidConfirmDialog
+      v-model="voidDialogVisible"
+      :stock-effect="voidStockEffect"
+      :reason-required="true"
+      :submitting="voidSubmitting"
+      @confirm="submitVoid"
+    />
   </div>
 </template>
 
@@ -148,7 +182,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
-import { createApprovalOrderAPI } from '@/api/system'
+import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
+import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
@@ -168,6 +203,20 @@ const searchForm = reactive({
 })
 const userRole = getRole()
 const userDept = getDeptCode()
+
+// D94：作废说明弹窗 + 行内「作废审批中」状态（仅 admin 拉取，与作废按钮可见性一致）
+const voidDialogVisible = ref(false)
+const voidTarget = ref(null)
+const voidSubmitting = ref(false)
+const voidPendingIds = ref(new Set())
+const isPurchaseAdmin = userRole === 'admin' && userDept === 'purchase'
+const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
+const voidStockEffect = computed(() => {
+  const row = voidTarget.value
+  // 已确认入库（3）的进货单，作废审批通过后须把入了库的货扣回去
+  if (!row || Number(row.confirmStatus) !== 3) return null
+  return { goodsName: row.goodsName, quantity: row.quantity, mode: 'deduct' }
+})
 // D36：进货金额列仅采购部门可见（进价）；仓储看库存不看价格；超管全见
 const showPrice = userDept === 'purchase' || isSuperAdmin(userRole)
 
@@ -225,16 +274,19 @@ const resolveBizDate = (row) => {
   return row?.purchaseDate || row?.operationTime || row?.createTime || ''
 }
 
+// D95：删除=当天未生效错单（无痕）；作废=已生效或历史错单（留痕+仓储审批）——与后端守卫同口径，杜绝「删不掉又无作废入口」死锁
+const isPendingTodayDoc = (row) => Number(row?.confirmStatus) === 1 && toDateOnly(resolveBizDate(row)) === localToday()
+
 const canDelete = (row) => {
   if (isBizDocumentDeleted(row)) return false
   if (row?.bizStatus !== 1) return false
-  return toDateOnly(resolveBizDate(row)) === localToday()
+  return isPendingTodayDoc(row)
 }
 
 const canVoid = (row) => {
   if (isBizDocumentDeleted(row)) return false
   if (row?.bizStatus !== 1) return false
-  return toDateOnly(resolveBizDate(row)) !== localToday()
+  return !isPendingTodayDoc(row)
 }
 
 const resolveState = (row) => resolveBizDocumentState(row)
@@ -281,10 +333,25 @@ const loadList = async () => {
       purchaseDate: normalizeDateTime(item.purchaseDate || item.operationTime || item.createTime)
     }))
     total.value = pageData.total || 0
+    loadVoidPendingIds()
   } catch {
     // 业务错误已由拦截器统一提示
   } finally {
     loading.value = false
+  }
+}
+
+const loadVoidPendingIds = async () => {
+  // D98：仓储 admin 也拉取——「确认入库」主操作者，作废审批中需禁用+提示（端点 @RequireAdmin 仓储可过）
+  if (!isPurchaseAdmin && !isWarehouseAdmin) {
+    voidPendingIds.value = new Set()
+    return
+  }
+  try {
+    const res = await getPendingVoidBizIdsAPI('purchase')
+    voidPendingIds.value = new Set(res.data || [])
+  } catch {
+    // 业务错误已由拦截器统一提示
   }
 }
 
@@ -372,26 +439,29 @@ const handleDelete = (row) => {
   }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
-const handleVoid = async (row) => {
-  try {
-    const { value } = await ElMessageBox.prompt('请输入作废原因', '作废单据', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: '默认: 手工作废',
-      inputValue: ''
-    })
+// D94：先弹说明弹窗（后果/审批链路/留痕），确认后再提交
+const handleVoid = (row) => {
+  voidTarget.value = row
+  voidDialogVisible.value = true
+}
 
+const submitVoid = async (reason) => {
+  if (!voidTarget.value) return
+  voidSubmitting.value = true
+  try {
     await createApprovalOrderAPI({
       bizType: 'purchase',
-      bizId: row.id,
+      bizId: voidTarget.value.id,
       requestAction: 'void',
-      reason: value || ''
+      reason
     })
-
-    ElMessage.success('作废审批已提交，等待仓储管理员处理')
-    await loadList()
+    ElMessage.success('已提交作废审批，待仓储管理员处理')
+    voidDialogVisible.value = false
+    loadList()
   } catch {
-    // 取消或业务错误已统一提示
+    // 业务错误已由拦截器统一提示
+  } finally {
+    voidSubmitting.value = false
   }
 }
 

@@ -48,27 +48,32 @@
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
-              <el-button
-                v-if="showDeleteAction(scope.row)"
-                v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
-                size="small"
-                type="danger"
-                link
-                @click="handleDelete(scope.row)"
-              >
-                删除
-              </el-button>
-              <template v-else-if="showVoidActions(scope.row)">
+              <el-tooltip v-if="showDeleteAction(scope.row)" content="当天错单可直接删除（不留痕）；历史错单请用作废（留痕）" placement="top">
                 <el-button
                   v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
                   size="small"
-                  type="warning"
+                  type="danger"
                   link
-                  :disabled="!canVoid(scope.row)"
-                  @click="handleVoid(scope.row)"
+                  @click="handleDelete(scope.row)"
                 >
-                  作废
+                  删除
                 </el-button>
+              </el-tooltip>
+              <template v-else-if="showVoidActions(scope.row)">
+                <el-tooltip content="历史错单作废留痕，立即生效并冲减库存" placement="top">
+                  <span>
+                    <el-button
+                      v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                      size="small"
+                      type="warning"
+                      link
+                      :disabled="!canVoid(scope.row)"
+                      @click="handleVoid(scope.row)"
+                    >
+                      作废
+                    </el-button>
+                  </span>
+                </el-tooltip>
               </template>
               <span v-else :class="['action-disabled', stateTextClass(scope.row)]">{{ resolveState(scope.row)?.label || '不可操作' }}</span>
             </div>
@@ -128,6 +133,16 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- D94：作废说明弹窗（生产入库为直废型，立即生效、原因可选） -->
+    <VoidConfirmDialog
+      v-model="voidDialogVisible"
+      :stock-effect="voidStockEffect"
+      :direct="true"
+      :reason-required="false"
+      :submitting="voidSubmitting"
+      @confirm="submitVoid"
+    />
   </div>
 </template>
 
@@ -135,6 +150,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
+import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import {
   createProductionAPI,
@@ -174,6 +190,17 @@ const totalAmountText = computed(() => {
   const price = Number(dialogForm.price || 0)
   if (!price) return '—'
   return (qty * price).toFixed(2)
+})
+
+// D94：作废说明弹窗（生产入库直废型，无审批流，故无「作废审批中」行内状态）
+const voidDialogVisible = ref(false)
+const voidTarget = ref(null)
+const voidSubmitting = ref(false)
+const voidStockEffect = computed(() => {
+  const row = voidTarget.value
+  // 生产入库单创建即入库，作废须把入进来的货扣回去
+  if (!row) return null
+  return { goodsName: row.goodsName, quantity: row.quantity, mode: 'deduct' }
 })
 
 const dialogRules = {
@@ -326,21 +353,24 @@ const handleDelete = (row) => {
   }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
-const handleVoid = async (row) => {
+// D94：先弹说明弹窗（后果/立即生效/留痕），确认后再作废
+const handleVoid = (row) => {
+  voidTarget.value = row
+  voidDialogVisible.value = true
+}
+
+const submitVoid = async (reason) => {
+  if (!voidTarget.value) return
+  voidSubmitting.value = true
   try {
-    const { value } = await ElMessageBox.prompt('请输入作废原因', '作废单据', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      inputPlaceholder: '默认: 手工作废',
-      inputValue: ''
-    })
-
-    await voidProductionAPI(row.id, { reason: value || '', createRedFlush: false })
-
+    await voidProductionAPI(voidTarget.value.id, { reason: reason || '', createRedFlush: false })
     ElMessage.success('已作废')
-    await loadList()
+    voidDialogVisible.value = false
+    loadList()
   } catch {
-    // 取消或业务错误已统一提示
+    // 业务错误已由拦截器统一提示
+  } finally {
+    voidSubmitting.value = false
   }
 }
 

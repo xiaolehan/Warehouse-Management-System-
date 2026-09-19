@@ -28,7 +28,7 @@ export const resolveBizDocumentState = (row = {}) => {
   if (approvalStatus === APPROVAL_APPROVED) {
     // 仅作废类审批通过才显示作废态；价格偏离审批通过不等于作废，交由 confirmStatus 表达出库态
     if (approvalAction === ACTION_VOID_RED) {
-      return { label: '作废并红冲成功', type: 'success' }
+      return { label: '作废并冲抵成功', type: 'success' }
     }
     if (approvalAction === ACTION_VOID) {
       return { label: '作废成功', type: 'success' }
@@ -41,7 +41,7 @@ export const resolveBizDocumentState = (row = {}) => {
   }
 
   if (Number(row?.bizStatus || 0) === 3) {
-    return { label: '作废并红冲成功', type: 'success' }
+    return { label: '作废并冲抵成功', type: 'success' }
   }
 
   return null

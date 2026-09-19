@@ -19,7 +19,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/system/approval-orders")
@@ -52,6 +55,13 @@ public class ApprovalController {
     @RequireAdmin("仅管理员可查看待审批提醒")
     public Result<ReminderSummaryVO> pendingReminder() {
         return Result.success(approvalService.pendingReminder());
+    }
+
+    // D94：单据列表「作废审批中」行内状态（前端仅 admin 侧调用，与作废按钮可见性一致）
+    @GetMapping("/pending-void-biz-ids")
+    @RequireAdmin("仅管理员可查看作废审批中单据")
+    public Result<List<Long>> pendingVoidBizIds(@RequestParam String bizType) {
+        return Result.success(approvalService.listPendingVoidBizIds(bizType));
     }
 
     @PutMapping("/{id}/approve")

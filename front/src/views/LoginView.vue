@@ -23,8 +23,8 @@
             <span>退货流程与原因分析</span>
           </li>
           <li>
-            <strong>作废红冲</strong>
-            <span>作废与红冲流程管理</span>
+            <strong>作废留痕</strong>
+            <span>作废与审批留痕管理</span>
           </li>
           <li>
             <strong>统计</strong>

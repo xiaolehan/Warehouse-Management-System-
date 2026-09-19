@@ -72,8 +72,8 @@ public class SalesController {
     }
 
     @PutMapping("/{id}/void")
-    @AuditLog(module = "销售管理", action = "作废/作废并红冲", targetType = "销售单",
-            detail = "((#dto?.createRedFlush == true) ? '作废并红冲' : '作废') + ' 销售单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
+    @AuditLog(module = "销售管理", action = "作废", targetType = "销售单",
+            detail = "'作废 销售单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
     @RequireAdmin("仅管理员可作废销售单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {

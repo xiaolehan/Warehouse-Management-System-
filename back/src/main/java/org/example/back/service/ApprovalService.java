@@ -318,9 +318,11 @@ public class ApprovalService {
         if (!Integer.valueOf(1).equals(meta.bizStatus())) {
             throw BusinessException.validateFail("仅正常状态单据可提交作废审批");
         }
+        // D95：仅拦截「当天+未生效」单据（直接删除即可）；当天已生效单据删除已被各模块 confirmStatus 守卫拦截，作废审批是其唯一纠错通道
         LocalDate bizDate = meta.bizTime() == null ? null : meta.bizTime().toLocalDate();
-        if (bizDate != null && LocalDate.now().equals(bizDate)) {
-            throw BusinessException.validateFail("当天单据请直接删除，无需提交作废审批");
+        boolean pendingConfirm = meta.confirmStatus() == null || Integer.valueOf(1).equals(meta.confirmStatus());
+        if (bizDate != null && LocalDate.now().equals(bizDate) && pendingConfirm) {
+            throw BusinessException.validateFail("当天未生效单据请直接删除，无需提交作废审批");
         }
     }
 
@@ -333,7 +335,7 @@ public class ApprovalService {
                 }
                 LocalDateTime bizTime = purchase.getOperationTime() == null ? purchase.getCreateTime() : purchase.getOperationTime();
                 return new BizDocumentMeta(purchase.getPurchaseNo(), purchase.getBizStatus(),
-                        bizTime, buildSnapshot("purchase", purchase.getId(), purchase.getPurchaseNo(), purchase.getBizStatus(),
+                        bizTime, purchase.getConfirmStatus(), buildSnapshot("purchase", purchase.getId(), purchase.getPurchaseNo(), purchase.getBizStatus(),
                         bizTime, purchase.getVoidTime(), purchase.getVoidReason(), purchase.getQuantity(), purchase.getTotalPrice(), purchase.getSourceId()));
             }
             case "purchase_return" -> {
@@ -343,7 +345,7 @@ public class ApprovalService {
                 }
                 LocalDateTime bizTime = purchaseReturn.getOperationTime() == null ? purchaseReturn.getCreateTime() : purchaseReturn.getOperationTime();
                 return new BizDocumentMeta(purchaseReturn.getReturnNo(), purchaseReturn.getBizStatus(),
-                        bizTime, buildSnapshot("purchase_return", purchaseReturn.getId(), purchaseReturn.getReturnNo(), purchaseReturn.getBizStatus(),
+                        bizTime, purchaseReturn.getConfirmStatus(), buildSnapshot("purchase_return", purchaseReturn.getId(), purchaseReturn.getReturnNo(), purchaseReturn.getBizStatus(),
                         bizTime, purchaseReturn.getVoidTime(), purchaseReturn.getVoidReason(), purchaseReturn.getQuantity(), purchaseReturn.getTotalPrice(), purchaseReturn.getSourceId()));
             }
             case "sales" -> {
@@ -353,7 +355,7 @@ public class ApprovalService {
                 }
                 LocalDateTime bizTime = sales.getOperationTime() == null ? sales.getCreateTime() : sales.getOperationTime();
                 return new BizDocumentMeta(sales.getSalesNo(), sales.getBizStatus(),
-                        bizTime, buildSnapshot("sales", sales.getId(), sales.getSalesNo(), sales.getBizStatus(),
+                        bizTime, sales.getConfirmStatus(), buildSnapshot("sales", sales.getId(), sales.getSalesNo(), sales.getBizStatus(),
                         bizTime, sales.getVoidTime(), sales.getVoidReason(), sales.getQuantity(), sales.getTotalPrice(), sales.getSourceId()));
             }
             case "sales_return" -> {
@@ -363,7 +365,7 @@ public class ApprovalService {
                 }
                 LocalDateTime bizTime = salesReturn.getOperationTime() == null ? salesReturn.getCreateTime() : salesReturn.getOperationTime();
                 return new BizDocumentMeta(salesReturn.getReturnNo(), salesReturn.getBizStatus(),
-                        bizTime, buildSnapshot("sales_return", salesReturn.getId(), salesReturn.getReturnNo(), salesReturn.getBizStatus(),
+                        bizTime, salesReturn.getConfirmStatus(), buildSnapshot("sales_return", salesReturn.getId(), salesReturn.getReturnNo(), salesReturn.getBizStatus(),
                         bizTime, salesReturn.getVoidTime(), salesReturn.getVoidReason(), salesReturn.getQuantity(), salesReturn.getTotalPrice(), salesReturn.getSourceId()));
             }
             default -> throw BusinessException.validateFail("不支持的业务类型: " + bizType);
@@ -394,6 +396,19 @@ public class ApprovalService {
         return JSONUtil.toJsonStr(snapshot);
     }
 
+    // D94：单据列表「作废审批中」行内状态——返回指定业务类型下处于待审批/处理中的作废类申请的业务单 id
+    public List<Long> listPendingVoidBizIds(String bizType) {
+        validateBizType(bizType);
+        LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizApprovalOrder::getBizType, bizType)
+                .in(BizApprovalOrder::getStatus, STATUS_PENDING, STATUS_PROCESSING)
+                .in(BizApprovalOrder::getRequestAction, ACTION_VOID, ACTION_VOID_RED);
+        return bizApprovalOrderMapper.selectList(wrapper).stream()
+                .map(BizApprovalOrder::getBizId)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     private void validateBizType(String bizType) {
         if ("purchase".equals(bizType)
                 || "purchase_return".equals(bizType)
@@ -405,7 +420,11 @@ public class ApprovalService {
     }
 
     private void validateAction(String action) {
-        if (ACTION_VOID.equals(action) || ACTION_VOID_RED.equals(action) || ACTION_PRICE_DEVIATION_CONFIRM.equals(action)) {
+        if (ACTION_VOID_RED.equals(action)) {
+            // D99：作废并冲抵（红冲）已停用——界面无入口（D74），此处封死审批提交路径（历史 void_red 申请已清零）
+            throw BusinessException.validateFail("「作废并冲抵」已停用，请提交普通作废");
+        }
+        if (ACTION_VOID.equals(action) || ACTION_PRICE_DEVIATION_CONFIRM.equals(action)) {
             return;
         }
         throw BusinessException.validateFail("不支持的申请动作: " + action);
@@ -488,6 +507,6 @@ public class ApprovalService {
         return reason.trim();
     }
 
-    private record BizDocumentMeta(String bizNo, Integer bizStatus, LocalDateTime bizTime, String snapshot) {
+    private record BizDocumentMeta(String bizNo, Integer bizStatus, LocalDateTime bizTime, Integer confirmStatus, String snapshot) {
     }
 }

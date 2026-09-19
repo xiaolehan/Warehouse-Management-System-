@@ -34,5 +34,7 @@ export const getApprovalOrderPageAPI = (params) => request.get('/system/approval
 export const getApprovalPendingCountAPI = () => request.get('/system/approval-orders/pending-count')
 export const getApprovalPendingReminderAPI = () => request.get('/system/approval-orders/pending-reminder')
 export const createApprovalOrderAPI = (data) => request.post('/system/approval-orders', data)
+// D94：单据列表「作废审批中」行内状态
+export const getPendingVoidBizIdsAPI = (bizType) => request.get('/system/approval-orders/pending-void-biz-ids', { params: { bizType } })
 export const approveApprovalOrderAPI = (id, data) => request.put(`/system/approval-orders/${id}/approve`, data)
 export const rejectApprovalOrderAPI = (id, data) => request.put(`/system/approval-orders/${id}/reject`, data)

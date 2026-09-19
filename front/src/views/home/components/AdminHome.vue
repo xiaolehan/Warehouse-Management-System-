@@ -236,9 +236,9 @@ const visibleReminders = computed(() => {
     reminders.push({
       key: 'voidApproval',
       signature: approvalReminder.value.signature,
-      eyebrow: '作废/红冲审批提醒',
-      title: `待审核作废/红冲审批：${approvalReminder.value.count}`,
-      text: '你当前有待审核的作废/红冲审批，请及时处理。',
+      eyebrow: '作废审批提醒',
+      title: `待审核作废审批：${approvalReminder.value.count}`,
+      text: '你当前有待审核的作废审批，请及时处理。',
       tone: 'rose'
     })
   }

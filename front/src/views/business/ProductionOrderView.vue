@@ -49,10 +49,12 @@
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >补料</el-button>
           <el-button v-if="scope.row.status === 3" link size="small" type="success" @click="handleReceipt(scope.row)">生产入库</el-button>
-          <el-button
-            v-if="scope.row.status === 1 || scope.row.status === 2" link size="small" type="warning"
-            @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
-          >作废</el-button>
+          <el-tooltip content="错单作废留痕，立即生效，不涉及库存变动" placement="top">
+            <el-button
+              v-if="scope.row.status === 1 || scope.row.status === 2" link size="small" type="warning"
+              @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            >作废</el-button>
+          </el-tooltip>
           <el-button
             v-if="[1, 2, 3].includes(scope.row.status)" link size="small" type="danger"
             @click="openTerminate(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
@@ -476,6 +478,15 @@
         <el-button type="danger" :loading="terminateSubmitting" @click="doTerminate">确认终止</el-button>
       </template>
     </el-dialog>
+
+    <!-- D94：作废说明弹窗（生产任务单为直废型，立即生效、原因可选、无库存影响） -->
+    <VoidConfirmDialog
+      v-model="voidDialogVisible"
+      :direct="true"
+      :reason-required="false"
+      :submitting="voidSubmitting"
+      @confirm="submitVoid"
+    />
   </el-card>
 </template>
 
@@ -497,6 +508,7 @@ import {
   updateExpectedCompletionAPI,
   voidProductionOrderAPI
 } from '@/api/business'
+import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
 import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI } from '@/api/pickList'
@@ -821,17 +833,29 @@ const handleReceipt = (row) => {
     }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
+// D94：先弹说明弹窗（立即生效/留痕/无库存影响），确认后再作废
+const voidDialogVisible = ref(false)
+const voidTarget = ref(null)
+const voidSubmitting = ref(false)
+
 const handleVoid = (row) => {
-  ElMessageBox.prompt(`确认作废生产任务单「${row.orderNo}」？请填写作废原因`, '作废确认', {
-    type: 'warning',
-    inputPlaceholder: '作废原因（可选）',
-    inputValidator: (v) => (v === '' ? false : true),
-    inputErrorMessage: '作废原因不能为空'
-  }).then(async ({ value }) => {
-    await voidProductionOrderAPI(row.id, value)
+  voidTarget.value = row
+  voidDialogVisible.value = true
+}
+
+const submitVoid = async (reason) => {
+  if (!voidTarget.value) return
+  voidSubmitting.value = true
+  try {
+    await voidProductionOrderAPI(voidTarget.value.id, reason || '')
     ElMessage.success('已作废')
+    voidDialogVisible.value = false
     await loadList()
-  }).catch(() => {}) // 取消或业务错误已统一提示
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    voidSubmitting.value = false
+  }
 }
 
 // D73：手动终止（仅生产管理员；预填已领未退净额，一个事务终止+生成退料单）

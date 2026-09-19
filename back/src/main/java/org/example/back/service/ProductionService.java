@@ -137,6 +137,10 @@ public class ProductionService {
         requireProductionWriteAccess();
         BizProduction production = requireProduction(id);
         ensureNormalStatus(production.getBizStatus(), "生产入库单");
+        // D99：作废并冲抵（红冲）已停用——界面无入口（D74），此处封死 API 直废路径
+        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
+            throw BusinessException.validateFail("「作废并冲抵」已停用，请使用普通作废");
+        }
 
         String reason = normalizeReason(dto == null ? null : dto.getReason());
         LocalDateTime now = LocalDateTime.now();
@@ -200,7 +204,7 @@ public class ProductionService {
             return;
         }
         if (!operationTime.toLocalDate().equals(LocalDate.now())) {
-            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废/红冲流程");
+            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废流程");
         }
     }
 
@@ -211,7 +215,7 @@ public class ProductionService {
         if (bizStatus == 2) {
             throw BusinessException.validateFail(docName + "已作废，禁止重复操作");
         }
-        throw BusinessException.validateFail(docName + "为红冲单，禁止删除或再次作废");
+        throw BusinessException.validateFail(docName + "为冲抵记录，禁止删除或再次作废");
     }
 
     private String normalizeReason(String reason) {

@@ -185,6 +185,8 @@ public class PurchaseReturnService {
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_PENDING) {
             throw BusinessException.validateFail("仅待出库确认状态可确认出库");
         }
+        ensureNormalStatus(entity.getBizStatus(), "进货退货单");
+        ensureNoPendingVoidApproval(id, "进货退货单");
         decreaseStock(entity.getGoodsId(), entity.getQuantity(), "库存不足，无法确认退货出库");
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
@@ -213,6 +215,8 @@ public class PurchaseReturnService {
         if (entity.getConfirmStatus() == null || entity.getConfirmStatus() != CONFIRM_AWAITING) {
             throw BusinessException.validateFail("仅待退货确认状态可确认退货成功");
         }
+        ensureNormalStatus(entity.getBizStatus(), "进货退货单");
+        ensureNoPendingVoidApproval(id, "进货退货单");
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LocalDateTime now = LocalDateTime.now();
         LambdaUpdateWrapper<BizPurchaseReturn> updateWrapper = new LambdaUpdateWrapper<>();
@@ -249,6 +253,10 @@ public class PurchaseReturnService {
         requirePurchaseReturnVoidExecutionAccess();
         BizPurchaseReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "进货退货单");
+        // D99：作废并冲抵（红冲）已停用——界面无入口（D74），此处封死 API 直废路径
+        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
+            throw BusinessException.validateFail("「作废并冲抵」已停用，请使用普通作废");
+        }
 
         String reason = normalizeReason(dto == null ? null : dto.getReason());
         LocalDateTime now = LocalDateTime.now();
@@ -297,7 +305,7 @@ public class PurchaseReturnService {
             return;
         }
         if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_PURCHASE)) {
-            throw BusinessException.validateFail("历史进货退货单作废/红冲需提交仓储审批");
+            throw BusinessException.validateFail("历史进货退货单作废需提交仓储审批");
         }
         throw BusinessException.forbidden("仅采购部门管理员可发起进货退货作废申请，且需由仓储部门审批");
     }
@@ -367,7 +375,7 @@ public class PurchaseReturnService {
             return;
         }
         if (!operationTime.toLocalDate().equals(LocalDate.now())) {
-            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废/红冲流程");
+            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废流程");
         }
     }
     // 确保单据处于正常状态
@@ -378,7 +386,19 @@ public class PurchaseReturnService {
         if (bizStatus == 2) {
             throw BusinessException.validateFail(docName + "已作废，禁止重复操作");
         }
-        throw BusinessException.validateFail(docName + "为红冲单，禁止删除或再次作废");
+        throw BusinessException.validateFail(docName + "为冲抵记录，禁止删除或再次作废");
+    }
+
+    // D97：作废审批中冻结主流程——存在待审批(1)/处理中(4)的作废类申请时禁止继续确认
+    private void ensureNoPendingVoidApproval(Long bizId, String docName) {
+        LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizApprovalOrder::getBizType, "purchase_return")
+                .eq(BizApprovalOrder::getBizId, bizId)
+                .in(BizApprovalOrder::getStatus, 1, 4)
+                .in(BizApprovalOrder::getRequestAction, "void", "void_red");
+        if (bizApprovalOrderMapper.selectCount(wrapper) > 0) {
+            throw BusinessException.validateFail(docName + "正在作废审批中，待仓储管理员处理后再操作");
+        }
     }
 
     private String normalizeReason(String reason) {

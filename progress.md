@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 39 — 2026-09-19
+
+### 红冲全面停用 + 措辞通俗化（/grill-with-docs 一轮两题，Q2=A+用户直答，D99）——D97 手测引发的口径重审
+
+- **起因（用户原话）：** 「之前讨论过，不要红冲了，为什么这一次又加上了」——用户看到 D97 交付说明里的「已红冲」状态标签。**先查证再回答**：留档实为 D74（2026-09-10 阶段 21）「隐藏入口即可、不必删除；历史已红冲单据仍需可查看」——是隐藏不是删除，红冲机制一直在后端；D97 给存量红冲行（bizStatus=3）配状态标签是「历史可查看」的显示侧落地，**没有恢复任何入口**。但「已红冲」三个字第二次冒到界面上=第二次困惑，证明该折中守不住。
+- **沟通失误自认：** D97 征求意见时选项文案带「已红冲」，我未主动标注其与用户「不要红冲」记忆的张力。
+- **全量实证（grilling 事实自查）：** 前端 4 视图硬编码 `requestAction:'void'` 零红冲出口；VoidApprovalView 仅历史兜底文案；全库 biz_status=3 存量 **=0**（无任何历史红冲数据）；后端仍有两条生成路径——审批提交 `void_red`（validateAction 白名单放行）+ 直废接口 `createRedFlush=true`（生产入库在用的直废通道）。
+- **定案（用户：「已红冲能不能通俗点」+Q2 按推荐 A）：** ①**措辞**——界面统一「红冲」→「冲抵」（日常词），状态标签「已冲抵」+悬浮「作废时系统生成的负数冲抵记录…」防第三次困惑；resolveState「作废并冲抵成功」、审批中心历史 action、登录页功能卡、首页审批提醒、年报 tooltip、后端报错（「为冲抵记录，禁止删除」「请走作废流程」「作废需提交仓储审批」）、审计日志 action 收敛「作废」同步换词；②**机制封死**——ApprovalService.validateAction 拒绝 void_red + 5 个 Service voidDocument 拒绝 createRedFlush=true，报错「『作废并冲抵』已停用，请提交普通作废」；红冲**生成逻辑保留为死代码**（D74 口径），普通作废库存复原不受影响。
+- **改动清单：** 后端 12 文件（ApprovalService+5 Service 守卫与文案+5 Controller 审计注解+OpenApiConfig）；前端 11 文件（bizDocumentState/4 业务视图/LoginView/AdminHome/AnnualStatsView/VoidApprovalView）；CONTEXT.md「红冲」词条改写为已停用+界面表述「冲抵」。
+- **坑一枚：** SalesReturnView 标签替换时 Edit 手误写出 `<el-tooltip…>已红冲</el-tag>` 开闭不匹配，grep 当场发现即改；另 /tmp/wms-e2e-d97.sh 被 WSL 清空（老坑再现），D97 主链路改内联回归。
+- **验证：** `./mvnw compile` BUILD SUCCESS ✓；`npm run build` ✓ 8.79s；curl E2E **8/8 PASS**（脚本 `/tmp/wms-e2e-d99.sh`：直废 createRedFlush=true 拦截 / 审批 void_red 拦截 / 普通 void 提交仍走当天未生效守卫 / 普通直废生效 biz_status=2 且无冲抵行 / 全库存量=0）+ 内联 D97 主链路回归（到货→提交作废→确认入库冻结→审批通过 biz_status=2）+ 仓储 admin 四 bizType pending 端点 200、员工 403 不变量。测试数据含 sys_message 全清净。
+- **追加（用户随后）：** 四业务视图头部「作废:」问号旁加「冲抵:」问号（同款 top-right-help/QuestionFilled/tooltip），悬停解释冲抵单含义+已停用+历史数据无需操作；build ✓ 9.22s。
+- **下一步：** 用户硬刷新手测（重点：①登录页/首页/年报/审批中心不再出现「红冲」字样；②四业务页右上角「冲抵:」问号悬停有解释；③作废流程全链路照旧）→ 与 D94–D98 一并拍板提交。
+
+---
+
 ## 会话 38 — 2026-09-16
 
 ### 优化批三项落地（/grill-with-docs 两轮六题全按推荐，D91–D93）——供应商筛选打字过滤 + 首页预警卡片可点 + 员工菜单手术
@@ -18,6 +34,34 @@
 - **坑一枚：** 登录端点是 `/api/auth/login` 不是 `/api/user/login`（后者被拦截器挡 401 误当登录失败）。
 - **环境：** 前后端 dev 已重启在跑（8080/5173），供手测。
 - **下一步：** 用户浏览器硬刷新手测（重点：①物料管理/预警中心供应商下拉打字过滤；②admin+员工首页点预警卡片直达带过滤；③四角色员工菜单无「用户部门管理」、仓储员工新三项只读）→ 拍板提交 → 优化批下一项或空库全量重测。
+
+### 作废解惑包落地（/grill-with-docs 一轮三题，Q3=A 保留作废+解惑包，D94）——六页统一说明弹窗 + 行内「作废审批中」
+
+- **起因（用户原话）：** 「退货 1 个物料库存+1，点作废库存又变回退货之前，我认为这样不对，不需要作废按钮了」→ grilling 追问「主要是作废功能令我困惑」→ 淘宝类比讨论后用户认可：作废（此单不该存在/录错纠正，库存回滚是**复原不是撤销业务**）与客户后悔再开新单是两条正交路径，语义正确-by-design（CONTEXT「删除 vs 作废」「退货 vs 作废」词条早有定论）。根因=交互零解释：裸 `ElMessageBox.prompt` 只问原因、不提后果、提交后行内无状态、生效在别的页面发生。
+- **定案（Q3=A 保留+解惑包，新流程用户拍板）：** ①**说明弹窗** VoidConfirmDialog（共享组件）——含义（此单当作没发生过/业务真实发生请走对应业务单）、库存影响逐行（商品名×数量，deduct 扣回/return 回补/无不涉及，deduct 附库存不足则失败提示）、生效流程（审批流=仓储 admin 通过后生效被驳回维持原样；直废=确认后立即生效）、留痕（标记已作废+原因可查）；审批流四类单（进货/购退/销售/销退）原因必填，直废两类（生产入库/生产任务单）选填。②**行内「作废审批中」**（审批流四页）：新端点 `GET /system/approval-orders/pending-void-biz-ids?bizType=`（@RequireAdmin，透 status∈{1,4} 且 action∈{void,void_red} 的 bizId 集），状态列 warning tag + 作废按钮禁用 + tooltip「待仓储管理员处理」，仅 admin 拉取与按钮可见性一致。③删除/作废按钮分工 tooltip（当天错单删除不留痕 vs 历史错单作废留痕）。
+- **改动清单：** 后端 ApprovalService.listPendingVoidBizIds + ApprovalController 新端点；前端新组件 VoidConfirmDialog + system.js API + 六页接线（SalesView/SalesReturnView/PurchaseView/PurchaseReturnView 审批型，ProductionView/ProductionOrderView 直废型无行内状态）。生产任务单原 prompt 强制原因必填，对齐决策改选填（后端本就 required=false 默认「无」）。
+- **坑一枚：** el-tooltip 包裹带 `v-if` 的删除按钮打断了与后续 `<template v-else-if>`/`<span v-else>` 的条件链（v-else 必须与 v-if 元素相邻）→ vite:vue 编译崩「Cannot read properties of undefined (reading 'type')」；修法=v-if 上移到 el-tooltip 元素本身，五页同构修复。
+- **验证：** `npm run build` ✓ 8.64s；`./mvnw compile` BUILD SUCCESS ✓；curl E2E **14/14 PASS**（脚本 `/tmp/wms-e2e-d94.sh`：昨日进货单→到货→入库 库存20→30→提交作废审批→pending 端点透出→员工 403 负测→重复提交 400 拦截→仓储审批通过→库存回退 20+biz_status=2→pending 清除→测试数据清理库存复原）。
+- **下一步：** 用户硬刷新手测（重点：①四张审批型单据页点作废见说明弹窗、提交后行内「作废审批中」+按钮禁用；②仓储审批中心通过后行内状态消失+单据已作废；③生产入库/生产任务单直废弹窗立即生效措辞）→ 拍板提交。
+
+### 删除/作废口径统一 + 当天已生效单死锁解锁（/grill-with-docs 一轮三题全按推荐，D95/D96）——D94 手测暴露的两个真问题
+
+- **起因（用户原话）：** ①「为什么作废变成了删除？物料入库/退货成功后点删除提示『已出库的退货单不可删除，请走作废流程』，那作废流程怎么走？」②「仓储端点销售退货入库确认/物料退货出库确认提示仅销售/采购部门可访问」。
+- **探查（双 Explore agent 实证）：** **问题 1 是真死锁**——进货/购退/销退删除要求 当天+bizStatus=1+confirmStatus=1，而 ApprovalService.create 对当天单一律拦截（「当天单据请直接删除」），于是「当天建、当天已确认」的单删不掉也废不了；前端进货/购退 canDelete 只看日期不卡 confirmStatus，亮出必失败的删除按钮；销售单是例外——admin 可无痕直删当天已出库单（回补库存不留痕），同类单据两套规则。**问题 2 是配菜报错**——两个菜单页路由/分页/确认接口本就放行仓储（读守卫 requireAnyDeptMember 含仓储），报错来自 onMounted 加载建退货单源单下拉 returnableOptions（写守卫），本地 catch 静默但拦截器 toast 已弹出，看起来像页面进不去。
+- **定案（Q1=A 解锁+Q2=A 收口+Q3=A 前端门控）：** **删除=当天+未生效错单（无痕）；作废=已生效或历史错单（留痕+仓储审批）**。后端：ApprovalService.ensureCanSubmitVoidApproval 仅拦「当天+未生效」（BizDocumentMeta 增 confirmStatus），当天已生效单放行作废审批；SalesService.ensureCanDeleteSales admin 已出库单收口（报错对齐「已出库的销售单不可删除，请走作废流程」）。前端：四审批型视图 canDelete/canVoid 统一 isPendingTodayDoc 判定+头部帮助/tooltip 文案同步；两退货页源单选项仅建单角色（本部门成员/超管）加载（D96）。
+- **E2E 坑两枚：** ①base/goods 创建仅**仓储 admin**（用采购 admin 403 导致成品未建成、GID 回落 1 号物料，叠加销售单只可选成品，Q2 首轮全崩）；②清理 SQL 多语句遇空变量语法错误会整体中止——残留靠手工核表清净；**goods 1 stock 曾被脚本误改 10，已恢复基线 20**；用户手测数据（goods 2 顶盖01、purchase #3）识别后未动。
+- **验证：** `./mvnw compile` BUILD SUCCESS ✓；`npm run build` ✓ 10.62s；curl E2E 首轮 9 PASS（Q1/Q3 全绿）+ 补测 8/8 PASS（Q2：建成品→销售出库→admin 删除拦截→作废审批放行→仓储审批→库存回补 10+单据作废；当天未确认销售单直删回归 200）。脚本 `/tmp/wms-e2e-d95.sh` + `/tmp/wms-e2e-d95b.sh`。
+- **下一步：** 用户硬刷新手测（重点：①当天已入库进货单/已出库销售单 → 操作列直接亮「作废」（不再亮删除），点击走说明弹窗→审批；②当天未确认单仍只见「删除」且可删；③仓储 admin 打开两个退货确认页不再弹 403）→ 与 D94 一并拍板提交。
+
+### 作废态可视 + 作废审批中冻结主流程（/grill-with-docs 一轮两题全按推荐，D97/D98）——D95 手测再暴露的两个真问题
+
+- **起因（用户原话）：** ①「如果作废了，界面的退货状态是不是应该改成『已作废』，而不是显示别的，这样容易有歧义」②「采购退货在仓储确认退货后点作废，回到物料退货界面，为什么还有『确认退货成功』可以按」。
+- **探查（Explore agent 实证）：** 问题 1——四审批型视图状态列只渲染 confirmStatusText，bizStatus 不可见（VO 有 bizStatus 无文案；resolveBizDocumentState 的「作废成功」标签仅用于操作列兜底）。问题 2 是**真数据腐化通道**——6 个确认方法中 4 个连 ensureNormalStatus 都没有（PurchaseService.arrive/confirmReceive、PurchaseReturnService.confirmOut/complete），已作废/审批中的单据仍可被继续确认推进 workflow 动库存； SalesService.confirm / SalesReturnService.confirm 有 ensureNormalStatus 但也无审批中守卫。voidDocument 按审批通过时的**当前状态**计算库存回滚（workflow 在审批期间前进也算得对），但「审批未决单据继续走流程」本身让作废审批失去意义。
+- **定案（Q1=A 状态列终态直显 + Q2=A 全冻结双层）：** ①**D97 纯前端**——四视图状态列加前置分支：bizStatus=2 灰色「已作废」、=3「已红冲」（红冲行=作废执行时生成的负数对冲单，bizStatus=3 仅落在该行，原单恒为 2），否则维持原确认状态标签；②**D98 前后端双层**——前端四视图 6 个确认按钮 bizStatus≠1 直接隐藏、voidPendingIds 命中禁用+tooltip「作废审批中，待仓储管理员处理」（el-tooltip 包 span 范式与作废按钮一致）；后端四 Service 各加私有 `ensureNoPendingVoidApproval`（直查 biz_approval_order：该单 status∈{1待审批,4处理中} 且 action∈{void,void_red} 即拦「正在作废审批中，待仓储管理员处理后再操作」），6 个确认方法全部接入，缺 ensureNormalStatus 的 4 个一并补齐。
+- **改动清单：** 后端 4 Service（Purchase/PurchaseReturn/Sales/SalesReturn，各 1 守卫方法+1~2 调用点）；前端 4 视图各 2 处（状态列分支+确认按钮包裹）+ 复查后补 2 处/视图（见下）。
+- **复查抓回一处盲区：** loadVoidPendingIds 原门控「仅本部门 admin」（D94 设计，与作废按钮可见性一致），而 D98 冻结的确认按钮主操作者是**仓储 admin**（进货确认入库/购退确认出库/销售确认出库/销退确认入库）——仓储进这些页 voidPendingIds 恒空，禁用 tooltip 不生效、只剩点击后后端报错。端点实为 @RequireAdmin 任意部门 admin 可过、service 无 dept 细分，故纯前端拓宽：四视图门控改「本部门 admin + 仓储 admin」，员工仍不拉（403 不变量保持，员工点击由后端守卫兜底明确报错）。
+- **验证：** `./mvnw compile` BUILD SUCCESS ✓；`npm run build` ✓ 9.32s/8.60s；curl E2E **15/15 PASS**（脚本 `/tmp/wms-e2e-d97.sh`：T1 进货单到货后提交作废→确认入库被拦「作废审批中」库存未动→审批通过 biz_status=2；T2 **用户原 bug 场景**——购退单出库确认后提交作废→「确认退货成功」complete 被拦→审批通过库存回补 65→70；两列表 VO 透出 bizStatus=2；测试数据含 sys_message 全清净，基线未动）。拓宽后补验：仓储 admin 四 bizType 全 200、员工仍 403 ✓。E2E 小坑：biz_approval_order 无 reason 列，清理核对查询误报 FAIL，按 biz_id 核实际已清净。
+- **下一步：** 用户硬刷新手测（重点：①作废通过的进货/购退/销售/销退单状态列显「已作废」，红冲行显「已红冲」；②提交作废后审批挂着期间，到货确认/确认入库/确认出库/确认退货成功按钮全部禁用带 tooltip（已作废单据直接不出现）；③仓储审批中心驳回后主流程按钮恢复可按）→ 与 D94/D95/D96 一并拍板提交。
 
 ---
 

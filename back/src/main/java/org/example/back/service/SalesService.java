@@ -313,6 +313,7 @@ public class SalesService {
         requireSalesVoidExecutionAccess();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
+        ensureNoPendingVoidApproval(id, "销售单");
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
             throw BusinessException.validateFail("销售单已确认出库，禁止重复确认");
         }
@@ -363,10 +364,15 @@ public class SalesService {
     /**
      * 删除权限：销售管理员/超管可删本人部门当天单（D32）；销售员工仅可删自己建的、未出库的当天单（用于价格偏离被驳回后改价重提）。
      * 员工不触碰库存：未出库单(confirm_status=1)未扣库存，删除仅撤销审批/消息，与 D32 职责分离兼容。
+     * D95：与进货/销退统一口径——已确认出库的单据不可无痕删除（admin 亦然），请走作废留痕+审批；
+     * 由此 delete 内「已出库回补库存」分支成为兜底防御，正常流程不可达。
      */
     private void ensureCanDeleteSales(BizSales entity) {
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+            if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+                throw BusinessException.validateFail("已出库的销售单不可删除，请走作废流程");
+            }
             return;
         }
         // 销售员工分支：必须是销售部门员工、单据本人所建、且未出库
@@ -399,6 +405,10 @@ public class SalesService {
         requireSalesVoidExecutionAccess();
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
+        // D99：作废并冲抵（红冲）已停用——界面无入口（D74），此处封死 API 直废路径
+        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
+            throw BusinessException.validateFail("「作废并冲抵」已停用，请使用普通作废");
+        }
 
         String reason = normalizeReason(dto == null ? null : dto.getReason());
         LocalDateTime now = LocalDateTime.now();
@@ -455,7 +465,7 @@ public class SalesService {
             return;
         }
         if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
-            throw BusinessException.validateFail("历史销售单作废/红冲需提交仓储审批");
+            throw BusinessException.validateFail("历史销售单作废需提交仓储审批");
         }
         throw BusinessException.forbidden("仅销售部门管理员可发起销售作废申请，且需由仓储部门审批");
     }
@@ -487,7 +497,7 @@ public class SalesService {
             return;
         }
         if (!operationTime.toLocalDate().equals(LocalDate.now())) {
-            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废/红冲流程");
+            throw BusinessException.validateFail("仅允许删除当天" + docName + "，历史单据请走作废流程");
         }
     }
 
@@ -498,7 +508,19 @@ public class SalesService {
         if (bizStatus == 2) {
             throw BusinessException.validateFail(docName + "已作废，禁止重复操作");
         }
-        throw BusinessException.validateFail(docName + "为红冲单，禁止删除或再次作废");
+        throw BusinessException.validateFail(docName + "为冲抵记录，禁止删除或再次作废");
+    }
+
+    // D97：作废审批中冻结主流程——存在待审批(1)/处理中(4)的作废类申请时禁止继续确认
+    private void ensureNoPendingVoidApproval(Long bizId, String docName) {
+        LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizApprovalOrder::getBizType, "sales")
+                .eq(BizApprovalOrder::getBizId, bizId)
+                .in(BizApprovalOrder::getStatus, 1, 4)
+                .in(BizApprovalOrder::getRequestAction, "void", "void_red");
+        if (bizApprovalOrderMapper.selectCount(wrapper) > 0) {
+            throw BusinessException.validateFail(docName + "正在作废审批中，待仓储管理员处理后再操作");
+        }
     }
 
     private String normalizeReason(String reason) {
