@@ -184,14 +184,10 @@
             <template #append>元</template>
           </el-input>
         </el-form-item>
-        <el-form-item label="出库日期" prop="salesDate">
-          <el-date-picker
-            v-model="dialogForm.salesDate"
-            type="datetime"
-            value-format="YYYY-MM-DD HH:mm:ss"
-            placeholder="请选择出库时间"
-            style="width: 100%"
-          />
+        <!-- D106：销售日期 = 开单时间自动生成，删除原「出库日期」选择器（不可补录/不可改） -->
+        <el-form-item label="销售日期">
+          <el-input v-if="dialogType === 'view'" :value="dialogForm.salesDate" disabled />
+          <div v-else class="sales-date-hint">开单时自动生成（当前时间），不可选择</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -306,8 +302,7 @@ const dialogRules = {
   quantity: [
     { required: true, message: '请输入数量', trigger: 'blur' }
   ],
-  unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }],
-  salesDate: [{ required: true, message: '请选择销售日期', trigger: 'change' }]
+  unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }]
 }
 
 const normalizeDateTime = (val) => {
@@ -365,11 +360,6 @@ const isPriceDeviationRejectedRow = (row) =>
 const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete(row)
 
 const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
-
-const buildOperationTime = (selectedDate) => {
-  if (!selectedDate) return undefined
-  return String(selectedDate).replace(' ', 'T')
-}
 
 const loadGoodsOptions = async () => {
   const res = await getGoodsOptionsAPI({ type: 'product' }) // D67：销售下单只选成品
@@ -537,14 +527,14 @@ const submitForm = () => {
         goodsId: dialogForm.goodsId,
         quantity: dialogForm.quantity,
         unitPrice: Number(dialogForm.unitPrice),
-        operationTime: buildOperationTime(dialogForm.salesDate),
+        // D106：销售日期由后端按开单时间自动生成，不再上传
         customerName: dialogForm.customerName || undefined,
         contractNo: dialogForm.contractNo || undefined,
         taxIncluded: dialogForm.taxIncluded ?? 0,
         remark: dialogForm.remark || ''
       }
       await createSalesAPI(payload)
-      ElMessage.success('销售完成')
+      ElMessage.success('销售单已创建，销售日期为开单时间')
       dialogVisible.value = false
       loadList()
     } catch {
@@ -633,6 +623,13 @@ onMounted(async () => {
   font-size: 12px;
   color: #e6a23c;
   line-height: 1.4;
+}
+
+/* D106：销售日期自动生成提示 */
+.sales-date-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 32px;
 }
 
 .stock-shortage-text {

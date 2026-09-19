@@ -54,6 +54,14 @@ class ProductionOrderServiceTest {
                 new org.apache.ibatis.builder.MapperBuilderAssistant(
                         new org.apache.ibatis.session.Configuration(), "test"),
                 BizSales.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                org.example.back.entity.BizProduction.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizPickList.class);
     }
 
     @Mock private BizProductionOrderMapper orderMapper;
@@ -449,9 +457,9 @@ class ProductionOrderServiceTest {
         assertTrue(ex.getMessage().contains("未完结"), "实际: " + ex.getMessage());
     }
 
-    // ---------- D70：生产入库后通知建单销售本人 ----------
-    @Test
-    void receipt_notifiesLinkedSalespersonWhenStillPending() {
+    // ---------- D107：生产入库两段式（提交申请不加库存，仓储确认才收尾）+ D70 ----------
+
+    private BizProductionOrder awaitQcOrder() {
         BizProductionOrder order = new BizProductionOrder();
         order.setId(7L);
         order.setOrderNo("PO260910001");
@@ -459,49 +467,201 @@ class ProductionOrderServiceTest {
         order.setGoodsName("PTO153");
         order.setQuantity(10);
         order.setStatus(BizProductionOrder.STATUS_AWAIT_QC);
-        order.setSalesOrderId(501L);
-        when(orderMapper.selectById(7L)).thenReturn(order);
+        return order;
+    }
 
-        BaseGoods product = product29();
-        product.setStock(0);
-        when(baseGoodsMapper.selectById(29L)).thenReturn(product);
-        when(baseGoodsMapper.updateById(any(BaseGoods.class))).thenReturn(1);
-
+    private org.example.back.dto.LoginResponse.UserInfoVO productionUser() {
         org.example.back.dto.LoginResponse.UserInfoVO user = new org.example.back.dto.LoginResponse.UserInfoVO();
         user.setId(11L);
         user.setRealName("生产员工");
-        when(authService.getUserInfo()).thenReturn(user);
+        return user;
+    }
 
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+    @Test
+    void receipt_createsPendingApplicationWithoutStockChange() {
+        BizProductionOrder order = awaitQcOrder();
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        // 无在途待确认申请
+        when(productionMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        when(authService.getUserInfo()).thenReturn(productionUser());
 
         service.receipt(7L);
 
+        ArgumentCaptor<org.example.back.entity.BizProduction> cap =
+                ArgumentCaptor.forClass(org.example.back.entity.BizProduction.class);
+        verify(productionMapper).insert(cap.capture());
+        org.example.back.entity.BizProduction in = cap.getValue();
+        assertEquals(org.example.back.entity.BizProduction.CONFIRM_PENDING, in.getConfirmStatus());
+        assertEquals(7L, in.getProductionOrderId());
+        // 提交申请阶段不加库存、订单不停留待入库
+        verify(baseGoodsMapper, org.mockito.Mockito.never()).updateById(any(BaseGoods.class));
+        assertEquals(BizProductionOrder.STATUS_AWAIT_QC, order.getStatus());
+        verify(messageService).sendProductionInboundPendingToWarehouseAdmins(
+                anyString(), eq("PO260910001"), eq("PTO153"), eq(10), any());
+    }
+
+    @Test
+    void receipt_rejectsWhenPendingApplicationExists() {
+        BizProductionOrder order = awaitQcOrder();
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        org.example.back.entity.BizProduction pending = new org.example.back.entity.BizProduction();
+        pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
+        pending.setBizStatus(1);
+        when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.receipt(7L));
+        assertTrue(ex.getMessage().contains("待仓储确认的入库申请"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void finalizeAfterInboundConfirmed_marksDoneAndNotifiesSalesWhenPending() {
+        BizProductionOrder order = awaitQcOrder();
+        order.setSalesOrderId(501L);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+
+        service.finalizeAfterInboundConfirmed(7L);
+
+        assertEquals(BizProductionOrder.STATUS_DONE, order.getStatus());
+        verify(orderMapper).updateById(order);
+        verify(messageService).revokeUnreadByBiz("production_order", 7L);
         verify(messageService).sendSalesReadyToShipToUser(
                 eq(7L), eq("XS260910001"), eq("PTO153"), eq(10), eq(501L));
     }
 
     @Test
-    void receipt_noNotifyWhenSalesAlreadyShipped() {
-        BizProductionOrder order = new BizProductionOrder();
-        order.setId(7L);
-        order.setOrderNo("PO260910001");
-        order.setGoodsId(29L);
-        order.setQuantity(10);
-        order.setStatus(BizProductionOrder.STATUS_AWAIT_QC);
+    void finalizeAfterInboundConfirmed_noNotifyWhenSalesAlreadyShipped() {
+        BizProductionOrder order = awaitQcOrder();
         order.setSalesOrderId(501L);
         when(orderMapper.selectById(7L)).thenReturn(order);
-        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
-        when(baseGoodsMapper.updateById(any(BaseGoods.class))).thenReturn(1);
-        org.example.back.dto.LoginResponse.UserInfoVO user = new org.example.back.dto.LoginResponse.UserInfoVO();
-        user.setId(11L);
-        user.setRealName("生产员工");
-        when(authService.getUserInfo()).thenReturn(user);
         when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED, 29L));
 
-        service.receipt(7L);
+        service.finalizeAfterInboundConfirmed(7L);
 
+        assertEquals(BizProductionOrder.STATUS_DONE, order.getStatus());
         verify(messageService, org.mockito.Mockito.never()).sendSalesReadyToShipToUser(
                 any(), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void finalizeAfterInboundConfirmed_rejectsNonAwaitingOrder() {
+        // review 修复：已终止/报废/返工单不能被仓储确认复活为已完成
+        BizProductionOrder order = awaitQcOrder();
+        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.finalizeAfterInboundConfirmed(7L));
+        assertTrue(ex.getMessage().contains("不能确认入库"), "实际: " + ex.getMessage());
+        verify(orderMapper, org.mockito.Mockito.never()).updateById(any());
+        verify(messageService, org.mockito.Mockito.never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    @Test
+    void cancelReceipt_conditionallyDeletesPendingRow() {
+        // review 修复：撤销必须带 confirm_status=1 条件，防与仓储确认并发软删已加库存的行
+        BizProductionOrder order = awaitQcOrder();
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        org.example.back.entity.BizProduction pending = new org.example.back.entity.BizProduction();
+        pending.setId(901L);
+        pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
+        pending.setBizStatus(1);
+        when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+        when(productionMapper.update(any(), any())).thenReturn(1);
+
+        service.cancelReceipt(7L);
+
+        verify(productionMapper, org.mockito.Mockito.never()).deleteById(any(Long.class));
+        verify(messageService).revokeUnreadByBiz("production", 901L);
+    }
+
+    @Test
+    void cancelReceipt_throwsWhenRowNoLongerPending() {
+        BizProductionOrder order = awaitQcOrder();
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        org.example.back.entity.BizProduction pending = new org.example.back.entity.BizProduction();
+        pending.setId(901L);
+        pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
+        pending.setBizStatus(1);
+        when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+        // 并发窗口内仓储已确认 → 条件更新 0 行
+        when(productionMapper.update(any(), any())).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.cancelReceipt(7L));
+        assertTrue(ex.getMessage().contains("已被仓储确认或驳回"), "实际: " + ex.getMessage());
+        verify(messageService, org.mockito.Mockito.never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    @Test
+    void closePendingInboundApplication_marksRejectedAndNotifiesProducer() {
+        // review 修复：任务单终止/返工时自动关闭待确认申请——系统驳回+撤仓储待办+回执提交人
+        org.example.back.entity.BizProduction pending = new org.example.back.entity.BizProduction();
+        pending.setId(901L);
+        pending.setProductionNo("PRO260919001");
+        pending.setOperatorId(11L);
+        pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
+        when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+        when(productionMapper.update(any(), any())).thenReturn(1);
+
+        service.closePendingInboundApplication(7L, "生产任务单已终止，入库申请自动关闭");
+
+        verify(messageService).revokeUnreadByBiz("production", 901L);
+        verify(messageService).sendProductionInboundRejectedToUser(
+                eq(11L), eq("PRO260919001"), eq("生产任务单已终止，入库申请自动关闭"), eq(901L));
+    }
+
+    @Test
+    void closePendingInboundApplication_noopWhenNoPending() {
+        when(productionMapper.selectList(any())).thenReturn(List.of());
+
+        service.closePendingInboundApplication(7L, "返工关闭");
+
+        verify(productionMapper, org.mockito.Mockito.never()).update(any(), any());
+        verify(messageService, org.mockito.Mockito.never()).revokeUnreadByBiz(anyString(), any());
+        verify(messageService, org.mockito.Mockito.never())
+                .sendProductionInboundRejectedToUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void closePendingInboundApplication_concurrentConfirmWinsSkipsNotification() {
+        org.example.back.entity.BizProduction pending = new org.example.back.entity.BizProduction();
+        pending.setId(901L);
+        pending.setOperatorId(11L);
+        pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
+        when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+        // 关闭与仓储确认并发，条件更新 0 行（对方胜出）→ 不再发"驳回"回执
+        when(productionMapper.update(any(), any())).thenReturn(0);
+
+        service.closePendingInboundApplication(7L, "终止关闭");
+
+        verify(messageService, org.mockito.Mockito.never()).revokeUnreadByBiz(anyString(), any());
+        verify(messageService, org.mockito.Mockito.never())
+                .sendProductionInboundRejectedToUser(any(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void start_pickQueryExcludesReturnLists() {
+        // review 修复：齐套/开工口径只看 PICK/SUPPLY 发料单，退料单不参与（待发料/已驳回退料不再搞出假缺料）
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setStatus(BizProductionOrder.STATUS_PENDING);
+        when(orderMapper.selectById(7L)).thenReturn(order);
+        when(pickListMapper.selectList(any())).thenReturn(List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.start(7L));
+        assertTrue(ex.getMessage().contains("尚未全额出库"), "实际: " + ex.getMessage());
+
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper> cap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
+        verify(pickListMapper).selectList(cap.capture());
+        com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?> wrapper =
+                (com.baomidou.mybatisplus.core.conditions.AbstractWrapper<?, ?, ?>) cap.getValue();
+        wrapper.getSqlSegment(); // 触发参数物化
+        String values = wrapper.getParamNameValuePairs().values().toString();
+        assertTrue(values.contains(PickListService.TYPE_PICK), "查询必须包含 PICK 类型: " + values);
+        assertTrue(values.contains(PickListService.TYPE_SUPPLY), "查询必须包含 SUPPLY 类型: " + values);
     }
 
     // ---------- D73：关联销售单已删除 → 标注"已取消的销售单" ----------

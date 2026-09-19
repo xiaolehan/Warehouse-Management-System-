@@ -55,9 +55,19 @@ public class ProductionOrderController {
     }
 
     @PostMapping("/{id}/receipt")
-    @PreventDuplicateSubmit(message = "请勿重复入库")
+    @PreventDuplicateSubmit(message = "请勿重复提交入库申请")
     public Result<Void> receipt(@PathVariable Long id) {
         productionOrderService.receipt(id);
+        return Result.success();
+    }
+
+    /** D107：撤销入库申请（仓储确认/驳回前可撤，撤未读待办） */
+    @PostMapping("/{id}/receipt-cancel")
+    @PreventDuplicateSubmit(message = "请勿重复提交撤销请求")
+    @AuditLog(module = "生产任务单", action = "撤销入库申请", targetType = "生产任务单",
+            detail = "'撤销入库申请：生产任务单 #' + #id")
+    public Result<Void> cancelReceipt(@PathVariable Long id) {
+        productionOrderService.cancelReceipt(id);
         return Result.success();
     }
 

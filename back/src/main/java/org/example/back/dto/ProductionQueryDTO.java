@@ -16,6 +16,9 @@ public class ProductionQueryDTO extends PageQuery {
 
     private Long goodsId;
 
+    /** D107 确认状态筛选: 1-待仓库确认, 2-已确认入库, 3-已驳回 */
+    private Integer confirmStatus;
+
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate;
 

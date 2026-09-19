@@ -34,6 +34,8 @@ public class BizProductionOrder {
     public static final String KIT_OK = "ok";
     public static final String KIT_PARTIAL = "partial";
     public static final String KIT_BLOCK = "block";
+    /** D105：领料单已全额出库——本单物料已发放到生产现场，不再按仓库库存重算齐套 */
+    public static final String KIT_ISSUED = "issued";
 
     public static final String SOURCE_MANUAL = "MANUAL";
 

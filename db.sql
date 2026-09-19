@@ -1231,6 +1231,7 @@ CREATE TABLE IF NOT EXISTS `biz_bom_detail` (
 CREATE TABLE IF NOT EXISTS `biz_production` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `production_no` VARCHAR(30) NOT NULL COMMENT '生产入库单号',
+    `production_order_id` BIGINT DEFAULT NULL COMMENT '来源生产任务单ID(D107: 生产端提交入库申请时写入；仓储手动新增为空)',
     `goods_id` BIGINT NOT NULL COMMENT '商品ID',
     `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
     `quantity` INT NOT NULL COMMENT '入库数量',
@@ -1238,21 +1239,31 @@ CREATE TABLE IF NOT EXISTS `biz_production` (
     `total_price` DECIMAL(10,2) DEFAULT NULL COMMENT '总金额(单价为空时为空)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
-    `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
+    `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间(D107: 申请=提交时间，确认时刷新为实际入库时间)',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
     `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
+    `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '确认状态(D107): 1-待仓库确认, 2-已确认入库(存量行回填2), 3-已驳回',
+    `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(D107: 确认入库/驳回时写；手动新增=录入人)',
+    `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余)',
+    `confirm_time` DATETIME DEFAULT NULL COMMENT '确认/驳回时间(D107)',
+    `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因(D107: confirm_status=3 时有值)',
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
     `void_reason` VARCHAR(200) DEFAULT NULL COMMENT '作废原因',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    -- D107：仅"未删除的待确认申请行"取任务单 id，其余为 NULL → 同一任务单至多一笔待确认申请（DB 层兜底并发双提交）
+    `pending_order_key` BIGINT GENERATED ALWAYS AS (CASE WHEN `confirm_status` = 1 AND `is_deleted` = 0 THEN `production_order_id` ELSE NULL END) STORED COMMENT '待确认申请唯一键生成列(D107)',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_production_no` (`production_no`),
+    UNIQUE KEY `uk_production_pending_order` (`pending_order_key`),
     KEY `idx_production_goods_id` (`goods_id`),
     KEY `idx_production_status` (`biz_status`),
     KEY `idx_production_source_id` (`source_id`),
     KEY `idx_production_operator_id` (`operator_id`),
+    KEY `idx_production_confirm_status` (`confirm_status`),
+    KEY `idx_production_order_id` (`production_order_id`),
     KEY `idx_production_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='生产入库表(自产零件入库,库存增加)';
 
@@ -1677,3 +1688,18 @@ CREATE TABLE IF NOT EXISTS `biz_stocktake_detail` (
 --     ADD COLUMN `counter_id` BIGINT DEFAULT NULL COMMENT '实际录入人ID' AFTER `actual_qty`,
 --     ADD COLUMN `counter_name` VARCHAR(50) DEFAULT NULL COMMENT '实际录入人姓名(冗余)' AFTER `counter_id`,
 --     ADD COLUMN `count_time` DATETIME DEFAULT NULL COMMENT '录入时间' AFTER `counter_name`;
+
+-- 20. D107 成品入库两段式确认（已建库执行）：biz_production 加来源任务单 + 确认状态列
+-- ALTER TABLE `biz_production`
+--     ADD COLUMN `production_order_id` BIGINT DEFAULT NULL COMMENT '来源生产任务单ID(D107: 生产端提交入库申请时写入；仓储手动新增为空)' AFTER `production_no`,
+--     ADD COLUMN `confirm_status` TINYINT NOT NULL DEFAULT 2 COMMENT '确认状态(D107): 1-待仓库确认, 2-已确认入库(存量行回填2), 3-已驳回' AFTER `biz_status`,
+--     ADD COLUMN `confirmer_id` BIGINT DEFAULT NULL COMMENT '确认人ID(D107: 确认入库/驳回时写；手动新增=录入人)' AFTER `confirm_status`,
+--     ADD COLUMN `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余)' AFTER `confirmer_id`,
+--     ADD COLUMN `confirm_time` DATETIME DEFAULT NULL COMMENT '确认/驳回时间(D107)' AFTER `confirmer_name`,
+--     ADD COLUMN `reject_reason` VARCHAR(200) DEFAULT NULL COMMENT '驳回原因(D107: confirm_status=3 时有值)' AFTER `confirm_time`,
+--     ADD KEY `idx_production_confirm_status` (`confirm_status`),
+--     ADD KEY `idx_production_order_id` (`production_order_id`);
+-- 20.1 D107 并发兜底（已建库执行）：待确认申请唯一键——同一任务单不允许两笔未删除的待确认申请（撤销/驳回/确认后生成列回 NULL 不占键）
+-- ALTER TABLE `biz_production`
+--     ADD COLUMN `pending_order_key` BIGINT GENERATED ALWAYS AS (CASE WHEN `confirm_status` = 1 AND `is_deleted` = 0 THEN `production_order_id` ELSE NULL END) STORED COMMENT '待确认申请唯一键生成列(D107)' AFTER `is_deleted`,
+--     ADD UNIQUE KEY `uk_production_pending_order` (`pending_order_key`);

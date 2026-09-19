@@ -259,7 +259,8 @@ public class SalesService {
         GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "销售单只可选择成品（type=product）"); // D67
         // D69：建单零库存校验（定制模式销售单=需求单，允许超卖）；库存扣减在仓储确认出库硬校验兜底
         BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getSalePrice(), "商品售价为空，请传入销售单价");
-        LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
+        // D106：销售日期 = 开单时间自动生成（不接受客户端传入，不可补录；「出库日期」标签废除）
+        LocalDateTime operationTime = LocalDateTime.now();
         CostSnapshot costSnapshot = buildSalesCostSnapshot(goods.getId(), operationTime, goods.getPurchasePrice());
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();

@@ -30,7 +30,8 @@
       <el-table-column prop="unit" label="单位" width="70" align="center" />
       <el-table-column label="齐套状态" width="110" align="center">
         <template #default="scope">
-          <el-tag :type="kitTagType(scope.row.kitStatus)" size="small">{{ scope.row.kitStatusText }}</el-tag>
+          <el-tag v-if="scope.row.kitStatus" :type="kitTagType(scope.row.kitStatus)" size="small">{{ scope.row.kitStatusText }}</el-tag>
+          <span v-else style="color:#909399">—</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100" align="center">
@@ -48,7 +49,12 @@
             link size="small" type="warning" @click="openDraftDialog(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >补料</el-button>
-          <el-button v-if="scope.row.status === 3" link size="small" type="success" @click="handleReceipt(scope.row)">生产入库</el-button>
+          <!-- D107 两段式：待入库状态下提交入库申请（不加库存），仓储确认后本单才完成；已提交可撤销 -->
+          <el-button v-if="scope.row.status === 3 && !scope.row.pendingInboundId" link size="small" type="success" @click="handleReceipt(scope.row)">提交入库申请</el-button>
+          <el-button
+            v-if="scope.row.status === 3 && scope.row.pendingInboundId" link size="small" type="warning"
+            @click="handleCancelReceipt(scope.row)"
+          >撤销申请</el-button>
           <el-tooltip content="错单作废留痕，立即生效，不涉及库存变动" placement="top">
             <el-button
               v-if="scope.row.status === 1 || scope.row.status === 2" link size="small" type="warning"
@@ -165,7 +171,8 @@
             <el-tag :type="statusTagType(detail.status)" size="small">{{ detail.statusText }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="齐套状态">
-            <el-tag :type="kitTagType(detail.kitStatus)" size="small">{{ detail.kitStatusText }}</el-tag>
+            <el-tag v-if="detail.kitStatus" :type="kitTagType(detail.kitStatus)" size="small">{{ detail.kitStatusText }}</el-tag>
+            <span v-else style="color:#909399">—</span>
           </el-descriptions-item>
           <el-descriptions-item label="下达时间">{{ detail.createTime }}</el-descriptions-item>
           <!-- D70：关联销售单（1对1，可空=通用备货） -->
@@ -184,6 +191,18 @@
             >修正</el-button>
           </el-descriptions-item>
         </el-descriptions>
+
+        <!-- D107 两段式：入库申请状态提示 -->
+        <el-alert
+          v-if="detail.status === 3 && detail.pendingInboundId"
+          :title="`已提交入库申请 ${detail.pendingInboundNo}（${detail.pendingInboundOperator || ''} ${fmtTime(detail.pendingInboundTime)}），待仓储管理员确认入库，确认后本单完成。确认前可撤销重新提交。`"
+          type="info" :closable="false" style="margin-top: 12px"
+        />
+        <el-alert
+          v-else-if="detail.status === 3 && detail.lastInboundRejectNo"
+          :title="`入库申请 ${detail.lastInboundRejectNo} 已被仓储驳回：${detail.lastInboundRejectReason || '未填写原因'}。请核对后重新提交入库申请。`"
+          type="warning" :closable="false" style="margin-top: 12px"
+        />
 
         <el-divider content-position="left">生产工序</el-divider>
         <!-- D64：有工序实例 → 状态化 10 道工序（7 道人工打卡 + 首测/成品测由质检推导 + 成品入库由入库推导）；无实例（历史单/已作废）回落静态快照 -->
@@ -224,7 +243,7 @@
             </el-table-column>
           </el-table>
           <div style="color: #909399; font-size: 12px; margin-top: 6px">
-            首次测试/成品测在「质检记录」页面录入后自动更新；成品入库在「生产入库」后自动更新；其余 7 道由生产研发部成员打卡，打卡本人或生产管理员可撤销。
+            首次测试/成品测在「质检记录」页面录入后自动更新；成品入库在仓储「确认入库」后自动更新；其余 7 道由生产研发部成员打卡，打卡本人或生产管理员可撤销。
           </div>
         </template>
         <ol v-else style="margin: 0; padding-left: 20px">
@@ -497,6 +516,7 @@ import {
   Search, Refresh, Plus, Check, Close
 } from '@element-plus/icons-vue'
 import {
+  cancelProductionReceiptAPI,
   completeProductionStepAPI,
   createProductionOrderAPI,
   getLinkableSalesOptionsAPI,
@@ -824,11 +844,22 @@ const handleStart = async (row) => {
   }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
+// D107 两段式：提交入库申请（生成待仓储确认记录，不加库存；仓储确认后本单才完成）
 const handleReceipt = (row) => {
-  ElMessageBox.confirm(`确认生产任务单「${row.orderNo}」生产入库？入库后成品库存将增加 ${row.quantity} ${row.unit}，订单标记已完成。`, '入库确认', { type: 'warning' })
+  ElMessageBox.confirm(`确认为生产任务单「${row.orderNo}」提交入库申请？提交后待仓储管理员确认入库（确认前不加库存），本单暂停留在此。`, '提交入库申请', { type: 'warning' })
     .then(async () => {
       await receiptProductionOrderAPI(row.id)
-      ElMessage.success('已生产入库，成品库存已增加')
+      ElMessage.success('已提交入库申请，待仓储管理员确认')
+      await loadList()
+    }).catch(() => {}) // 取消或业务错误已统一提示
+}
+
+// D107：撤销入库申请（仓储确认/驳回前可撤，撤仓储待办消息）
+const handleCancelReceipt = (row) => {
+  ElMessageBox.confirm(`确认撤销任务单「${row.orderNo}」的入库申请（${row.pendingInboundNo}）？撤销后可重新提交。`, '撤销入库申请', { type: 'warning' })
+    .then(async () => {
+      await cancelProductionReceiptAPI(row.id)
+      ElMessage.success('已撤销入库申请')
       await loadList()
     }).catch(() => {}) // 取消或业务错误已统一提示
 }
@@ -1055,7 +1086,7 @@ const submitEc = async (time) => {
 // 标题格式化工具
 const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
 const fmtTime = (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '')
-const kitTagType = (k) => (k === 'ok' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
+const kitTagType = (k) => (k === 'ok' || k === 'issued' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
 const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : s === 7 ? 'danger' : 'info')
 // D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红
 const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : l === 'unknown' ? 'info' : 'danger')

@@ -234,6 +234,8 @@ public class ProductionPickService {
         order.setRemark(appendRemark(order.getRemark(), "终止原因: " + reason.trim()));
         productionOrderMapper.updateById(order);
         messageService.revokeUnreadByBiz("production_order", orderId);
+        // D107/review：终止离开待入库态——自动关闭待确认入库申请（置系统驳回+撤仓储待办+回执生产）
+        productionOrderService.closePendingInboundApplication(orderId, "生产任务单已终止，入库申请自动关闭");
 
         // Q6 定案：已有进行中退料单 → 跳过自动生成
         if (!items.isEmpty() && findOpenReturn(orderId) == null) {

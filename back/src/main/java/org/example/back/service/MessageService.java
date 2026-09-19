@@ -41,6 +41,7 @@ public class MessageService {
     private static final String ROUTE_PURCHASE_REQUEST = "/business/purchase-request";
     private static final String ROUTE_PICK_LIST = "/business/pick-list";
     private static final String ROUTE_PRODUCTION_ORDER = "/business/production-order";
+    private static final String ROUTE_PRODUCTION = "/business/production";
     private static final String ROUTE_VOID_APPROVAL = "/system/void-approval";
 
     @Autowired
@@ -320,6 +321,46 @@ public class MessageService {
                 "sales_return",
                 returnId,
                 ROUTE_SALES_RETURN);
+    }
+
+    /**
+     * D107：生产端提交成品入库申请 → 通知仓储管理员确认入库（不加库存，确认后才加）。
+     * 绑 biz_type=production：确认/驳回/撤销申请时随 D21 范式一并撤未读。
+     */
+    public void sendProductionInboundPendingToWarehouseAdmins(String productionNo, String orderNo,
+                                                              String goodsName, Integer quantity, Long productionId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认成品入库",
+                String.format(
+                        Locale.ROOT,
+                        "生产任务单 %s 完工，成品 %s×%d 已提交入库申请（%s），请确认入库。确认前不会增加库存。",
+                        orderNo, goodsName, quantity == null ? 0 : quantity, productionNo
+                ),
+                "production",
+                productionId,
+                ROUTE_PRODUCTION);
+    }
+
+    /**
+     * D107：入库申请被仓储驳回 → 回执生产提交人（留痕通知，不随流程撤回）。
+     */
+    public void sendProductionInboundRejectedToUser(Long operatorId, String productionNo, String reason, Long productionId) {
+        sendToUserWithBiz(
+                operatorId,
+                "成品入库申请已驳回",
+                String.format(
+                        Locale.ROOT,
+                        "您提交的入库申请 %s 已被仓储驳回：%s。请核对后重新提交入库申请。",
+                        productionNo, reason
+                ),
+                "production",
+                productionId,
+                ROUTE_PRODUCTION);
     }
 
     /**

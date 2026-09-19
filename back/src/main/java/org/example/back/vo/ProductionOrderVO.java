@@ -60,5 +60,23 @@ public class ProductionOrderVO {
     /** 质检状态（首测/成品测） */
     private QcStateVO qcState;
 
+    /** D107：待仓储确认的入库申请 id（待入库状态且有申请时非空） */
+    private Long pendingInboundId;
+
+    /** D107：待确认入库申请单号 */
+    private String pendingInboundNo;
+
+    /** D107：入库申请提交时间 */
+    private LocalDateTime pendingInboundTime;
+
+    /** D107：入库申请提交人 */
+    private String pendingInboundOperator;
+
+    /** D107：最近一笔被驳回的入库申请单号（提示重新提交） */
+    private String lastInboundRejectNo;
+
+    /** D107：最近一次驳回原因 */
+    private String lastInboundRejectReason;
+
     private Integer isDeleted;
 }

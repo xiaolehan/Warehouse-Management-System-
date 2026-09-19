@@ -12,6 +12,7 @@ import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +45,11 @@ public class QcService {
 
     @Autowired
     private MessageService messageService;
+
+    // D107/review：@Lazy 打破与 ProductionOrderService 的字段注入循环（后者注入本服务做质检校验）
+    @Autowired
+    @Lazy
+    private ProductionOrderService productionOrderService;
 
     private void requireQcAccess() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -107,11 +113,17 @@ public class QcService {
             setDisposition(latestNg, BizProductionQc.DISP_REWORK);
             // 返工：退回生产中等待重测
             updateOrderStatus(order, BizProductionOrder.STATUS_IN_PROGRESS);
+            // D107/review：离开待入库态——自动关闭可能已提交的入库申请，防仓储确认一张返工单
+            productionOrderService.closePendingInboundApplication(
+                    order.getId(), "质检处置返工，入库申请自动关闭");
         } else {
             setDisposition(latestNg, BizProductionQc.DISP_SCRAP);
             // 报废：终结订单，撤销未读通知
             messageService.revokeUnreadByBiz("production_order", order.getId());
             updateOrderStatus(order, BizProductionOrder.STATUS_SCRAPPED);
+            // D107/review：报废——自动关闭待确认入库申请（置系统驳回+撤仓储待办+回执生产）
+            productionOrderService.closePendingInboundApplication(
+                    order.getId(), "质检处置报废，入库申请自动关闭");
         }
     }
 

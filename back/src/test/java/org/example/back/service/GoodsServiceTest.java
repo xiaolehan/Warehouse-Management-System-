@@ -52,6 +52,7 @@ class GoodsServiceTest {
     // ---------- 预警中心放开生产 admin：warningOnly 分页鉴权须含生产部门 ----------
     @Test
     void page_warningOnly_authorizesProductionAdmin() {
+        // D92：预警中心读权限已放开到四部门成员（不再仅管理员）
         GoodsQueryDTO query = new GoodsQueryDTO();
         query.setWarningOnly(true);
         Page<BaseGoods> emptyPage = new Page<>(query.getPageNum(), query.getPageSize());
@@ -60,7 +61,7 @@ class GoodsServiceTest {
 
         service.page(query);
 
-        verify(authzService).requireAnyDeptAdminOrSuperAdmin(
+        verify(authzService).requireAnyDeptMemberOrSuperAdmin(
                 eq(AuthzService.WARNING_DEPT_CODES),
                 anyString());
     }

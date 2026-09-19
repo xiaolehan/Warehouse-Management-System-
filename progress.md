@@ -5,6 +5,25 @@
 
 ---
 
+## 会话 42 — 2026-09-19
+
+### grill 六需求批次一落地（D105 齐套领料 / D106 销售日期 / D107 成品入库两段式 / D108 价格偏离常驻入口）——262 单测全绿 + python E2E 全链路 → /code-review 15 findings 全修，269 单测 + 33/33 状态机回归 E2E
+
+- **起因：** `/grill-with-docs` 六题（用户五条原话 + 主动揪出的价格审批入口缺失），两轮拍板后分三批：批次一 ①③②⑥，批次二 D109 供应商匹配，批次三 D110 一客户多型号（各带 ADR）。本次交付批次一。
+- **D105 齐套领料显示：** 根因=详情/列表按当前库存实时重算齐套率，领料出库扣完库存后已全额领料的单反显缺料。用户锚定口径「针对某个领料单，已全额出库这个成品就是齐套的；再生产是另一张领料单，与此无关」。实现：关联领料单全部全额出库（pick ISSUED/DONE allMatch）→ kitStatus=`issued`「齐套领料」、kitLines=[]；列表 pickIssuedMap 一次 in 批量装配，详情同口径；显示区间=出库→入库完成（含状态 3 待入库），状态≥4 去标签；未领料/未全额出库维持四态实时口径（状态 3 不重算）；补料通知逻辑不动。
+- **D106 销售日期：** 实证新建弹窗「出库日期」选择器绑定的是 operationTime（开单时间），标签错误且系统无编辑功能。删除日期选择器 + SalesSaveDTO.operationTime，create 强制 now()；查看态只读销售日期、新建态提示自动生成不可选；列表/搜索「销售日期」保留。
+- **D107 成品入库两段式确认（本批最大项）：** 生产端「生产入库」→「提交入库申请」（biz_production confirm_status=1，**不加库存**、任务单停留状态 3、通知仓储管理员 biz=production）；仓储生产入库页「确认入库」（仅仓储管理员，LambdaUpdate 乐观守卫 eq PENDING，确认时才 increaseStock + 任务单转已完成 + 撤待办 + 通知关联销售可发货）；生产可撤销（逻辑删+撤未读）、仓储可驳回（原因必填+回执不撤销）；仓储手动新增保留录入即 confirm_status=2（确认人=录入人）；整单确认不拆量；仓储列表加确认状态筛选/列（驳回 tooltip 原因），删除/作废加 ensureStockBearing（待确认引导撤销、驳回单放行）；ProductionOrderService.finalizeAfterInboundConfirmed 同事务收尾规避循环依赖；db.sql 第 20 节 DDL（confirm_status NOT NULL DEFAULT 2 存量回填，已对本地库执行）。
+- **D108 价格偏离审批常驻入口：** 用户原话「这是一个功能不是一个数据」——旧入口只在有待审数据时出现，空库功能消失。对齐部门审批：总览页 nav 卡 + 待审指标卡（新端点 approval-orders/pending-price-deviation-count），首页蓝色提醒卡（sessionStorage 签名去重/可关闭/数量变化重现），点击直达 /system/void-approval。
+- **改动规模：** 后端 14 主文件 + 新建 InboundRejectDTO；前端 6 文件；db.sql；单测 ProductionOrderServiceTest 删 2 旧语义用例改写为 4 个 D107 用例（待确认申请不动库存/重复申请守卫/确认收尾通知销售/已出库不重复通知），GoodsServiceTest 顺手修 D92 遗留过期断言。
+- **验证：** `./mvnw test` **262 全绿**（0 Failures/0 Errors）；`npm run build` 通过；python3 urllib E2E（环境无 jq，脚本 /tmp/e2e_*.py）全链路 PASS：出库后列表+详情 kit=issued/齐套领料/kitLines=[] → 提交申请库存不变+订单停留状态 3+pendingInboundNo 回填 → 仓储 confirmStatus=1 筛选命中+来源任务单正确 → 生产角色确认 403 → 驳回后 lastInboundReject* 回填+重复驳回 400+删驳回单 400 → 撤销后待确认 0 → 重提确认库存 0→5+订单转 4+kit 清空 → 手动新增即 confirm_status=2 确认人=录入人；D106 传入 2020 日期被忽略仍取当天；D108 五折单计数 0→1 审批后 0；消息表 biz_type=production/target_route=/business/production 全绑定。
+- **坑：** ①SalesSaveDTO 一次 Edit 丢了 quantity 字段（@Min 串到 unitPrice 上），Write 完整重写修复，期间误发 4 个 /tmp 占位文件已清理，已向用户如实披露；②@PreventDuplicateSubmit 窗口致快速连发「请勿重复提交」400，每个写操作前 sleep 2.2s 解决；③sa-token 头是 `Authorization: Bearer <uuid>` 非 `token`；④PUT /base/goods/{id} 全量更新致设售价 400，改 SQL 直改；⑤mvn 增量残留 NoClassDefFound QcService → clean test；⑥负测「作废已确认行」会扣库存（既有历史作废语义，非本次回归），测后手动新增把库存恢复。
+- **清理：** E2E 数据物理清零（base_goods 11/12/13、biz_bom+明细 1、biz_production_order 1+7 工序、biz_pick_list 1+2 明细、biz_production 4 行、biz_production_qc 2 行、biz_sales 5-8、sys_message 33-43、biz_approval_order 12），库存基线 goods1=20/goods2=11/goods9=10 未动，已核对 12 张表 COUNT=0。
+- **/code-review 15 findings 全修复（2026-09-20 续）：** ①confirmInbound 未复查订单状态（终止/返工/报废单可被确认→幽灵库存+单据复活+误发销售通知）→ confirmInbound 重读订单守卫 status==3 + finalizeAfterInboundConfirmed 纵深防御；②receipt check-then-insert 竞态无唯一索引 → MySQL 8 STORED 生成列 `pending_order_key`（confirm_status=1 且未删时=production_order_id，否则 NULL）+ uk_production_pending_order，DuplicateKeyException 转友好报错；③撤销用 deleteById 可能误删并发已确认库存行 → LambdaUpdate 条件更新（eq PENDING+rows 校验）；④终止/质检返工/质检报废未关待确认申请、未撤 biz=production 待办（违反 D21）→ 新增 closePendingInboundApplication（系统驳回+撤待办+回执提交人，条件更新 rows=0 静默让并发确认胜出）接入 terminate 与 QcService 两处置分支（@Lazy 破 QcService↔ProductionOrderService 循环依赖）；⑤db.sql CREATE TABLE 补齐 D107 六列+生成列（原只在注释 ALTER 里）；⑥列表不回填 pendingInboundId 致行内撤销不可达 → fillPendingInboundIdBatch 单 in 批量装配；⑦前端漏 import cancelProductionReceiptAPI（静默 ReferenceError）；⑧驳回原因 @Size(max=200) 对齐 VARCHAR(200)；⑨ProductionService.getById 补来源任务单号；⑩齐套判定把 RETURN 退料单计入（待发料/已驳回退料致假缺料或永久假性齐套）→ isPickAllIssued/pickIssuedMap 加 `.in(pickType,PICK,SUPPLY)`；⑪确认入库 operationTime 改写为确认时刻（原停留在提交时刻，入库日期/筛选/当天删除窗口全错）；⑫首页提醒竞态（价格偏离接口先于 summary 返回致 userId 空）→ await loadSummary 再并发两提醒；⑬提醒签名只有 count（同数量换单不重现）→ 签名带 id 列表；⑭终态单渲染空灰齐套标签 → v-if+破折号；⑮告警时间裸 ISO → fmtTime。
+- **复测：** ProductionOrderServiceTest 新增 7 例（非待入库确认守卫/撤销条件更新/并发撤销失败/系统自动关闭三态/退料单不入齐套查询 wrapper 参数断言——须先 getSqlSegment() 物化参数），`./mvnw test` **269 全绿**；`npm run build` 通过；本地库迁移成功（SHOW INDEX 见 uk_production_pending_order）。状态机回归 E2E（/tmp/e2e_rev.py）**33/33 PASS**：A 链提交→终止（申请自动 confirm_status=3/confirmer_name=系统/原因落库，待确认列表撤出，仓储确认 400、库存 0、订单不复活 status=7，终止单重提 400，列表 pendingInboundId 回填）；B 链提交→成品测 NG→返工（申请自动驳回回状态 2）→重测 OK→重提→确认（库存 0→5、订单转 4、终态无齐套标签、详情带来源任务单号、operationTime=确认当天）；C 链开工后退料单待发料与已驳回两态，列表+详情齐套口径稳定 issued/齐套领料；消息表核验待办逻辑删除、驳回报执保留。测后数据物理清零，库存基线 1=20/2=11/9=10 恢复。
+- **下一步：** 提交 main（feat(front,back) … D105-D108）→ 用户硬刷新+重新登录手测 → 批次二 D109（ADR-0014）→ 批次三 D110（ADR-0013，CONTEXT 销售词条更新）。
+
+---
+
 ## 会话 41 — 2026-09-19
 
 ### 四类跨部门单据流程时间线（/grill-with-docs 一轮四题全按推荐，D104）——「谁在哪一步做了什么」

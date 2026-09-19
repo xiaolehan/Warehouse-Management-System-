@@ -12,6 +12,14 @@
           <el-form-item label="入库单号">
             <el-input v-model="searchForm.keywords" placeholder="请输入生产入库单号" clearable></el-input>
           </el-form-item>
+          <!-- D107：确认状态筛选（待确认=生产端提交的入库申请） -->
+          <el-form-item label="确认状态">
+            <el-select v-model="searchForm.confirmStatus" placeholder="全部" clearable style="width: 140px">
+              <el-option label="待确认" :value="1" />
+              <el-option label="已确认入库" :value="2" />
+              <el-option label="已驳回" :value="3" />
+            </el-select>
+          </el-form-item>
           <el-form-item label="入库日期">
             <el-date-picker
               v-model="searchForm.dateRange"
@@ -34,6 +42,13 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="orderNo" label="入库单号" width="150" />
         <el-table-column prop="goodsName" label="商品名称" />
+        <!-- D107：生产端提交的入库申请展示来源任务单 -->
+        <el-table-column label="来源任务单" width="140">
+          <template #default="scope">
+            <span v-if="scope.row.productionOrderNo">{{ scope.row.productionOrderNo }}</span>
+            <span v-else style="color:#909399">手动录入</span>
+          </template>
+        </el-table-column>
         <el-table-column label="生产单价(元)" width="120">
           <template #default="scope">{{ scope.row.unitPrice != null ? scope.row.unitPrice : '—' }}</template>
         </el-table-column>
@@ -43,12 +58,33 @@
         </el-table-column>
         <el-table-column prop="productionDate" label="入库日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
+        <el-table-column label="确认状态" width="110" align="center">
+          <template #default="scope">
+            <el-tooltip v-if="scope.row.confirmStatus === 3 && scope.row.rejectReason" :content="'驳回原因：' + scope.row.rejectReason" placement="top">
+              <el-tag type="danger" size="small">已驳回</el-tag>
+            </el-tooltip>
+            <el-tag v-else-if="scope.row.confirmStatus === 1" type="warning" size="small">待确认</el-tag>
+            <el-tag v-else type="success" size="small">已确认入库</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
-              <el-tooltip v-if="showDeleteAction(scope.row)" content="当天错单可直接删除（不留痕）；历史错单请用作废（留痕）" placement="top">
+              <!-- D107：待确认申请 → 仓储管理员「确认入库 / 驳回」 -->
+              <template v-if="isPendingConfirm(scope.row)">
+                <el-button
+                  v-if="isWarehouseAdmin" size="small" type="success" link
+                  @click="handleConfirmInbound(scope.row)"
+                >确认入库</el-button>
+                <el-button
+                  v-if="isWarehouseAdmin" size="small" type="danger" link
+                  @click="handleRejectInbound(scope.row)"
+                >驳回</el-button>
+                <span v-if="!isWarehouseAdmin" class="action-disabled">待仓储确认</span>
+              </template>
+              <el-tooltip v-else-if="showDeleteAction(scope.row)" content="当天错单可直接删除（不留痕）；历史错单请用作废（留痕）" placement="top">
                 <el-button
                   v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
                   size="small"
@@ -125,6 +161,21 @@
         <el-form-item label="备注" prop="remark">
           <el-input v-model="dialogForm.remark" type="textarea" placeholder="请输入备注"></el-input>
         </el-form-item>
+        <!-- D107：确认信息（仅查看态展示） -->
+        <template v-if="dialogType === 'view'">
+          <el-form-item label="来源任务单">
+            <el-input :value="dialogForm.productionOrderNo || '手动录入'" disabled />
+          </el-form-item>
+          <el-form-item label="确认状态">
+            <el-tag :type="confirmTagType(dialogForm.confirmStatus)" size="small">{{ confirmStatusText(dialogForm.confirmStatus) }}</el-tag>
+            <span v-if="dialogForm.confirmerName" style="margin-left: 8px; color: #909399">
+              {{ dialogForm.confirmerName }} {{ normalizeDateTime(dialogForm.confirmTime) }}
+            </span>
+          </el-form-item>
+          <el-form-item v-if="dialogForm.confirmStatus === 3" label="驳回原因">
+            <el-input :value="dialogForm.rejectReason || '—'" disabled />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
@@ -152,17 +203,26 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
+import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
+  confirmProductionInboundAPI,
   createProductionAPI,
   deleteProductionAPI,
   getGoodsOptionsAPI,
   getProductionDetailAPI,
   getProductionPageAPI,
+  rejectProductionInboundAPI,
   voidProductionAPI
 } from '@/api/business'
 
+// D107：确认/驳回入库申请 = 仓储管理员专属（与后端 requireInboundConfirmAccess 对齐）
+const userRole = getRole()
+const userDept = getDeptCode()
+const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
+
 const searchForm = reactive({
   keywords: '',
+  confirmStatus: null,
   dateRange: []
 })
 
@@ -182,8 +242,18 @@ const dialogForm = reactive({
   quantity: 1,
   price: null,
   productionDate: '',
-  remark: ''
+  remark: '',
+  // D107：确认信息（查看态展示）
+  productionOrderNo: '',
+  confirmStatus: null,
+  confirmerName: '',
+  confirmTime: '',
+  rejectReason: ''
 })
+
+// D107：确认状态文案/标签色（null 视为迁移前存量行=已确认入库）
+const confirmStatusText = (s) => (s === 1 ? '待确认' : s === 3 ? '已驳回' : '已确认入库')
+const confirmTagType = (s) => (s === 1 ? 'warning' : s === 3 ? 'danger' : 'success')
 
 const totalAmountText = computed(() => {
   const qty = Number(dialogForm.quantity || 0)
@@ -245,6 +315,10 @@ const canVoid = (row) => {
 
 const resolveState = (row) => resolveBizDocumentState(row)
 
+// D107 确认状态：1-待仓库确认（生产端申请），2-已确认入库（加过库存），3-已驳回（未入库存）
+const isPendingConfirm = (row) => Number(row?.confirmStatus || 0) === 1
+const isStockBearing = (row) => row?.confirmStatus == null || Number(row.confirmStatus) === 2
+
 const stateTextClass = (row) => {
   const state = resolveState(row)
   if (!state) return ''
@@ -254,9 +328,9 @@ const stateTextClass = (row) => {
   return ''
 }
 
-const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete(row)
+const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && isStockBearing(row) && canDelete(row)
 
-const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
+const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && isStockBearing(row) && canVoid(row)
 
 const buildOperationTime = (selectedDate) => {
   if (!selectedDate) return undefined
@@ -276,6 +350,7 @@ const loadList = async () => {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
       productionNo: searchForm.keywords || undefined,
+      confirmStatus: searchForm.confirmStatus ?? undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined
     }
@@ -300,6 +375,7 @@ const handleSearch = () => {
 
 const resetSearch = () => {
   searchForm.keywords = ''
+  searchForm.confirmStatus = null
   searchForm.dateRange = []
   currentPage.value = 1
   loadList()
@@ -333,7 +409,12 @@ const handleView = async (row) => {
       quantity: detail.quantity ?? 1,
       price: detail.unitPrice ?? null,
       productionDate: normalizeDateTime(detail.productionDate || detail.operationTime || detail.createTime),
-      remark: detail.remark || ''
+      remark: detail.remark || '',
+      productionOrderNo: detail.productionOrderNo || '',
+      confirmStatus: detail.confirmStatus ?? 2,
+      confirmerName: detail.confirmerName || '',
+      confirmTime: detail.confirmTime || '',
+      rejectReason: detail.rejectReason || ''
     })
     dialogVisible.value = true
   } catch {
@@ -349,6 +430,32 @@ const handleDelete = (row) => {
   }).then(async () => {
     await deleteProductionAPI(row.id)
     ElMessage.success('删除成功')
+    loadList()
+  }).catch(() => {}) // 取消或业务错误已统一提示
+}
+
+// D107：仓储确认成品入库——此刻才加库存，生产任务单同步转已完成
+const handleConfirmInbound = (row) => {
+  ElMessageBox.confirm(
+    `确认入库申请「${row.orderNo}」（${row.goodsName} × ${row.quantity}）？确认后成品库存增加，来源生产任务单转为已完成。`,
+    '确认入库', { type: 'warning' }
+  ).then(async () => {
+    await confirmProductionInboundAPI(row.id)
+    ElMessage.success('已确认入库，成品库存已增加')
+    loadList()
+  }).catch(() => {}) // 取消或业务错误已统一提示
+}
+
+// D107：仓储驳回入库申请（附原因，通知生产提交人重新提交）
+const handleRejectInbound = (row) => {
+  ElMessageBox.prompt('请填写驳回原因（将通知生产提交人核对后重新提交）', '驳回入库申请', {
+    confirmButtonText: '确定驳回',
+    cancelButtonText: '取消',
+    inputPlaceholder: '如：实物数量与申请不符',
+    inputValidator: (v) => (v && v.trim() ? true : '驳回原因不能为空')
+  }).then(async ({ value }) => {
+    await rejectProductionInboundAPI(row.id, { reason: value.trim() })
+    ElMessage.success('已驳回，已通知生产提交人')
     loadList()
   }).catch(() => {}) // 取消或业务错误已统一提示
 }

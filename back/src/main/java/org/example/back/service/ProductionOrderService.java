@@ -1,6 +1,7 @@
 package org.example.back.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
@@ -29,6 +30,7 @@ import org.example.back.vo.ProductionPickItemVO;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -129,12 +131,17 @@ public class ProductionOrderService {
         Page<BizProductionOrder> page = orderMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         // D64 质检进度列表修复：列表行批量填充 qcState（一次 in 查询分组推导），QcView 列表不再恒显"未测"
         Map<Long, QcStateVO> qcStates = qcService.buildStateBatch(page.getRecords());
+        // D105：批量判定领料单是否已全额出库，列表齐套口径与详情统一
+        Map<Long, Boolean> pickIssuedMap = pickIssuedMap(page.getRecords());
         List<ProductionOrderVO> records = new ArrayList<>(page.getRecords().size());
         for (BizProductionOrder order : page.getRecords()) {
             ProductionOrderVO vo = toVO(order);
             vo.setQcState(qcStates.get(order.getId()));
+            applyKitDisplay(vo, order, pickIssuedMap.getOrDefault(order.getId(), false));
             records.add(vo);
         }
+        // D107：列表批量回填待确认入库申请 id（行内「撤销申请」入口据此显隐，与详情同口径）
+        fillPendingInboundIdBatch(records, page.getRecords());
         fillSalesOrderNoBatch(records);
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
@@ -143,14 +150,31 @@ public class ProductionOrderService {
         requireOrderReadAccess();
         BizProductionOrder order = requireOrder(id);
         ProductionOrderVO vo = toVO(order);
-        // 待生产/生产中实时重算齐套（反映当前库存，开工后已发料部分会显示为缺口）
-        if (order.getStatus() == BizProductionOrder.STATUS_PENDING
-                || order.getStatus() == BizProductionOrder.STATUS_IN_PROGRESS) {
-            KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
-            vo.setKitLines(kit.lines);
-            vo.setKitStatus(kit.kitStatus);
-            vo.setKitStatusText(kitText(kit.kitStatus));
+        // D105：统一齐套口径——领料单已全额出库（待生产/生产中/待入库）显示「齐套领料」，
+        // 不再按仓库当前库存重算（物料已发到生产现场，仓库库存被扣减不代表缺料）
+        Integer orderStatus = order.getStatus();
+        boolean pickIssued = isPickAllIssued(id);
+        if (orderStatus != null && (orderStatus == BizProductionOrder.STATUS_PENDING
+                || orderStatus == BizProductionOrder.STATUS_IN_PROGRESS
+                || orderStatus == BizProductionOrder.STATUS_AWAIT_QC)) {
+            if (pickIssued) {
+                vo.setKitStatus(BizProductionOrder.KIT_ISSUED);
+                vo.setKitStatusText(kitText(BizProductionOrder.KIT_ISSUED));
+                vo.setKitLines(List.of());
+            } else if (orderStatus != BizProductionOrder.STATUS_AWAIT_QC) {
+                // 未领料（或领料被驳回）维持实时重算，反映补料进度
+                KuaiTaoResult kit = computeKit(order.getGoodsId(), order.getQuantity());
+                vo.setKitLines(kit.lines);
+                vo.setKitStatus(kit.kitStatus);
+                vo.setKitStatusText(kitText(kit.kitStatus));
+            }
+        } else {
+            // 已完成/作废/报废/终止：齐套标签失去意义，不再显示
+            vo.setKitStatus(null);
+            vo.setKitStatusText("");
         }
+        // D107：待确认入库申请 / 最近一次驳回原因（前端据此显示"待仓储确认"或"重新提交"提示）
+        fillInboundApplicationInfo(vo, order);
         // 生产/待入库/已报废/已终止阶段展示质检状态（终止冻结但记录保留可见）
         if (order.getStatus() == BizProductionOrder.STATUS_IN_PROGRESS
                 || order.getStatus() == BizProductionOrder.STATUS_AWAIT_QC
@@ -259,7 +283,8 @@ public class ProductionOrderService {
     }
 
     /**
-     * 生产入库（阶段13）：质检合格进入待入库后，生产端点击入库 → 成品库存增加 + 记录生产入库交易 + 订单已完成。
+     * 生产入库（阶段13；D107 改两段式）：质检合格进入待入库后，生产端点击「提交入库申请」
+     * → 生成一笔待仓储确认的入库记录（不加库存），由仓储管理员确认后才增加库存并完成任务单。
      * 取代生产端管理员在仓储自由建"生产入库"单的方式，改由生产订单驱动、质检前置把关。
      */
     @Transactional(rollbackFor = Exception.class)
@@ -268,18 +293,20 @@ public class ProductionOrderService {
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         if (order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
-            throw BusinessException.validateFail("仅待入库状态可生产入库，请先完成质检");
+            throw BusinessException.validateFail("仅待入库状态可提交成品入库申请，请先完成质检");
         }
         // 质检前置校验：首测+成品测最新均 OK 且未报废
         qcService.ensurePassedForReceipt(id);
+        // D107：同一生产单至多一笔待确认入库申请
+        if (findPendingInbound(id) != null) {
+            throw BusinessException.validateFail("该生产任务单已有待仓储确认的入库申请，如需调整请先撤销再重新提交");
+        }
 
         BaseGoods product = requireGoodsNoStatus(order.getGoodsId());
-        increaseStock(product, order.getQuantity(), "生产入库[" + order.getOrderNo() + "]成品库存不足");
-
-        // 记录一笔生产入库交易（审计；仓储端"生产入库"列表可见）
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         BizProduction in = new BizProduction();
         in.setProductionNo(CodeGenerator.productionNo());
+        in.setProductionOrderId(order.getId());
         in.setGoodsId(product.getId());
         in.setGoodsName(product.getGoodsName());
         in.setQuantity(order.getQuantity());
@@ -287,15 +314,90 @@ public class ProductionOrderService {
         in.setOperatorName(user.getRealName());
         in.setOperationTime(LocalDateTime.now());
         in.setBizStatus(1);
-        in.setRemark("生产任务单 " + order.getOrderNo() + " 完工入库");
-        productionMapper.insert(in);
+        in.setConfirmStatus(BizProduction.CONFIRM_PENDING);
+        in.setRemark("生产任务单 " + order.getOrderNo() + " 完工入库申请");
+        try {
+            productionMapper.insert(in);
+        } catch (DuplicateKeyException e) {
+            // uk_production_pending_order 并发兜底：两个提交事务同时穿过上面的先查后插
+            throw BusinessException.validateFail("该生产任务单已有待仓储确认的入库申请，请勿重复提交");
+        }
 
+        // D107：通知仓储管理员确认入库（D21 范式绑 biz_type=production，确认/驳回/撤销时撤未读）
+        messageService.sendProductionInboundPendingToWarehouseAdmins(
+                in.getProductionNo(), order.getOrderNo(), product.getGoodsName(), order.getQuantity(), in.getId());
+    }
+
+    /**
+     * D107：生产端撤销入库申请（仓储确认/驳回前可撤）——逻辑删除待确认记录并撤仓储待办消息。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void cancelReceipt(Long id) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireOrderExecuteAccess();
+        requireOrder(id);
+        BizProduction pending = findPendingInbound(id);
+        if (pending == null) {
+            throw BusinessException.validateFail("该生产任务单没有待确认的入库申请可撤销");
+        }
+        // review 修复：逻辑删必须带 confirm_status=1 条件——否则与仓储「确认入库」并发时，
+        // deleteById 会把已承载库存增加的已确认行软删，形成无单据可追溯的孤儿库存
+        LambdaUpdateWrapper<BizProduction> uw = new LambdaUpdateWrapper<>();
+        uw.eq(BizProduction::getId, pending.getId())
+                .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_PENDING)
+                .eq(BizProduction::getBizStatus, 1)
+                .set(BizProduction::getIsDeleted, 1);
+        int rows = productionMapper.update(null, uw);
+        if (rows != 1) {
+            throw BusinessException.validateFail("入库申请已被仓储确认或驳回，无法撤销");
+        }
+        messageService.revokeUnreadByBiz("production", pending.getId());
+    }
+
+    /**
+     * D107/review：任务单离开待入库态（生产终止 / 质检返工 / 质检报废）时自动关闭待确认入库申请——
+     * 置「已驳回」+系统关闭原因，撤仓储待办并回执提交人。
+     * 防终态/返工单仍挂确认待办：仓储一旦确认就会凭空加库存并把非待入库订单复活为已完成。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void closePendingInboundApplication(Long orderId, String reason) {
+        BizProduction pending = findPendingInbound(orderId);
+        if (pending == null) {
+            return;
+        }
+        LambdaUpdateWrapper<BizProduction> uw = new LambdaUpdateWrapper<>();
+        uw.eq(BizProduction::getId, pending.getId())
+                .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_PENDING)
+                .set(BizProduction::getConfirmStatus, BizProduction.CONFIRM_REJECTED)
+                .set(BizProduction::getConfirmerName, "系统")
+                .set(BizProduction::getConfirmTime, LocalDateTime.now())
+                .set(BizProduction::getRejectReason, reason);
+        if (productionMapper.update(null, uw) != 1) {
+            return;
+        }
+        // 撤仓储待办 + 回执提交人（回执留痕，不随流程撤回）
+        messageService.revokeUnreadByBiz("production", pending.getId());
+        messageService.sendProductionInboundRejectedToUser(
+                pending.getOperatorId(), pending.getProductionNo(), reason, pending.getId());
+    }
+
+    /**
+     * D107：仓储确认入库后的任务单收尾（同事务内由 ProductionService.confirmInbound 调用）——
+     * 转已完成 + 撤任务单未读待办 + 通知关联销售"可发货"。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void finalizeAfterInboundConfirmed(Long orderId) {
+        BizProductionOrder order = requireOrder(orderId);
+        // review 修复：防御性状态守卫——只有待入库单可被确认入库收尾，
+        // 防止申请提交后任务单被终止/返工/报废，仓储确认时把非待入库单复活为已完成
+        if (order.getStatus() == null || order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
+            throw BusinessException.validateFail(
+                    "生产任务单当前为「" + statusText(order.getStatus()) + "」状态，不能确认入库，请驳回该入库申请");
+        }
         order.setStatus(BizProductionOrder.STATUS_DONE);
         orderMapper.updateById(order);
-
         // D73：订单终态（已完成）——撤销该单未读待办（含"关联销售单已取消"等绑 production_order 的消息）
-        messageService.revokeUnreadByBiz("production_order", id);
-
+        messageService.revokeUnreadByBiz("production_order", orderId);
         // D70：关联销售单仍待出库 → 通知建单销售本人"可发货"（biz 绑定销售单，出库/作废撤未读）
         notifySalesReadyToShipIfLinked(order);
     }
@@ -586,7 +688,10 @@ public class ProductionOrderService {
      */
     private boolean isPickAllIssued(Long productionOrderId) {
         LambdaQueryWrapper<BizPickList> w = new LambdaQueryWrapper<>();
-        w.eq(BizPickList::getProductionOrderId, productionOrderId);
+        // D105/review：只看发料类单据（领料/补料）；退料单（含待发料/已驳回/已回流）一律不参与齐套判定，
+        // 否则开工后的退料会让已齐套单回落实时重算显示假缺料、退料被驳回则终生假缺料
+        w.eq(BizPickList::getProductionOrderId, productionOrderId)
+                .in(BizPickList::getPickType, PickListService.TYPE_PICK, PickListService.TYPE_SUPPLY);
         List<BizPickList> picks = pickListMapper.selectList(w);
         if (picks.isEmpty()) {
             return false;
@@ -594,6 +699,111 @@ public class ProductionOrderService {
         return picks.stream().allMatch(p ->
                 PickListService.STATUS_ISSUED == p.getStatus()
                         || PickListService.STATUS_DONE == p.getStatus());
+    }
+
+    /**
+     * D105：批量判定各生产单领料单是否已全额出库（与 isPickAllIssued 同口径：
+     * 存在领料单且全部已发料/已完成），供列表统一齐套展示口径。
+     */
+    private Map<Long, Boolean> pickIssuedMap(List<BizProductionOrder> orders) {
+        List<Long> ids = orders.stream().map(BizProductionOrder::getId).toList();
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<BizPickList> w = new LambdaQueryWrapper<>();
+        // D105/review：与 isPickAllIssued 同口径，退料单（RETURN）不参与
+        w.in(BizPickList::getProductionOrderId, ids)
+                .in(BizPickList::getPickType, PickListService.TYPE_PICK, PickListService.TYPE_SUPPLY);
+        Map<Long, List<BizPickList>> byOrder = pickListMapper.selectList(w).stream()
+                .collect(Collectors.groupingBy(BizPickList::getProductionOrderId));
+        Map<Long, Boolean> result = new java.util.HashMap<>();
+        for (Long id : ids) {
+            List<BizPickList> picks = byOrder.get(id);
+            result.put(id, picks != null && !picks.isEmpty() && picks.stream().allMatch(p ->
+                    PickListService.STATUS_ISSUED == p.getStatus()
+                            || PickListService.STATUS_DONE == p.getStatus()));
+        }
+        return result;
+    }
+
+    /**
+     * D105：统一齐套展示口径——领料已全额出库→「齐套领料」（kitLines 置空，缺口已无意义）；
+     * 已完成/作废/报废/终止→不再显示标签；未领料的列表行保持建单快照（详情才实时重算，避免逐行展开 BOM）。
+     */
+    private void applyKitDisplay(ProductionOrderVO vo, BizProductionOrder order, boolean pickIssued) {
+        Integer status = order.getStatus();
+        if (status != null && (status == BizProductionOrder.STATUS_PENDING
+                || status == BizProductionOrder.STATUS_IN_PROGRESS
+                || status == BizProductionOrder.STATUS_AWAIT_QC)) {
+            if (pickIssued) {
+                vo.setKitStatus(BizProductionOrder.KIT_ISSUED);
+                vo.setKitStatusText(kitText(BizProductionOrder.KIT_ISSUED));
+                vo.setKitLines(List.of());
+            }
+        } else {
+            vo.setKitStatus(null);
+            vo.setKitStatusText("");
+        }
+    }
+
+    /**
+     * D107：列表批量回填待确认入库申请 id（仅待入库行）——一次 in 查询，
+     * 供列表行内「提交入库申请/撤销申请」按钮与详情同口径显隐。
+     */
+    private void fillPendingInboundIdBatch(List<ProductionOrderVO> records, List<BizProductionOrder> orders) {
+        List<Long> awaitIds = orders.stream()
+                .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_AWAIT_QC).equals(o.getStatus()))
+                .map(BizProductionOrder::getId).toList();
+        if (awaitIds.isEmpty()) {
+            return;
+        }
+        LambdaQueryWrapper<BizProduction> w = new LambdaQueryWrapper<>();
+        w.in(BizProduction::getProductionOrderId, awaitIds)
+                .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_PENDING)
+                .eq(BizProduction::getBizStatus, 1);
+        Map<Long, Long> pendingByOrder = productionMapper.selectList(w).stream()
+                .collect(Collectors.toMap(BizProduction::getProductionOrderId, BizProduction::getId, (a, b) -> a));
+        for (ProductionOrderVO vo : records) {
+            Long pendingId = pendingByOrder.get(vo.getId());
+            if (pendingId != null) {
+                vo.setPendingInboundId(pendingId);
+            }
+        }
+    }
+
+    /** D107：该生产单当前待仓储确认的入库申请（receipt 守卫保证至多一笔）；无则 null */
+    private BizProduction findPendingInbound(Long orderId) {
+        LambdaQueryWrapper<BizProduction> w = new LambdaQueryWrapper<>();
+        w.eq(BizProduction::getProductionOrderId, orderId)
+                .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_PENDING)
+                .eq(BizProduction::getBizStatus, 1);
+        List<BizProduction> list = productionMapper.selectList(w);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    /** D107：填充入库申请状态——待确认单信息（待仓储确认）或最近一笔被驳回的申请原因（提示重新提交） */
+    private void fillInboundApplicationInfo(ProductionOrderVO vo, BizProductionOrder order) {
+        if (order.getStatus() == null || order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
+            return;
+        }
+        BizProduction pending = findPendingInbound(order.getId());
+        if (pending != null) {
+            vo.setPendingInboundId(pending.getId());
+            vo.setPendingInboundNo(pending.getProductionNo());
+            vo.setPendingInboundTime(pending.getOperationTime());
+            vo.setPendingInboundOperator(pending.getOperatorName());
+            return;
+        }
+        LambdaQueryWrapper<BizProduction> w = new LambdaQueryWrapper<>();
+        w.eq(BizProduction::getProductionOrderId, order.getId())
+                .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_REJECTED)
+                .orderByDesc(BizProduction::getId)
+                .last("LIMIT 1");
+        BizProduction rejected = productionMapper.selectOne(w);
+        if (rejected != null) {
+            vo.setLastInboundRejectNo(rejected.getProductionNo());
+            vo.setLastInboundRejectReason(rejected.getRejectReason());
+        }
     }
 
     private void increaseStock(BaseGoods goods, int qty, String msg) {
@@ -647,6 +857,7 @@ public class ProductionOrderService {
         }
         return switch (kit) {
             case BizProductionOrder.KIT_OK -> "齐套";
+            case BizProductionOrder.KIT_ISSUED -> "齐套领料";
             case BizProductionOrder.KIT_PARTIAL -> "部分缺料";
             case BizProductionOrder.KIT_BLOCK -> "严重缺料";
             default -> kit;

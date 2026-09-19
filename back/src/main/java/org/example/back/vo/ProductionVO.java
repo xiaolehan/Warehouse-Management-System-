@@ -40,6 +40,26 @@ public class ProductionVO {
 
     private Integer bizStatus;
 
+    /** D107：来源生产任务单 id（生产端提交的入库申请有值；仓储手动新增为空） */
+    private Long productionOrderId;
+
+    /** D107：来源生产任务单号（列表/详情批量填充） */
+    private String productionOrderNo;
+
+    /** D107 确认状态: 1-待仓库确认, 2-已确认入库, 3-已驳回 */
+    private Integer confirmStatus;
+
+    private String confirmStatusText;
+
+    /** D107：确认人（手动新增=录入人） */
+    private String confirmerName;
+
+    /** D107：确认/驳回时间 */
+    private LocalDateTime confirmTime;
+
+    /** D107：驳回原因（confirm_status=3 时有值） */
+    private String rejectReason;
+
     private Long sourceId;
 
     private LocalDateTime voidTime;

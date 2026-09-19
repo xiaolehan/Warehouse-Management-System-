@@ -6,8 +6,11 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
+/**
+ * 销售单保存 DTO。
+ * D106：销售日期 = 开单时间自动生成，不再接受客户端传入（原 operationTime 字段删除，「出库日期」标签废除）。
+ */
 @Data
 public class SalesSaveDTO {
 
@@ -20,8 +23,6 @@ public class SalesSaveDTO {
 
     @DecimalMin(value = "0.01", message = "单价必须大于0")
     private BigDecimal unitPrice;
-
-    private LocalDateTime operationTime;
 
     /**
      * 客户公司名（对齐 wms_v1 下单文档，可选）
