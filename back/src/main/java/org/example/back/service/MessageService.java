@@ -720,6 +720,64 @@ public class MessageService {
         sysMessageMapper.insert(message);
     }
 
+    // ==================== 作废审批消息（D103） ====================
+
+    /** D103：作废审批类消息标题——驳回时按标题精确撤回，不误伤同 biz 下其他待办消息 */
+    public static final String TITLE_VOID_APPROVAL_PENDING = "待审批作废申请";
+
+    /** D103：业务单据 biz_type → 列表页路由（结果回执的跳转目标），未知类型返回 null */
+    public static String routeOfBizType(String bizType) {
+        return switch (bizType == null ? "" : bizType) {
+            case "purchase" -> ROUTE_PURCHASE;
+            case "purchase_return" -> ROUTE_PURCHASE_RETURN;
+            case "sales" -> ROUTE_SALES;
+            case "sales_return" -> ROUTE_SALES_RETURN;
+            default -> null;
+        };
+    }
+
+    /**
+     * D103：作废审批提交 → 通知仓储管理员审批（绑业务单 biz_type/biz_id，D21 范式）。
+     * 通过时随业务 voidDocument 的 revokeUnreadByBiz 一并撤未读；驳回时由 ApprovalService 按标题撤回。
+     */
+    public void sendVoidApprovalPendingToWarehouseAdmins(String bizTypeLabel, String bizNo, String requesterName,
+                                                         String bizType, Long bizId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                TITLE_VOID_APPROVAL_PENDING,
+                String.format(
+                        Locale.ROOT,
+                        "%s %s 已由 %s 提交作废申请，请前往作废审批处理。",
+                        bizTypeLabel, bizNo, StringUtils.hasText(requesterName) ? requesterName : "申请人"
+                ),
+                bizType,
+                bizId,
+                ROUTE_VOID_APPROVAL);
+    }
+
+    /**
+     * D103：作废审批结果回执 → 精准通知申请人（通过=单据已作废生效；驳回=维持原样）。
+     * 绑业务单 biz：通过场景由 voidDocument 先撤未读、本消息后发故保留；驳回场景单据仍有效，回执留待已读。
+     */
+    public void sendVoidApprovalResultToRequester(Long requesterId, String bizTypeLabel, String bizNo,
+                                                  boolean approved, String approverName, String remark,
+                                                  String bizType, Long bizId, String targetRoute) {
+        String title = approved ? "作废审批已通过" : "作废审批已驳回";
+        String content = approved
+                ? String.format(Locale.ROOT,
+                        "您提交的 %s %s 作废申请已由 %s 审批通过，单据已作废生效，相关库存影响已在生效时处理。",
+                        bizTypeLabel, bizNo, StringUtils.hasText(approverName) ? approverName : "仓储管理员")
+                : String.format(Locale.ROOT,
+                        "您提交的 %s %s 作废申请已由 %s 驳回，单据维持原状。%s",
+                        bizTypeLabel, bizNo, StringUtils.hasText(approverName) ? approverName : "仓储管理员",
+                        StringUtils.hasText(remark) ? "审批备注：" + remark : "");
+        sendToUserWithBiz(requesterId, title, content, bizType, bizId, targetRoute);
+    }
+
     private Long resolveDeptIdByCode(String deptCode) {
         if (!StringUtils.hasText(deptCode)) {
             return null;

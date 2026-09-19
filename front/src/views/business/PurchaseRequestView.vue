@@ -243,6 +243,12 @@
           <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
         </el-table-column>
       </el-table>
+      <!-- D104：详情展示单据流程时间线（谁在哪一步做了什么） -->
+      <DocumentTimeline
+        v-if="viewData?.id"
+        :nodes="timelineNodes"
+        empty-text="暂无流程记录"
+      />
     </el-dialog>
 
     <!-- 到货提交对话框 -->
@@ -338,6 +344,8 @@ import {
   confirmReceivePurchaseRequestAPI, arriveCancelPurchaseRequestAPI, arriveRejectPurchaseRequestAPI,
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
+import { getPurchaseRequestTimelineAPI } from '@/api/purchaseRequest'
+import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsMaterialOptionsAPI } from '@/api/base'
 
 const userStore = useUserStore()
@@ -534,10 +542,23 @@ const submitManual = async () => {
   }
 }
 
+// D104：详情加载单据流程时间线
+const timelineNodes = ref([])
+const loadTimeline = async (id) => {
+  try {
+    const res = await getPurchaseRequestTimelineAPI(id)
+    timelineNodes.value = res.data?.nodes || []
+  } catch {
+    timelineNodes.value = []
+    // 业务错误已由拦截器统一提示
+  }
+}
+
 const handleView = async (row) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
     viewData.value = res.data
+    loadTimeline(row.id)
     viewVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示

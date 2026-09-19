@@ -5,6 +5,38 @@
 
 ---
 
+## 会话 41 — 2026-09-19
+
+### 四类跨部门单据流程时间线（/grill-with-docs 一轮四题全按推荐，D104）——「谁在哪一步做了什么」
+
+- **起因（用户原话）：** 「我希望像“物料进退货”、“采购申请”、“商品退货”等需要跨部门协同完成的，都可以做一个像“商品销售的”生命周期，可以看到谁在哪一步做了什么」；补充「尤其是在这项任务结束后（例如物料进货，进货完成后，点击操作看的查看，除了能看到物料的相关信息还能看到操作流程）」。
+- **事实调研（Explore 代理）：** 销售时间线=后端字段合成模式（SalesTimelineService 逐节点合成，不读日志表）+ 前端 SalesTimeline.vue（el-timeline，props 仅 salesId 与销售 API 强耦合），入口=详情弹窗 view 态；四类单据详情弹窗均为纯字段展示无时间线；审计日志 sys_operation_log 的 target_id 已按单据粒度存储但查询 DTO 无该参数、且生产等模块大量动作未打 @AuditLog、权限仅超管。
+- **定案（用户：「其他按推荐来」+确认采购端两类也纳入）：** ①范围=四类（进货/采购申请/进货退货/销售退货——用户口中的「物料进货」「物料退货」即「商品进货」「进货退货」菜单名）；②口径=标准流程合成（节点=业务步骤+操作人+时间+库存影响；人名字段有则用人名、角色锁定步骤用部门名；回退后仅显示当前步骤），否掉审计日志驱动；③作废节点红色显示+「作废审批中」pending 节点（查 biz_approval_order status∈{1,4}）；④通用 DocumentTimeline.vue 纯渲染组件（props: nodes），SalesTimeline 渲染段迁移复用。
+- **改动清单：** 后端 7 文件（DocumentTimelineService 新建四方法含读守卫/DocumentTimelineVO+NodeVO 新建/四 Controller 各加 `GET /{id}/timeline`）；前端 8 文件（DocumentTimeline.vue 新建/SalesTimeline.vue 迁移重构/api business.js 3 条+purchaseRequest.js 1 条/四视图查看弹窗内嵌+loadTimeline）。
+- **E2E 全绿：** 进货单三态推进（待到货→到货→入库确认）+作废审批中+voided（current 降级 pending+原因）+权限（purchase 200/employee 200/warehouse 200/sales 403）；采购申请全流程（建单→认领→到货→入库）+驳回旁支（rejected 节点带原因）+员工 403（admin 级守卫）；进货退货全流程（建单→出库→完成）；销售退货全流程（含成品+SQL 铺货+销售+出库前置链）+purchase_admin 403。
+- **修 bug 两枚（E2E 发现）：** ①采购申请 arrived 节点映射错——status=5（待入库确认）时到货已完成应 done 却映射 current、status=2（采购中）应 current 却 pending，修正为「3/5→done、2→current」；②进货退货 completed 节点文案硬编码「仓储管理员」，实际完成确认角色是采购管理员，改为按 completerName 输出「采购管理员」。
+- **坑三枚：** `/tmp` 变量文件存「K=v」字面量再拼 URL 致 500（两轮误判状态未推进，实为路径错误）；clean compile 前 spring-boot:run 复用残留 class 报 `Unresolved compilation problems`（CLAUDE.md 已知坑，`./mvnw clean compile`+kill -9 解决）；fuser -k 后旧进程仍占 8080（kill -9 强杀）。
+- **清理：** 测试单据（进货 14/15/16——14/16 为采购申请确认入库自动生成的关联进货单/采购申请 1/2/退货 5/销售 4/销售退货 1/成品 10）物理清理，相关消息删除；goods1 20/NULL、goods2 11/NULL 基线恢复；9-16 遗留的 3 张退货单为基线数据保留。
+- **下一步：** 用户硬刷新手测（重点：①四类单据行「查看/详情」→ 弹窗底部时间线——正常单看到标准流程各步与操作人、进行中步骤蓝色空心；②作废审批中的单时间线尾部显示「作废审批中」；③已作废单尾部红色「已作废」带原因；④销售单详情履约时间线显示不变——组件迁移回归）→ 拍板提交。
+
+---
+
+## 会话 40 — 2026-09-19
+
+### 用户手测三问题修复（/grill-with-docs 一轮五题全按推荐，D100–D103）——缺省供应商锚点复活 + 进价回写/历史 + 作废审批站内信化
+
+- **起因（用户原话）：** 「现在代码错误好多，之前还没有这些错 1.仓储端新增成品提示供应商不存在 2.若针对同一物料采购每次采购的价格不一样，界面应该展示最后一次，并保留前几次的采购记录和时间 3.作废审批提示不要右下角浮窗，改成和其他提醒一样」。
+- **事实排查（grilling 先查证）：** ①问题 1 根因是**我自己**会话 31 的 E2E 供应商清理把 base_supplier id=1 逻辑删除了——GoodsService.DEFAULT_SUPPLIER_ID=1 魔法常量挂靠它建档，selectById 被 @TableLogic 过滤即报「供应商不存在」；属测试残留数据事故，非代码回归（向用户如实披露）。②问题 2 实证：物料顶盖01（goods 2）9-16 进货 ¥5 已入库但 purchase_price=NULL——直接进货 confirmReceive 从未回写，仅采购申请链路 createInternal 回写，两链路口径不一致。③问题 3：作废审批在 AdminHome 有自建右下角浮卡（唯一孤例提醒样式），且全程零站内信。
+- **定案（用户：「按照推荐来」）：** D100 锚点复活+禁删守卫+db.sql 种子行 SUP000（防全库重建后 id=1 落到华强电子）；D101 confirmReceive 单列回写 purchase_price（LambdaUpdateWrapper 防 updateById 整行覆盖与 increaseStock 自增竞态）+ 作废已入库单 refreshPurchasePriceAfterVoid 重算 latestValidUnitPrice（无更早有效批保持原值）；D102 物料管理进价列「历史」弹窗（仅采购成员/超管，服务端 requireDeptMemberOrSuperAdmin 把关，新端点 `GET /base/goods/{id}/purchase-price-history` LIMIT 100 最近在上）+ GoodsPurchaseHistoryVO；D103 作废审批站内信化（提交→sendVoidApprovalPendingToWarehouseAdmins 绑 biz；approve/reject→撤待办+回执申请人，approve 时序=先撤后发防回执被当作待办误撤；reject 用 revokeUnreadByBizAndTitles 标题白名单防误杀同 biz 待确认销售）+ AdminHome 浮卡全删（后端 pending-reminder 端点保留为无害读接口）。
+- **改动清单：** 后端 7 文件（SupplierService 守卫 / PurchaseService 回写+重算 / GoodsService 历史查询 / GoodsController 端点 / GoodsPurchaseHistoryVO 新建 / MessageService 三方法+routeOfBizType / ApprovalService 五处接线）；前端 3 文件（base.js API / GoodsView 进价列历史按钮+弹窗 / AdminHome 浮卡移除）；db.sql 种子行。
+- **验证：** `./mvnw compile` BUILD SUCCESS ✓；`npm run build` ✓ 8.51s；后端重启（pid 74484）登录 200；curl E2E：**T1** 采购 admin DELETE /base/suppliers/1 → 400「系统默认供应商是成品建档与自动建档的系统依赖，不可删除」✓（守卫先于 requireSupplier，行逻辑删除态也能拦）；**T3** 普通供应商建+删 200 ✓；**T4** goods2 直接进货 ¥7.5×2 确认入库 → price=7.5 stock=13 ✓（历史遗留 NULL 顺带修复路径实证）；**T5** 再进 ¥9×1 → price=9 stock=14；作废 P2 → price=7.5 stock=13（重算回退）；作废 P1 → price=5.0 stock=11（重算回 9-16 有效批，且修好历史 NULL）✓；**T6** 历史端点 3 行（9.0→7.5→5.0 最近在上）→ 作废后 1 行；权限 purchase_admin 200 / **warehouse_admin 403**「进价历史仅采购部门可查看」/ purchase_employee 200 ✓；**T2** 仓储 admin 建成品成功且 supplierId=1 ✓（DB 修复后原问题 1 场景闭环）。
+- **口径发现（E2E 途中）：** 当天未出库单不可提交作废审批（「当天未生效单据请直接删除」，D95 口径的正确执行）；作废审批申请人必须是单据归属部门管理员（sales 提交 purchase 单 403，purchase_admin 提交 200）；销售单只可选成品/进货只可选物料（D67 对称）——故 T7 站内信全链改用 purchase/3（9-16 已入库跨天单）。
+- **环境坑：** glm 分类器抖动两次拦 mysql UPDATE（D100 DB 修复首次被拦后重试成功）与一次 curl 读；供应商创建 DTO 需 contacts 数组（字段 contactPerson/contactPhone）。
+- **遗留：** T7（作废审批站内信 approve/reject 全链+回执+撤待办）已跑到「消息 [17] 待审批作废申请 送达 warehouse_admin」一步，approve 动作被分类器抖动打断，待恢复后补跑；测试数据物理清理（临时供应商/测试进货单/成品8/销售单3/审批单/消息）与 goods2 恢复 stock=11 price=NULL 待 mysql 写恢复；db.sql 种子行已就位。
+- **下一步：** 补跑 T7 approve/reject 链 + 清理测试数据 → 用户硬刷新手测（重点：①仓储建成品不再报供应商不存在；②物料管理进价列「历史」弹窗两链路价格一致；③作废审批全流程走站内信无右下角浮卡）→ 拍板提交。
+
+---
+
 ## 会话 39 — 2026-09-19
 
 ### 红冲全面停用 + 措辞通俗化（/grill-with-docs 一轮两题，Q2=A+用户直答，D99）——D97 手测引发的口径重审

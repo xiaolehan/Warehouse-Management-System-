@@ -309,6 +309,11 @@ public class PurchaseService {
         if (rows != 1) {
             throw BusinessException.validateFail("进货单状态已变更，请刷新后重试");
         }
+        // D101：直接进货链路确认入库同样回写最新进价（与采购申请链路 createInternal 口径统一——「最近一批进价」）；
+        // 仅更新 purchase_price 一列，避免 updateById 整行覆盖（increaseStock 已用 SQL 自增 stock）
+        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
+        priceUpdate.eq(BaseGoods::getId, entity.getGoodsId()).set(BaseGoods::getPurchasePrice, entity.getUnitPrice());
+        baseGoodsMapper.update(null, priceUpdate);
         messageService.revokeUnreadByBiz("purchase", id);
     }
 
@@ -355,6 +360,8 @@ public class PurchaseService {
         boolean received = purchase.getConfirmStatus() != null && purchase.getConfirmStatus() == CONFIRM_RECEIVED;
         if (received) {
             decreaseStock(purchase.getGoodsId(), purchase.getQuantity(), "当前库存不足，无法作废该进货单");
+            // D101：作废已入库单后重算进价——被作废单若是当前进价来源，回退为最近一批有效已入库单价（无更早批次保持原值）
+            refreshPurchasePriceAfterVoid(purchase);
         }
         messageService.revokeUnreadByBiz("purchase", id);
 
@@ -376,6 +383,20 @@ public class PurchaseService {
             redFlushDoc.setVoidReason(reason);
             bizPurchaseMapper.insert(redFlushDoc);
         }
+    }
+
+    /** D101：作废已入库进货单后，把商品进价重算为最近一批有效已入库单价；无有效批次时保持原值不动 */
+    private void refreshPurchasePriceAfterVoid(BizPurchase purchase) {
+        if (purchase.getGoodsId() == null) {
+            return;
+        }
+        BigDecimal latest = bizPurchaseMapper.latestValidUnitPrice(purchase.getGoodsId(), LocalDateTime.now());
+        if (latest == null) {
+            return;
+        }
+        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
+        priceUpdate.eq(BaseGoods::getId, purchase.getGoodsId()).set(BaseGoods::getPurchasePrice, latest);
+        baseGoodsMapper.update(null, priceUpdate);
     }
 
     private void requirePurchaseVoidExecutionAccess() {

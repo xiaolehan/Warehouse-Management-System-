@@ -122,6 +122,10 @@ public class SupplierService {
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireSupplierModuleAccess();
+        // D100：缺省供应商是成品建档/未知物料自动建档的系统锚点（GoodsService.DEFAULT_SUPPLIER_ID），不可删除
+        if (GoodsService.DEFAULT_SUPPLIER_ID.equals(id)) {
+            throw BusinessException.validateFail("系统默认供应商是成品建档与自动建档的系统依赖，不可删除");
+        }
         requireSupplier(id);
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getSupplierId, id);

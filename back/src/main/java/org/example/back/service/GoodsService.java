@@ -9,9 +9,12 @@ import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.entity.BizPurchase;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.vo.GoodsOptionVO;
+import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +42,10 @@ public class GoodsService {
 
     @Autowired
     private BaseSupplierMapper baseSupplierMapper;
+
+    // D102：进价历史查询复用进货单 mapper
+    @Autowired
+    private BizPurchaseMapper bizPurchaseMapper;
 
     @Autowired
     private AuthzService authzService;
@@ -138,6 +145,29 @@ public class GoodsService {
         BaseGoods goods = requireGoods(id);
         BaseSupplier supplier = baseSupplierMapper.selectById(goods.getSupplierId());
         return toVO(goods, supplier);
+    }
+
+    // D102：进价历史——该物料全部有效已入库采购记录（最近在上，LIMIT 100）；仅采购部门成员/超管可见（进价可见口径的服务端把关）
+    public List<GoodsPurchaseHistoryVO> purchasePriceHistory(Long goodsId) {
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_PURCHASE, "进价历史仅采购部门可查看");
+        requireGoods(goodsId);
+        LambdaQueryWrapper<BizPurchase> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizPurchase::getGoodsId, goodsId)
+                .eq(BizPurchase::getBizStatus, 1)
+                .eq(BizPurchase::getConfirmStatus, 3)
+                .orderByDesc(BizPurchase::getOperationTime)
+                .orderByDesc(BizPurchase::getId)
+                .last("LIMIT 100");
+        return bizPurchaseMapper.selectList(wrapper).stream().map(p -> {
+            GoodsPurchaseHistoryVO vo = new GoodsPurchaseHistoryVO();
+            vo.setPurchaseNo(p.getPurchaseNo());
+            vo.setUnitPrice(p.getUnitPrice());
+            vo.setQuantity(p.getQuantity());
+            vo.setTotalPrice(p.getTotalPrice());
+            vo.setOperationTime(p.getOperationTime());
+            vo.setConfirmTime(p.getConfirmTime());
+            return vo;
+        }).toList();
     }
 
     // 建物料/成品仅仓储 admin；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）

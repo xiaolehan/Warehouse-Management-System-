@@ -90,6 +90,10 @@ public class ApprovalService {
     @Autowired
     private AuthzService authzService;
 
+    // D103：作废审批消息（提交通知仓储管理员 + 结果回执申请人，D21 范式）
+    @Autowired
+    private MessageService messageService;
+
     @Transactional(rollbackFor = Exception.class)
     public void create(ApprovalCreateDTO dto) {
         LoginResponse.UserInfoVO requester = requireLoginUser();
@@ -124,6 +128,11 @@ public class ApprovalService {
             bizApprovalOrderMapper.insert(entity);
         } catch (DuplicateKeyException ex) {
             throw BusinessException.validateFail("该单据已存在待审批申请，请勿重复提交");
+        }
+        // D103：作废申请提交 → 站内信通知仓储管理员（绑业务单 biz，D21 范式；通过随 voidDocument 撤未读，驳回按标题撤回）
+        if (ACTION_VOID.equals(action)) {
+            messageService.sendVoidApprovalPendingToWarehouseAdmins(
+                    bizTypeLabel(bizType), meta.bizNo(), requester.getRealName(), bizType, dto.getBizId());
         }
     }
 
@@ -184,6 +193,12 @@ public class ApprovalService {
         BizDocumentMeta afterMeta = resolveBizMeta(entity.getBizType(), entity.getBizId());
 
         finalizeApprove(entity.getId(), dto, beforeMeta, afterMeta);
+        // D103：审批结果回执给申请人——在 executeVoidByApproval 撤未读之后发送，避免被当作待办撤回
+        if (ACTION_VOID.equals(entity.getRequestAction())) {
+            messageService.sendVoidApprovalResultToRequester(entity.getRequesterId(), bizTypeLabel(entity.getBizType()),
+                    entity.getBizNo(), true, approver.getRealName(), dto == null ? null : dto.getRemark(),
+                    entity.getBizType(), entity.getBizId(), MessageService.routeOfBizType(entity.getBizType()));
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -197,6 +212,14 @@ public class ApprovalService {
         entity.setBeforeBizSnapshot(currentMeta.snapshot());
 
         finalizeReject(entity.getId(), dto, currentMeta);
+        // D103：驳回 → 按标题精确撤回待审批消息（不误伤同 biz 其他待办），并发结果回执给申请人
+        if (ACTION_VOID.equals(entity.getRequestAction())) {
+            messageService.revokeUnreadByBizAndTitles(entity.getBizType(), entity.getBizId(),
+                    List.of(MessageService.TITLE_VOID_APPROVAL_PENDING));
+            messageService.sendVoidApprovalResultToRequester(entity.getRequesterId(), bizTypeLabel(entity.getBizType()),
+                    entity.getBizNo(), false, approver.getRealName(), dto == null ? null : dto.getRemark(),
+                    entity.getBizType(), entity.getBizId(), MessageService.routeOfBizType(entity.getBizType()));
+        }
     }
 
     /**
@@ -407,6 +430,17 @@ public class ApprovalService {
                 .map(BizApprovalOrder::getBizId)
                 .distinct()
                 .collect(Collectors.toList());
+    }
+
+    /** D103：作废消息/回执里的单据类型展示名 */
+    private String bizTypeLabel(String bizType) {
+        return switch (bizType) {
+            case "purchase" -> "进货单";
+            case "purchase_return" -> "进货退货单";
+            case "sales" -> "销售单";
+            case "sales_return" -> "销售退货单";
+            default -> "单据";
+        };
     }
 
     private void validateBizType(String bizType) {

@@ -557,6 +557,7 @@ INSERT INTO `sys_employee` (`user_id`, `emp_code`, `emp_name`, `dept_id`, `posit
 
 -- 4.4 初始化供应商数据
 INSERT INTO `base_supplier` (`supplier_code`, `supplier_name`, `address`, `description`) VALUES
+('SUP000', '系统默认供应商', '-', '系统缺省供应商锚点（成品建档/未知物料自动建档挂靠），禁止删除（D100）'),
 ('SUP001', '华强电子有限公司', '深圳市华强北路电子大厦', '主营电子元件'),
 ('SUP002', '盛达贸易集团', '上海市浦东新区张江高科', '综合贸易公司'),
 ('SUP003', '科技数码港', '北京市海淀区中关村', '数码产品供应商'),

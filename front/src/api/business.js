@@ -11,6 +11,8 @@ export const deletePurchaseAPI = (id) => request.delete(`/business/purchases/${i
 export const voidPurchaseAPI = (id, data) => request.put(`/business/purchases/${id}/void`, data)
 export const arrivePurchaseAPI = (id) => request.put(`/business/purchases/${id}/arrive`)
 export const confirmReceivePurchaseAPI = (id) => request.put(`/business/purchases/${id}/confirm-receive`)
+// D104：单据流程时间线——谁在哪一步做了什么
+export const getPurchaseTimelineAPI = (id) => request.get(`/business/purchases/${id}/timeline`)
 
 export const getProductionPageAPI = (params) => request.get('/business/production/page', { params })
 export const getProductionDetailAPI = (id) => request.get(`/business/production/${id}`)
@@ -25,6 +27,7 @@ export const deletePurchaseReturnAPI = (id) => request.delete(`/business/purchas
 export const voidPurchaseReturnAPI = (id, data) => request.put(`/business/purchase-returns/${id}/void`, data)
 export const confirmOutPurchaseReturnAPI = (id) => request.put(`/business/purchase-returns/${id}/confirm-out`)
 export const completePurchaseReturnAPI = (id) => request.put(`/business/purchase-returns/${id}/complete`)
+export const getPurchaseReturnTimelineAPI = (id) => request.get(`/business/purchase-returns/${id}/timeline`)
 
 export const getSalesPageAPI = (params) => request.get('/business/sales/page', { params })
 export const getSalesDetailAPI = (id) => request.get(`/business/sales/${id}`)
@@ -61,6 +64,7 @@ export const createSalesReturnAPI = (data) => request.post('/business/sales-retu
 export const deleteSalesReturnAPI = (id) => request.delete(`/business/sales-returns/${id}`)
 export const voidSalesReturnAPI = (id, data) => request.put(`/business/sales-returns/${id}/void`, data)
 export const confirmSalesReturnAPI = (id) => request.put(`/business/sales-returns/${id}/confirm`)
+export const getSalesReturnTimelineAPI = (id) => request.get(`/business/sales-returns/${id}/timeline`)
 
 export const getChartOverviewAPI = (params) => request.get('/business/charts/overview', { params })
 export const getChartTop5API = (params) => request.get('/business/charts/top5', { params })

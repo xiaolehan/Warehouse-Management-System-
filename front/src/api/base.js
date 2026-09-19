@@ -20,6 +20,8 @@ export const getGoodsDetailAPI = (id) => request.get(`/base/goods/${id}`)
 export const createGoodsAPI = (data) => request.post('/base/goods', data)
 export const updateGoodsAPI = (id, data) => request.put(`/base/goods/${id}`, data)
 export const deleteGoodsAPI = (id) => request.delete(`/base/goods/${id}`)
+// D102：物料进价历史（仅采购/超管可见；弹窗展示该物料全部有效已入库采购记录，最近在上）
+export const getGoodsPurchasePriceHistoryAPI = (id) => request.get(`/base/goods/${id}/purchase-price-history`)
 
 export const getBomPageAPI = (params) => request.get('/base/bom/page', { params })
 export const getBomDetailAPI = (id) => request.get(`/base/bom/${id}`)

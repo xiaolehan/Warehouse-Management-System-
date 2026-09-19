@@ -10,6 +10,8 @@ import org.example.back.dto.SalesReturnQueryDTO;
 import org.example.back.dto.SalesReturnSaveDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.SalesReturnService;
+import org.example.back.service.DocumentTimelineService;
+import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.SalesReturnVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +23,9 @@ public class SalesReturnController {
     @Autowired
     private SalesReturnService salesReturnService;
 
+    @Autowired
+    private DocumentTimelineService documentTimelineService;
+
     @GetMapping("/page")
     public Result<PageResult<SalesReturnVO>> page(SalesReturnQueryDTO queryDTO) {
         return Result.success(salesReturnService.page(queryDTO));
@@ -29,6 +34,12 @@ public class SalesReturnController {
     @GetMapping("/{id}")
     public Result<SalesReturnVO> getById(@PathVariable Long id) {
         return Result.success(salesReturnService.getById(id));
+    }
+
+    // D104：单据流程时间线——谁在哪一步做了什么（与详情同读权限口径，守卫在 Service 内）
+    @GetMapping("/{id}/timeline")
+    public Result<DocumentTimelineVO> timeline(@PathVariable Long id) {
+        return Result.success(documentTimelineService.getSalesReturnTimeline(id));
     }
 
     @PostMapping

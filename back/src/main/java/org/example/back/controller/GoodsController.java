@@ -8,6 +8,7 @@ import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.service.GoodsService;
 import org.example.back.vo.GoodsOptionVO;
+import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
 import org.example.back.vo.OptionVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,12 @@ public class GoodsController {
     @GetMapping("/{id}")
     public Result<GoodsVO> getById(@PathVariable Long id) {
         return Result.success(goodsService.getById(id));
+    }
+
+    // D102：进价历史——该物料全部有效已入库采购记录（仅采购部门成员/超管，服务端把关）
+    @GetMapping("/{id}/purchase-price-history")
+    public Result<List<GoodsPurchaseHistoryVO>> purchasePriceHistory(@PathVariable Long id) {
+        return Result.success(goodsService.purchasePriceHistory(id));
     }
 
     @PostMapping

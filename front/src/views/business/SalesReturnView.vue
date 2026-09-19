@@ -188,6 +188,12 @@
           <el-input v-model="dialogForm.reason" type="textarea" placeholder="填写退换货原因"></el-input>
         </el-form-item>
       </el-form>
+      <!-- D104：查看态展示单据流程时间线（谁在哪一步做了什么） -->
+      <DocumentTimeline
+        v-if="dialogType === 'view' && dialogVisible"
+        :nodes="timelineNodes"
+        empty-text="暂无流程记录"
+      />
       <template #footer>
         <span class="dialog-footer">
           <el-button :icon="Close" @click="dialogVisible = false">取消</el-button>
@@ -212,6 +218,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
+import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {
@@ -220,7 +227,8 @@ import {
   deleteSalesReturnAPI,
   getReturnableSalesOptionsAPI,
   getSalesReturnDetailAPI,
-  getSalesReturnPageAPI
+  getSalesReturnPageAPI,
+  getSalesReturnTimelineAPI
 } from '@/api/business'
 
 const searchForm = reactive({ keywords: '', customerName: '', dateRange: [] })
@@ -427,11 +435,24 @@ const handleAdd = () => {
   dialogVisible.value = true
 }
 
+// D104：查看态加载单据流程时间线
+const timelineNodes = ref([])
+const loadTimeline = async (id) => {
+  try {
+    const res = await getSalesReturnTimelineAPI(id)
+    timelineNodes.value = res.data?.nodes || []
+  } catch {
+    timelineNodes.value = []
+    // 业务错误已由拦截器统一提示
+  }
+}
+
 const handleView = async (row) => {
   try {
     const res = await getSalesReturnDetailAPI(row.id)
     const detail = res.data || {}
     dialogType.value = 'view'
+    loadTimeline(row.id)
     selectedSourceSales.value = {
       id: detail.sourceSalesId,
       salesNo: detail.sourceSalesNo,

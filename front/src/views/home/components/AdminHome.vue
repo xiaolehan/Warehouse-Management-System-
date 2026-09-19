@@ -87,7 +87,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getHomeSummaryAPI } from '@/api/home'
-import { getAdminHomeLatestNoticeAPI, getApprovalPendingReminderAPI, getNoticeDetailAPI } from '@/api/system'
+import { getAdminHomeLatestNoticeAPI, getNoticeDetailAPI } from '@/api/system'
 import { getWorkRequirementOverdueReminderAPI, getWorkRequirementPendingReviewReminderAPI } from '@/api/workRequirement'
 import { useUserStore } from '@/stores/user'
 import { getToken, normalizeDeptCode } from '@/utils/auth'
@@ -112,7 +112,6 @@ const noticeDialogVisible = ref(false)
 const noticeDetail = ref({})
 const overdueReminder = ref({ count: 0, signature: '' })
 const workRequirementReminder = ref({ count: 0, signature: '' })
-const approvalReminder = ref({ count: 0, signature: '' })
 const dismissedReminderSignatures = ref({})
 
 const ADMIN_REMINDER_KEY_PREFIX = 'admin-dashboard-reminder'
@@ -130,8 +129,6 @@ const moduleLabelMap = {
 }
 
 const moduleLabel = computed(() => moduleLabelMap[deptCode.value] || '部门管理员工作台')
-const isWarehouseAdmin = computed(() => deptCode.value === 'warehouse')
-
 const metricCards = computed(() => {
   const baseCards = [
     { label: '当前部门', value: deptLabel.value },
@@ -232,16 +229,7 @@ const visibleReminders = computed(() => {
     })
   }
 
-  if (isWarehouseAdmin.value && Number(approvalReminder.value.count) > 0 && dismissedReminderSignatures.value.voidApproval !== approvalReminder.value.signature) {
-    reminders.push({
-      key: 'voidApproval',
-      signature: approvalReminder.value.signature,
-      eyebrow: '作废审批提醒',
-      title: `待审核作废审批：${approvalReminder.value.count}`,
-      text: '你当前有待审核的作废审批，请及时处理。',
-      tone: 'rose'
-    })
-  }
+  // D103：「作废审批提醒」右下角浮卡已移除——待审批作废申请改为站内信通知仓储管理员（提交→通知，通过/驳回→回执+撤待办）
 
   return reminders
 })
@@ -258,8 +246,7 @@ const syncDismissedReminders = () => {
   }
   dismissedReminderSignatures.value = {
     workRequirementOverdue: sessionStorage.getItem(getReminderStorageKey(summary.value.userId, 'workRequirementOverdue')) || '',
-    workRequirementReview: sessionStorage.getItem(getReminderStorageKey(summary.value.userId, 'workRequirementReview')) || '',
-    voidApproval: sessionStorage.getItem(getReminderStorageKey(summary.value.userId, 'voidApproval')) || ''
+    workRequirementReview: sessionStorage.getItem(getReminderStorageKey(summary.value.userId, 'workRequirementReview')) || ''
   }
 }
 
@@ -308,22 +295,6 @@ const loadOverdueReminder = async () => {
   }
 }
 
-const loadApprovalReminder = async () => {
-  if (!isWarehouseAdmin.value) {
-    approvalReminder.value = { count: 0, signature: '' }
-    return
-  }
-  try {
-    const res = await getApprovalPendingReminderAPI()
-    approvalReminder.value = {
-      count: Number(res.data?.count || 0),
-      signature: res.data?.signature || ''
-    }
-  } catch {
-    // 业务错误已由拦截器统一提示
-  }
-}
-
 const loadNotices = async () => {
   noticeLoading.value = true
   try {
@@ -355,7 +326,6 @@ onMounted(() => {
   loadNotices()
   loadOverdueReminder()
   loadWorkRequirementReminder()
-  loadApprovalReminder()
 })
 </script>
 

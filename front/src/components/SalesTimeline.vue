@@ -7,21 +7,12 @@
         {{ timeline.estimatedDeliveryText }}
       </el-tag>
     </div>
-    <el-timeline v-if="timeline && timeline.nodes && timeline.nodes.length" class="timeline-body">
-      <el-timeline-item
-        v-for="node in timeline.nodes"
-        :key="node.key"
-        :type="nodeType(node.status)"
-        :hollow="node.status === 'current'"
-        :timestamp="formatTime(node.time)"
-        placement="top"
-      >
-        <div class="node-line">
-          <span :class="['node-title', `node-title--${node.status}`]">{{ node.title }}</span>
-          <span v-if="node.description" class="node-desc">{{ node.description }}</span>
-        </div>
-      </el-timeline-item>
-    </el-timeline>
+    <!-- D104：渲染段抽至通用 DocumentTimeline 组件，本组件保留销售特有 header（预计可交付 tag）与数据加载 -->
+    <DocumentTimeline
+      v-if="timeline && timeline.nodes && timeline.nodes.length"
+      :nodes="timeline.nodes"
+      empty-text="暂无履约进度"
+    />
     <el-empty v-else-if="!loading" description="暂无履约进度" :image-size="60" />
   </div>
 </template>
@@ -30,6 +21,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getSalesTimelineAPI } from '@/api/business'
+import DocumentTimeline from '@/components/DocumentTimeline.vue'
 
 // D71：销售单履约时间线（类淘宝物流），数据源 GET /business/sales/{id}/timeline
 const props = defineProps({
@@ -45,17 +37,6 @@ const estimateTagType = computed(() => {
   if (source === 'system') return 'warning'   // 系统推算
   return 'info'
 })
-
-const nodeType = (status) => {
-  if (status === 'done') return 'success'
-  if (status === 'current') return 'primary'
-  return 'info'
-}
-
-const formatTime = (val) => {
-  if (!val) return ''
-  return String(val).replace('T', ' ').slice(0, 16)
-}
 
 const load = async () => {
   if (!props.salesId) {
@@ -94,37 +75,5 @@ watch(() => props.salesId, load, { immediate: true })
 .timeline-title {
   font-weight: 600;
   color: #303133;
-}
-
-.timeline-body {
-  padding-left: 4px;
-}
-
-.node-line {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.node-title {
-  font-size: 13px;
-}
-
-.node-title--done {
-  color: #67c23a;
-}
-
-.node-title--current {
-  color: #409eff;
-  font-weight: 600;
-}
-
-.node-title--pending {
-  color: #909399;
-}
-
-.node-desc {
-  font-size: 12px;
-  color: #909399;
 }
 </style>

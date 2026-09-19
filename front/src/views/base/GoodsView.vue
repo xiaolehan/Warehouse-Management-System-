@@ -44,9 +44,12 @@
         <template #default="scope">{{ scope.row.description || '—' }}</template>
       </el-table-column>
       <el-table-column v-if="!isProduct" prop="supplierName" label="所属供应商" min-width="140" />
-      <!-- 进价：仅供采购/超管可见，仓储隐藏；成品无进价概念 -->
-      <el-table-column v-if="showPrice && !isProduct" prop="price" label="进价" width="100">
-        <template #default="scope">{{ scope.row.price ?? '-' }}</template>
+      <!-- 进价：仅供采购/超管可见，仓储隐藏；成品无进价概念；「历史」弹窗展示该物料全部有效已入库采购记录（D102） -->
+      <el-table-column v-if="showPrice && !isProduct" prop="price" label="进价" width="130">
+        <template #default="scope">
+          <span>{{ scope.row.price ?? '-' }}</span>
+          <el-button link size="small" type="primary" @click="openPriceHistory(scope.row)">历史</el-button>
+        </template>
       </el-table-column>
       <el-table-column prop="stock" label="当前库存" width="100">
         <template #default="scope">
@@ -154,6 +157,22 @@
         <el-button type="primary" :icon="Check" @click="handleSave">确认</el-button>
       </template>
     </el-dialog>
+
+    <!-- D102：进价历史弹窗——最近在上的有效已入库采购记录（已作废单不展示） -->
+    <el-dialog v-model="priceHistoryVisible" :title="`进价历史 - ${priceHistoryGoodsName}`" width="760px">
+      <el-table :data="priceHistoryRows" size="small" border max-height="480">
+        <el-table-column prop="purchaseNo" label="进货单号" min-width="160" />
+        <el-table-column prop="unitPrice" label="进货单价(元)" width="110" />
+        <el-table-column prop="quantity" label="数量" width="80" />
+        <el-table-column prop="totalPrice" label="总金额(元)" width="110" />
+        <el-table-column label="进货时间" min-width="150">
+          <template #default="scope">{{ formatDateTime(scope.row.operationTime) }}</template>
+        </el-table-column>
+        <el-table-column label="入库时间" min-width="150">
+          <template #default="scope">{{ formatDateTime(scope.row.confirmTime) }}</template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -167,6 +186,7 @@ import {
   deleteGoodsAPI,
   getGoodsDetailAPI,
   getGoodsPageAPI,
+  getGoodsPurchasePriceHistoryAPI,
   getSupplierOptionsAPI,
   updateGoodsAPI
 } from '@/api/base'
@@ -236,6 +256,22 @@ const loadSuppliers = async () => {
   try {
     const res = await getSupplierOptionsAPI()
     suppliers.value = res.data || []
+  } catch {
+    // 业务错误已由拦截器统一提示
+  }
+}
+
+// D102：进价历史弹窗——从物料行直达，展示该物料全部有效已入库采购记录（单价+时间）
+const priceHistoryVisible = ref(false)
+const priceHistoryGoodsName = ref('')
+const priceHistoryRows = ref([])
+const formatDateTime = (val) => (val ? String(val).replace('T', ' ').slice(0, 19) : '—')
+const openPriceHistory = async (row) => {
+  priceHistoryGoodsName.value = row.goodsName
+  priceHistoryVisible.value = true
+  try {
+    const res = await getGoodsPurchasePriceHistoryAPI(row.id)
+    priceHistoryRows.value = res.data || []
   } catch {
     // 业务错误已由拦截器统一提示
   }

@@ -2,6 +2,8 @@ import request from '@/utils/request'
 
 export const getPurchaseRequestPageAPI = (params) => request.get('/business/purchase-requests/page', { params })
 export const getPurchaseRequestDetailAPI = (id) => request.get(`/business/purchase-requests/${id}`)
+// D104：单据流程时间线
+export const getPurchaseRequestTimelineAPI = (id) => request.get(`/business/purchase-requests/${id}/timeline`)
 export const getShortageGoodsAPI = () => request.get('/business/purchase-requests/shortage-goods')
 export const createPurchaseRequestAPI = (data) => request.post('/business/purchase-requests', data)
 export const processPurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/process`, data)

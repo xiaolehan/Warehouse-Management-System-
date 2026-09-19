@@ -14,6 +14,8 @@ import org.example.back.dto.PurchaseRequestRejectDTO;
 import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.service.PurchaseRequestService;
+import org.example.back.service.DocumentTimelineService;
+import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.PurchaseRequestVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -27,6 +29,9 @@ public class PurchaseRequestController {
     @Autowired
     private PurchaseRequestService purchaseRequestService;
 
+    @Autowired
+    private DocumentTimelineService documentTimelineService;
+
     @GetMapping("/page")
     public Result<PageResult<PurchaseRequestVO>> page(PurchaseRequestQueryDTO queryDTO) {
         return Result.success(purchaseRequestService.page(queryDTO));
@@ -35,6 +40,12 @@ public class PurchaseRequestController {
     @GetMapping("/{id}")
     public Result<PurchaseRequestVO> getById(@PathVariable Long id) {
         return Result.success(purchaseRequestService.getById(id));
+    }
+
+    // D104：单据流程时间线——谁在哪一步做了什么（与详情同读权限口径，守卫在 Service 内）
+    @GetMapping("/{id}/timeline")
+    public Result<DocumentTimelineVO> timeline(@PathVariable Long id) {
+        return Result.success(documentTimelineService.getPurchaseRequestTimeline(id));
     }
 
     /**
