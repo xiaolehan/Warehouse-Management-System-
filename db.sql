@@ -1349,6 +1349,8 @@ CREATE TABLE `sys_config` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统参数表';
 
 -- 种子：价格偏离审批阈值（比例小数，0.05 = 5%）
+-- 注意：该行是超管「系统参数」页的功能载体，SysConfigService 启动自检会自动补齐
+-- （物理缺失补默认行、逻辑删除则复活，D108）——清库后重启即恢复，无需手工重跑本种子。
 INSERT INTO `sys_config` (`config_key`, `config_value`, `config_name`, `remark`) VALUES
 ('price_deviation_threshold', '0.05', '销售价格偏离阈值', '销售单价偏离标准售价超过此比例需超管审批(0.05=5%)');
 

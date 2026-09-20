@@ -37,20 +37,6 @@
           <div class="admin-reminder__title">待审核任务：{{ deptApprovalReminder.count }}</div>
           <p class="admin-reminder__text">你当前有待审核的部门审批任务，请及时处理。</p>
         </div>
-        <!-- D108：价格偏离审批提醒（常驻功能入口，不再只依赖消息徽标发现） -->
-        <div
-          v-if="showPriceDeviationReminder"
-          key="priceDeviationReminder"
-          class="admin-reminder admin-reminder--blue"
-          role="status"
-          aria-live="polite"
-          @click="goPriceDeviationApproval"
-        >
-          <button type="button" class="admin-reminder__close" aria-label="关闭提醒" @click.stop="dismissPriceDeviationReminder">×</button>
-          <div class="admin-reminder__eyebrow">价格偏离审批提醒</div>
-          <div class="admin-reminder__title">待审批单据：{{ priceDeviationReminder.count }}</div>
-          <p class="admin-reminder__text">有销售单价格偏离阈值待你审批，点击进入价格偏离审批处理。</p>
-        </div>
       </transition-group>
 
       <section class="panel-card">
@@ -78,7 +64,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getHomeSummaryAPI } from '@/api/home'
-import { getApprovalOrderPageAPI, getDeptPageAPI } from '@/api/system'
+import { getDeptPageAPI } from '@/api/system'
 import { getToken } from '@/utils/auth'
 
 const router = useRouter()
@@ -86,21 +72,11 @@ const summary = ref({ username: '', realName: '', dbStatus: '', currentLoginTime
 const deptApprovalReminder = ref({ count: 0, signature: '' })
 const dismissedDeptApprovalSignature = ref('')
 
-// D108：价格偏离审批提醒（可关闭；数量变化后重新弹出）
-const priceDeviationReminder = ref({ count: 0, signature: '' })
-const dismissedPriceDeviationSignature = ref('')
-
 const DEPT_APPROVAL_REMINDER_KEY_PREFIX = 'superadmin-dept-approval-reminder'
-const PRICE_DEVIATION_REMINDER_KEY_PREFIX = 'superadmin-price-deviation-reminder'
 
 const showDeptApprovalReminder = computed(() => {
   return Number(deptApprovalReminder.value.count) > 0
     && dismissedDeptApprovalSignature.value !== deptApprovalReminder.value.signature
-})
-
-const showPriceDeviationReminder = computed(() => {
-  return Number(priceDeviationReminder.value.count) > 0
-    && dismissedPriceDeviationSignature.value !== priceDeviationReminder.value.signature
 })
 
 const formatTime = (val) => {
@@ -127,50 +103,6 @@ const dismissDeptApprovalReminder = () => {
   }
   sessionStorage.setItem(getReminderStorageKey(summary.value.userId), deptApprovalReminder.value.signature)
   dismissedDeptApprovalSignature.value = deptApprovalReminder.value.signature
-}
-
-const getPriceDeviationStorageKey = (userId) => {
-  const token = getToken()
-  return `${PRICE_DEVIATION_REMINDER_KEY_PREFIX}:${userId}:${token}`
-}
-
-const syncDismissedPriceDeviationReminder = () => {
-  if (!summary.value.userId) {
-    dismissedPriceDeviationSignature.value = ''
-    return
-  }
-  dismissedPriceDeviationSignature.value = sessionStorage.getItem(getPriceDeviationStorageKey(summary.value.userId)) || ''
-}
-
-const dismissPriceDeviationReminder = () => {
-  if (!summary.value.userId || !priceDeviationReminder.value.signature) {
-    return
-  }
-  sessionStorage.setItem(getPriceDeviationStorageKey(summary.value.userId), priceDeviationReminder.value.signature)
-  dismissedPriceDeviationSignature.value = priceDeviationReminder.value.signature
-}
-
-const goPriceDeviationApproval = () => {
-  router.push('/system/void-approval')
-}
-
-const loadPriceDeviationReminder = async () => {
-  try {
-    // review 修复：签名携带待审单 id 列表（对齐部门审批卡）——数量相同但单据已换时也能重新弹出
-    const res = await getApprovalOrderPageAPI({
-      pageNum: 1,
-      pageSize: 50,
-      requestAction: 'price_deviation_confirm',
-      status: 1
-    })
-    const records = Array.isArray(res.data?.records) ? res.data.records : []
-    const count = Number(res.data?.total || 0)
-    const signature = count > 0 ? `${count}:${records.map(item => item.id).filter(Boolean).join(',')}` : ''
-    priceDeviationReminder.value = { count, signature }
-    syncDismissedPriceDeviationReminder()
-  } catch {
-    // 业务错误已由拦截器统一提示
-  }
 }
 
 const loadSummary = async () => {
@@ -201,12 +133,9 @@ const loadDeptApprovalReminder = async () => {
   }
 }
 
-onMounted(async () => {
-  // review 修复：先加载 summary（含 userId），再加载两张提醒卡——
-  // 关闭签名按 userId+token 存 sessionStorage，提醒接口先返回时会把签名误同步成空串导致鬼影复活
-  await loadSummary()
+onMounted(() => {
+  loadSummary()
   loadDeptApprovalReminder()
-  loadPriceDeviationReminder()
 })
 </script>
 
@@ -325,16 +254,6 @@ onMounted(async () => {
 
 .admin-reminder--amber {
   background: linear-gradient(145deg, rgba(255, 251, 235, 0.98), rgba(255, 255, 255, 0.96));
-}
-
-/* D108：价格偏离审批提醒卡（蓝色系区分部门审批琥珀色） */
-.admin-reminder--blue {
-  background: linear-gradient(145deg, rgba(239, 246, 255, 0.98), rgba(255, 255, 255, 0.96));
-  cursor: pointer;
-}
-
-.admin-reminder--blue .admin-reminder__eyebrow {
-  color: #1d4ed8;
 }
 
 .admin-reminder__close {

@@ -161,15 +161,6 @@ public class ApprovalService {
         return bizApprovalOrderMapper.selectCount(wrapper);
     }
 
-    /** D108：待审批价格偏离单数量（超管首页提醒卡/总览页常驻入口指标用，对齐部门审批 pendingCount 口径） */
-    public Long pendingPriceDeviationCount() {
-        requireApprovalModuleAccess();
-        LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizApprovalOrder::getStatus, STATUS_PENDING)
-                .eq(BizApprovalOrder::getRequestAction, ACTION_PRICE_DEVIATION_CONFIRM);
-        return bizApprovalOrderMapper.selectCount(wrapper);
-    }
-
     public ReminderSummaryVO pendingReminder() {
         requireApprovalModuleAccess();
         ReminderSummaryVO reminder = new ReminderSummaryVO();

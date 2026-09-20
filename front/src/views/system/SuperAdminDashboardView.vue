@@ -17,12 +17,6 @@
         <strong>{{ metrics.pendingDeptApprovalCount }}</strong>
         <span>人事提交的新部门请求</span>
       </article>
-      <!-- D108：价格偏离审批常驻入口指标（对齐部门审批待遇） -->
-      <article class="metric-card metric-card-accent">
-        <p>价格偏离待审批</p>
-        <strong>{{ metrics.pendingPriceDeviationCount }}</strong>
-        <span>销售价偏离阈值的待审单</span>
-      </article>
       <article class="metric-card">
         <p>启用策略</p>
         <strong>{{ metrics.enabledPolicyCount }}</strong>
@@ -49,12 +43,6 @@
       <article class="nav-card" @click="go('/system/dept-approval')">
         <h3>部门审批</h3>
         <p>审核人事提交的新部门请求，并决定是否正式生效。</p>
-        <el-button type="primary" text :icon="Stamp">进入页面</el-button>
-      </article>
-      <!-- D108：价格偏离审批常驻入口（此前仅侧边菜单可达，易被遗忘） -->
-      <article class="nav-card" @click="go('/system/void-approval')">
-        <h3>价格偏离审批</h3>
-        <p>审核销售价偏离标准售价阈值的单据，决定仓储能否确认出库。</p>
         <el-button type="primary" text :icon="Stamp">进入页面</el-button>
       </article>
       <article class="nav-card" @click="go('/system/security-ip-policy')">
@@ -102,7 +90,7 @@ import { useRouter } from 'vue-router'
 import { ArrowRight, Stamp, Lock, Notebook, Document } from '@element-plus/icons-vue'
 import { getEnabledIpPoliciesAPI, getIpPolicyPageAPI } from '@/api/security'
 import { getLoginLogPageAPI, getOperationLogPageAPI } from '@/api/audit'
-import { getDeptPageAPI, getPendingPriceDeviationCountAPI } from '@/api/system'
+import { getDeptPageAPI } from '@/api/system'
 
 const router = useRouter()
 const loading = ref(false)
@@ -110,7 +98,6 @@ const recentOperations = ref([])
 
 const metrics = reactive({
   pendingDeptApprovalCount: 0,
-  pendingPriceDeviationCount: 0,
   enabledPolicyCount: 0,
   policyTotal: 0,
   loginLogTotal: 0,
@@ -129,14 +116,12 @@ const go = (path) => {
 const loadDashboard = async () => {
   loading.value = true
   try {
-    const [enabledRes, policyRes, loginRes, operationRes, deptApprovalRes, priceDeviationRes] = await Promise.all([
+    const [enabledRes, policyRes, loginRes, operationRes, deptApprovalRes] = await Promise.all([
       getEnabledIpPoliciesAPI(),
       getIpPolicyPageAPI({ pageNum: 1, pageSize: 1 }),
       getLoginLogPageAPI({ pageNum: 1, pageSize: 1 }),
       getOperationLogPageAPI({ pageNum: 1, pageSize: 5 }),
-      getDeptPageAPI({ pageNum: 1, pageSize: 5, status: 1 }),
-      // D108：价格偏离待审批数量
-      getPendingPriceDeviationCountAPI()
+      getDeptPageAPI({ pageNum: 1, pageSize: 5, status: 1 })
     ])
 
     metrics.enabledPolicyCount = Array.isArray(enabledRes.data) ? enabledRes.data.length : 0
@@ -144,7 +129,6 @@ const loadDashboard = async () => {
     metrics.loginLogTotal = Number(loginRes.data?.total || 0)
     metrics.operationLogTotal = Number(operationRes.data?.total || 0)
     metrics.pendingDeptApprovalCount = Number(deptApprovalRes.data?.total || 0)
-    metrics.pendingPriceDeviationCount = Number(priceDeviationRes.data || 0)
     recentOperations.value = operationRes.data?.records || []
   } catch {
     // 业务错误已由拦截器统一提示

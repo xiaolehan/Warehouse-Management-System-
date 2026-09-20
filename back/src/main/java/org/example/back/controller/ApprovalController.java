@@ -51,13 +51,6 @@ public class ApprovalController {
         return Result.success(approvalService.pendingCount());
     }
 
-    /** D108：待审批价格偏离单数量（超管首页提醒卡/总览页常驻入口指标） */
-    @GetMapping("/pending-price-deviation-count")
-    @RequireAdmin("仅管理员可查看价格偏离待审批数量")
-    public Result<Long> pendingPriceDeviationCount() {
-        return Result.success(approvalService.pendingPriceDeviationCount());
-    }
-
     @GetMapping("/pending-reminder")
     @RequireAdmin("仅管理员可查看待审批提醒")
     public Result<ReminderSummaryVO> pendingReminder() {

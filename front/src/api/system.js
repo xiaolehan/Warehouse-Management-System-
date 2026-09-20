@@ -32,8 +32,6 @@ export const deleteEmployeeAPI = (id) => request.delete(`/system/employees/${id}
 
 export const getApprovalOrderPageAPI = (params) => request.get('/system/approval-orders/page', { params })
 export const getApprovalPendingCountAPI = () => request.get('/system/approval-orders/pending-count')
-// D108：价格偏离待审批数量（超管首页提醒卡/总览页常驻入口指标）
-export const getPendingPriceDeviationCountAPI = () => request.get('/system/approval-orders/pending-price-deviation-count')
 export const getApprovalPendingReminderAPI = () => request.get('/system/approval-orders/pending-reminder')
 export const createApprovalOrderAPI = (data) => request.post('/system/approval-orders', data)
 // D94：单据列表「作废审批中」行内状态

@@ -5,6 +5,21 @@
 
 ---
 
+## 会话 43 — 2026-09-20
+
+### D108 误读纠正：阈值设置常驻 + 启动自愈（/grill-with-docs 三问全按推荐）——误造审批入口整体回退
+
+- **起因（用户原话）：** 「超管那里的价格设置的阈值怎么没有了，之前在"系统参数"界面的，我昨天说的是这个不要当成数据信息，而是一个功能，阈值多少是超管设置的；其他的等所有批次都优化后再统一测试」。
+- **事实排查：** 「系统参数」菜单/页面/接口从未删除；消失的是 sys_config 的 price_deviation_threshold **数据行**——会话 42 清库时被物理删除，页面空表显「暂无参数」、修改按钮仅该行存在时渲染、update 是纯 UPDATE 行缺失报「参数不存在」。读侧有 5% 兜底所以审批判定不断，但设置能力确实丢了。会话 42 把"功能不是数据"误读为**审批入口**（审批菜单本就常驻），多做了总览 nav 卡+待审指标+首页蓝卡+新端点。
+- **定案（Q1/Q2/Q3 全 A）：** ①误读改动**整体回退**——5 文件（ApprovalController/ApprovalService/api system.js/SuperAdminHome/SuperAdminDashboardView）`git checkout 76a3bd0^ --` 恢复，grep 确认 pendingPriceDeviation 痕迹清零；②**启动自愈**：SysConfigService @PostConstruct 自检阈值行，物理缺失 insert 默认行、DuplicateKeyException（逻辑删行）走新增 Mapper.reviveLogicalDeletedRow 原生 SQL 复活（@TableLogic 致 Wrapper 触达不到软删行），任何异常仅记日志不阻断启动；reload 读侧同样容错；db.sql 种子注释说明自愈；③默认阈值 **5%**。
+- **单测：** 新建 SysConfigServiceTest 6 例（行存在不补/缺失补 0.05/逻辑删复活/自检失败不阻断启动且兜底/脏值兜底/更新行缺失报 notFound）；踩坑：LambdaUpdateWrapper 纯 Mockito 需 @BeforeAll initTableInfo(SysConfig)，strict stubs 下 @BeforeEach 通用桩要 lenient；reload 在 init 内第二次查库需独立容错。**全量 275 全绿**（269+6），前端 build 8.74s。
+- **真实验证：** 本地库 sys_config 清空后重启后端，日志「价格偏离阈值参数行缺失，已启动自愈补默认行 0.05」，行自动出现。E2E（/tmp/e2e_config.py）**9/9**：超管列表非空默认 5%、任意登录用户可读、仓储 admin 看列表/改值均 403、超管改 12% 即时生效（缓存刷新）、越界 1.5 报 400、测完恢复 0.05（DB 值手工归一 0.0500→0.05）。
+- **文档：** CONTEXT 新增「系统参数（价格偏离阈值）」词条（功能设置非业务数据，入口不随数据有无出现）；task_plan D108 行正名（误读+回退+自愈全留痕），ADR 不建（非难逆决策）。
+- **教训：** 用户「功能不是数据」的指代必须锚定到具体界面元素确认，不能凭一句话自行选目标；grilling 的价值在第二轮澄清而非埋头实现。
+- **下一步：** 本修复提交 main → 批次二 D109（未知物料供应商匹配，ADR-0014）→ 批次三 D110（一客户多型号，ADR-0013）→ **全部批次完成后用户统一手测**（中途不安排手测交接）。
+
+---
+
 ## 会话 42 — 2026-09-19
 
 ### grill 六需求批次一落地（D105 齐套领料 / D106 销售日期 / D107 成品入库两段式 / D108 价格偏离常驻入口）——262 单测全绿 + python E2E 全链路 → /code-review 15 findings 全修，269 单测 + 33/33 状态机回归 E2E
