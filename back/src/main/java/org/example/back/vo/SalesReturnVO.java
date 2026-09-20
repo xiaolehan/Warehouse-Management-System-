@@ -4,7 +4,11 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * 销售退货 VO（D110 头行结构）：头汇总 + 明细行列表。
+ */
 @Data
 public class SalesReturnVO {
 
@@ -20,17 +24,14 @@ public class SalesReturnVO {
 
     private String customerName;
 
-    private Long goodsId;
+    private Integer totalQuantity;
 
-    private String goodsName;
+    private BigDecimal totalAmount;
 
-    private Integer quantity;
+    /** 商品汇总描述：单行 "PTO153"，多行 "PTO153 等 3 种" */
+    private String goodsSummary;
 
-    private BigDecimal unitPrice;
-
-    private BigDecimal totalPrice;
-
-    private BigDecimal refundAmount;
+    private List<SalesReturnDetailVO> details;
 
     private LocalDateTime operationTime;
 

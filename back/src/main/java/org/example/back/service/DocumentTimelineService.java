@@ -150,7 +150,7 @@ public class DocumentTimelineService {
                 "销售管理员 " + r.getOperatorName() + " 创建退货单 " + r.getReturnNo()
                         + (r.getSourceSalesNo() == null ? "" : "（来源销售单 " + r.getSourceSalesNo() + "）")));
         nodes.add(node("confirmedIn", "仓储入库确认", statusOf(voided, cs, 2, 1),
-                r.getConfirmTime(), confirmedDesc(r.getConfirmerName(), "确认入库，库存 +" + r.getQuantity())));
+                r.getConfirmTime(), confirmedDesc(r.getConfirmerName(), "确认入库，库存 +" + r.getTotalQuantity() + " 件")));
         appendVoidNodes(nodes, "sales_return", id, voided, r.getVoidTime(), r.getVoidReason());
         return vo(r.getReturnNo(), nodes);
     }

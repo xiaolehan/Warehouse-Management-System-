@@ -9,6 +9,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 客退单头表（D110 头行结构）：只留单据与汇总字段，退货行见 {@link BizSalesReturnDetail}。
+ */
 @Data
 @TableName("biz_sales_return")
 public class BizSalesReturn {
@@ -22,30 +25,20 @@ public class BizSalesReturn {
 
     private String sourceSalesNo;
 
-    private Long goodsId;
-
-    private String goodsName;
-
-    private Integer quantity;
-
-    private BigDecimal unitPrice;
+    /**
+     * 客户公司名快照（从来源销售单带入）
+     */
+    private String customerName;
 
     /**
-     * 成本单价快照
+     * 退货总数量(建单按明细行合计，单据不可编辑)
      */
-    private BigDecimal costUnitPrice;
+    private Integer totalQuantity;
 
     /**
-     * 成本总额快照
+     * 退货总金额(建单按明细行合计，单据不可编辑)
      */
-    private BigDecimal costTotalPrice;
-
-    /**
-     * 成本来源: SOURCE_SALE/RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK
-     */
-    private String costSource;
-
-    private BigDecimal totalPrice;
+    private BigDecimal totalAmount;
 
     private Long operatorId;
 
@@ -68,11 +61,6 @@ public class BizSalesReturn {
     private LocalDateTime voidTime;
 
     private String voidReason;
-
-    /**
-     * 客户公司名快照（从来源销售单带入）
-     */
-    private String customerName;
 
     /**
      * 仓库确认状态: 1-待仓库确认, 2-已确认入库

@@ -260,11 +260,12 @@ public class MessageService {
     }
 
     /**
-     * D70：缺货销售单（现货不足）建单后通知生产管理员有销售需求待排产。
+     * D70/D110：缺货销售单建单后通知生产管理员有销售需求待排产——缺货行按单汇总一条消息。
+     * shortageDesc 为缺货行描述（如「PTO153×5（现存 2）、轴承×3（现存 0）」）。
      * 绑 biz_type=sales：销售单删除/作废/确认出库时随 D21 范式一并撤未读。
      */
-    public void sendSalesDemandToProductionAdmins(String salesNo, String goodsName, Integer quantity,
-                                                  Integer available, String customerName, String applicantName, Long salesId) {
+    public void sendSalesDemandToProductionAdmins(String salesNo, String shortageDesc,
+                                                  String customerName, String applicantName, Long salesId) {
         Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
         if (productionDeptId == null) {
             return;
@@ -275,8 +276,8 @@ public class MessageService {
                 "销售需求待排产",
                 String.format(
                         Locale.ROOT,
-                        "销售单 %s（成品 %s×%d，客户：%s，建单：%s）现货不足（现存 %d），请评估排产并在建生产任务单时关联该销售单。",
-                        salesNo, goodsName, quantity == null ? 0 : quantity, customer, applicantName, available == null ? 0 : available
+                        "销售单 %s（缺货成品：%s；客户：%s；建单：%s）现货不足，请评估排产并在建生产任务单时关联该销售单。",
+                        salesNo, shortageDesc, customer, applicantName
                 ),
                 "sales",
                 salesId,
@@ -285,16 +286,17 @@ public class MessageService {
 
     /**
      * D70：关联生产任务单入库、销售单可发货时，通知建单销售本人（精准到人）。
+     * goodsDesc 为成品描述（如「PTO153×5」，D110 汇总文案）。
      * 绑 biz_type=sales：销售单删除/作废/确认出库时随 D21 范式一并撤未读。
      */
-    public void sendSalesReadyToShipToUser(Long userId, String salesNo, String goodsName, Integer quantity, Long salesId) {
+    public void sendSalesReadyToShipToUser(Long userId, String salesNo, String goodsDesc, Long salesId) {
         sendToUserWithBiz(
                 userId,
                 "销售单可发货",
                 String.format(
                         Locale.ROOT,
-                        "您建的销售单 %s（成品 %s×%d）对应生产任务单已完成入库，现货已可满足，请跟进仓储确认出库。",
-                        salesNo, goodsName, quantity == null ? 0 : quantity
+                        "您建的销售单 %s（成品 %s）对应生产任务单已完成入库，现货已可满足，请跟进仓储确认出库。",
+                        salesNo, goodsDesc
                 ),
                 "sales",
                 salesId,
@@ -670,9 +672,10 @@ public class MessageService {
 
     /**
      * D73：销售单删除/作废生效后，其关联的未终态生产任务单 → 通知生产管理员手动终止并退料。
+     * goodsDesc 为销售单成品行汇总描述（D110：如「PTO153×5、轴承×3」）。
      * 绑 biz_type=production_order + biz_id=生产单id：生产单终止/作废/报废/入库终态时随 D21 范式撤未读。
      */
-    public void sendSalesCancelledToProductionAdmins(String salesNo, String goodsName, Integer quantity,
+    public void sendSalesCancelledToProductionAdmins(String salesNo, String goodsDesc,
                                                      String orderNo, Long orderId, String cancelAction) {
         Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
         if (productionDeptId == null) {
@@ -682,10 +685,9 @@ public class MessageService {
                 productionDeptId,
                 "关联销售单已取消",
                 String.format(Locale.ROOT,
-                        "销售单 %s（成品 %s×%d）已%s，其关联的生产任务单 %s 仍未完结。请评估后手动终止该任务单（终止时系统将预填已领未退物料供退料回库）。",
+                        "销售单 %s（成品 %s）已%s，其关联的生产任务单 %s 仍未完结。请评估后手动终止该任务单（终止时系统将预填已领未退物料供退料回库）。",
                         salesNo == null ? "-" : salesNo,
-                        goodsName == null ? "-" : goodsName,
-                        quantity == null ? 0 : quantity,
+                        goodsDesc == null ? "-" : goodsDesc,
                         cancelAction == null ? "取消" : cancelAction,
                         orderNo == null ? "-" : orderNo),
                 "production_order",
@@ -733,9 +735,10 @@ public class MessageService {
 
     /**
      * 销售价偏离标准售价超阈值时通知超级管理员审批（绑 biz_type=sales，对齐 D21 范式）。
+     * deviationDesc 为偏离行描述（D110 决策④整单一笔：如「第1行 PTO153 偏离 20%；第3行 轴承 偏离 10%」）。
      * 超管 dept_id 为空，不能走部门广播，按 role=salesadmin 单点投递。
      */
-    public void sendPriceDeviationToSuperAdmin(String salesNo, String operatorName, java.math.BigDecimal deviationPct, Long salesId) {
+    public void sendPriceDeviationToSuperAdmin(String salesNo, String operatorName, String deviationDesc, Long salesId) {
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SysUser::getRole, AuthzService.ROLE_SUPERADMIN)
                 .eq(SysUser::getStatus, USER_STATUS_ENABLED)
@@ -745,15 +748,13 @@ public class MessageService {
             return;
         }
         String operator = StringUtils.hasText(operatorName) ? operatorName : "销售管理员";
-        long pct = deviationPct == null ? 0L : deviationPct.multiply(java.math.BigDecimal.valueOf(100))
-                .setScale(0, java.math.RoundingMode.HALF_UP).longValue();
         SysMessage message = new SysMessage();
         message.setRecipientUserId(superadmin.getId());
         message.setRecipientDeptId(superadmin.getDeptId());
         message.setTitle("待审批价格偏离销售单");
         message.setContent(String.format(Locale.ROOT,
-                "销售单 %s 由 %s 提交，销售价偏离标准售价 %d%%，超 5%% 阈值，请审批后仓储方可确认出库。",
-                salesNo, operator, pct));
+                "销售单 %s 由 %s 提交，销售价偏离标准售价：%s，超阈值，请审批后仓储方可确认出库。",
+                salesNo, operator, deviationDesc == null ? "-" : deviationDesc));
         message.setIsRead(MESSAGE_UNREAD);
         message.setBizType("sales");
         message.setBizId(salesId);

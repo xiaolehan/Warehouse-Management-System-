@@ -14,13 +14,15 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizSales;
-import org.example.back.entity.BizSalesReturn;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
-import org.example.back.mapper.BizSalesReturnMapper;
+import org.example.back.vo.SalesDetailVO;
+import org.example.back.vo.SalesSourceOptionLineVO;
 import org.example.back.vo.SalesSourceOptionVO;
 import org.example.back.vo.SalesVO;
 import org.springframework.beans.BeanUtils;
@@ -30,13 +32,18 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class SalesService {
@@ -54,10 +61,13 @@ public class SalesService {
     private BizSalesMapper bizSalesMapper;
 
     @Autowired
+    private BizSalesDetailMapper bizSalesDetailMapper;
+
+    @Autowired
     private BaseGoodsMapper baseGoodsMapper;
 
     @Autowired
-    private BizSalesReturnMapper bizSalesReturnMapper;
+    private SalesReturnService salesReturnService;
 
     @Autowired
     private BizPurchaseMapper bizPurchaseMapper;
@@ -107,12 +117,17 @@ public class SalesService {
 
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getSalesNo()), BizSales::getSalesNo, queryDTO.getSalesNo())
-                .like(StringUtils.hasText(queryDTO.getGoodsName()), BizSales::getGoodsName, queryDTO.getGoodsName())
                 .like(StringUtils.hasText(queryDTO.getCustomerName()), BizSales::getCustomerName, queryDTO.getCustomerName())
-                .eq(queryDTO.getGoodsId() != null, BizSales::getGoodsId, queryDTO.getGoodsId())
             .ge(startTime != null, BizSales::getOperationTime, startTime)
             .lt(endTime != null, BizSales::getOperationTime, endTime)
                 .orderByDesc(BizSales::getId);
+        // D110：商品名/商品id 过滤下沉明细行（头单已无商品字段），EXISTS 参数化防注入
+        wrapper.apply(StringUtils.hasText(queryDTO.getGoodsName()),
+                        "EXISTS (SELECT 1 FROM biz_sales_detail d WHERE d.sales_id = biz_sales.id AND d.is_deleted = 0"
+                                + " AND d.goods_name LIKE CONCAT('%', {0}, '%'))", queryDTO.getGoodsName());
+        wrapper.apply(queryDTO.getGoodsId() != null,
+                        "EXISTS (SELECT 1 FROM biz_sales_detail d WHERE d.sales_id = biz_sales.id AND d.is_deleted = 0"
+                                + " AND d.goods_id = {0})", queryDTO.getGoodsId());
 
         Page<BizSales> page = bizSalesMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizSales::getId).toList());
@@ -122,21 +137,83 @@ public class SalesService {
                 .map(item -> toVO(item, approvalMap.get(item.getId())))
                 .filter(vo -> !warehouseView || !isPriceDeviationRejected(vo))
                 .toList();
-        fillStockBatch(records); // D69：仓储出库确认页"库存不足"标红的数据来源
+        fillDetails(records); // D110：明细行 + 行级库存快照/缺货标识（仓储出库确认页标红缺货行的数据来源）
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
-    /** D69：批量填充当前库存（一次 in 查询），供列表标红缺货待确认单 */
-    private void fillStockBatch(List<SalesVO> records) {
-        List<Long> goodsIds = records.stream().map(SalesVO::getGoodsId).filter(java.util.Objects::nonNull).distinct().toList();
-        if (goodsIds.isEmpty()) {
+    public SalesVO getById(Long id) {
+        requireSalesReadAccess();
+        BizSales entity = requireEntity(id);
+        SalesVO vo = toVO(entity, resolveLatestApproval(entity.getId()));
+        // 仓储视角不可查看被驳回退回销售人员的偏离单（与列表过滤一致，防直调详情绕过）
+        if (isWarehouseView() && isPriceDeviationRejected(vo)) {
+            throw BusinessException.notFound("销售单不存在或已退回销售人员处理");
+        }
+        fillDetails(List.of(vo));
+        return vo;
+    }
+
+    /**
+     * D110：批量填充明细行（一次 in 查询）+ 行级库存快照/缺货标识 + 头汇总（均价/商品汇总描述）。
+     */
+    private void fillDetails(List<SalesVO> records) {
+        if (records.isEmpty()) {
             return;
         }
-        LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
-        wrapper.in(BaseGoods::getId, goodsIds);
-        Map<Long, Integer> stockMap = baseGoodsMapper.selectList(wrapper).stream()
-                .collect(java.util.stream.Collectors.toMap(BaseGoods::getId, g -> g.getStock() == null ? 0 : g.getStock()));
-        records.forEach(vo -> vo.setStock(stockMap.getOrDefault(vo.getGoodsId(), 0)));
+        List<Long> salesIds = records.stream().map(SalesVO::getId).toList();
+        LambdaQueryWrapper<BizSalesDetail> detailWrapper = new LambdaQueryWrapper<>();
+        detailWrapper.in(BizSalesDetail::getSalesId, salesIds)
+                .orderByAsc(BizSalesDetail::getSortNo)
+                .orderByAsc(BizSalesDetail::getId);
+        List<BizSalesDetail> details = bizSalesDetailMapper.selectList(detailWrapper);
+        List<Long> goodsIds = details.stream().map(BizSalesDetail::getGoodsId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, Integer> stockMap = goodsIds.isEmpty() ? Map.of() : baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g.getStock() == null ? 0 : g.getStock()));
+        Map<Long, List<BizSalesDetail>> bySales = details.stream()
+                .collect(Collectors.groupingBy(BizSalesDetail::getSalesId));
+        for (SalesVO vo : records) {
+            List<SalesDetailVO> lineVOs = bySales.getOrDefault(vo.getId(), List.of()).stream()
+                    .map(d -> toDetailVO(d, stockMap.getOrDefault(d.getGoodsId(), 0)))
+                    .toList();
+            vo.setDetails(lineVOs);
+            vo.setGoodsSummary(buildGoodsSummary(lineVOs));
+            vo.setAvgPrice(averagePrice(vo.getTotalAmount(), vo.getTotalQuantity()));
+        }
+    }
+
+    private SalesDetailVO toDetailVO(BizSalesDetail d, int stock) {
+        SalesDetailVO line = new SalesDetailVO();
+        line.setId(d.getId());
+        line.setSalesId(d.getSalesId());
+        line.setGoodsId(d.getGoodsId());
+        line.setGoodsName(d.getGoodsName());
+        line.setQuantity(d.getQuantity());
+        line.setUnitPrice(d.getUnitPrice());
+        line.setTotalPrice(d.getTotalPrice());
+        line.setSortNo(d.getSortNo());
+        line.setStock(stock);
+        line.setShortage(stock < d.getQuantity());
+        return line;
+    }
+
+    /** 商品汇总描述：单行显示品名，多行显示「首品名 等 N 种」（D110 决策） */
+    private String buildGoodsSummary(List<SalesDetailVO> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "-";
+        }
+        String firstName = lines.get(0).getGoodsName();
+        if (lines.size() == 1) {
+            return firstName;
+        }
+        return firstName + " 等 " + lines.size() + " 种";
+    }
+
+    private BigDecimal averagePrice(BigDecimal totalAmount, Integer totalQuantity) {
+        if (totalAmount == null || totalQuantity == null || totalQuantity <= 0) {
+            return null;
+        }
+        return totalAmount.divide(BigDecimal.valueOf(totalQuantity), 2, RoundingMode.HALF_UP);
     }
 
     /**
@@ -155,24 +232,15 @@ public class SalesService {
                 && PRICE_DEVIATION_APPROVAL_ACTION.equals(vo.getApprovalRequestAction());
     }
 
-    public SalesVO getById(Long id) {
-        requireSalesReadAccess();
-        BizSales entity = requireEntity(id);
-        SalesVO vo = toVO(entity, resolveLatestApproval(entity.getId()));
-        // 仓储视角不可查看被驳回退回销售人员的偏离单（与列表过滤一致，防直调详情绕过）
-        if (isWarehouseView() && isPriceDeviationRejected(vo)) {
-            throw BusinessException.notFound("销售单不存在或已退回销售人员处理");
-        }
-        fillStockBatch(java.util.List.of(vo));
-        return vo;
-    }
-
+    /**
+     * D110：退货来源销售单选项——按来源销售单分组，行级可退量=原行量-该行被有效退货累计。
+     * 有效退货 = 退货单正常（biz_status=1）且已确认入库（confirm_status=2）。
+     */
     public List<SalesSourceOptionVO> returnableOptions(Long goodsId) {
         requireSalesModuleAccess();
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizSales::getBizStatus, 1)
                 .eq(BizSales::getConfirmStatus, CONFIRM_SHIPPED)
-                .eq(goodsId != null, BizSales::getGoodsId, goodsId)
                 .orderByDesc(BizSales::getOperationTime)
                 .orderByDesc(BizSales::getId);
         List<BizSales> salesList = bizSalesMapper.selectList(wrapper);
@@ -181,44 +249,61 @@ public class SalesService {
         }
 
         List<Long> salesIds = salesList.stream().map(BizSales::getId).toList();
-        LambdaQueryWrapper<BizSalesReturn> returnWrapper = new LambdaQueryWrapper<>();
-        returnWrapper.in(BizSalesReturn::getSourceSalesId, salesIds)
-                .eq(BizSalesReturn::getBizStatus, 1)
-                .eq(BizSalesReturn::getConfirmStatus, SalesReturnService.CONFIRM_RECEIVED);
-        List<BizSalesReturn> linkedReturns = bizSalesReturnMapper.selectList(returnWrapper);
-
-        Map<Long, Integer> returnedMap = new HashMap<>();
-        for (BizSalesReturn item : linkedReturns) {
-            returnedMap.merge(item.getSourceSalesId(), item.getQuantity(), Integer::sum);
+        LambdaQueryWrapper<BizSalesDetail> lineWrapper = new LambdaQueryWrapper<>();
+        lineWrapper.in(BizSalesDetail::getSalesId, salesIds)
+                .eq(goodsId != null, BizSalesDetail::getGoodsId, goodsId)
+                .orderByAsc(BizSalesDetail::getSortNo)
+                .orderByAsc(BizSalesDetail::getId);
+        List<BizSalesDetail> lines = bizSalesDetailMapper.selectList(lineWrapper);
+        if (lines.isEmpty()) {
+            return List.of();
         }
 
+        Map<Long, Integer> returnedMap = salesReturnService.returnedQtyBySourceDetail(
+                lines.stream().map(BizSalesDetail::getId).toList());
+        Map<Long, List<BizSalesDetail>> linesBySales = lines.stream()
+                .collect(Collectors.groupingBy(BizSalesDetail::getSalesId));
+
         return salesList.stream()
-                .map(item -> {
-                    int returnedQty = returnedMap.getOrDefault(item.getId(), 0);
-                    int returnableQty = item.getQuantity() - returnedQty;
-                    if (returnableQty <= 0) {
+                .map(head -> {
+                    List<SalesSourceOptionLineVO> optionLines = linesBySales
+                            .getOrDefault(head.getId(), List.of()).stream()
+                            .map(line -> {
+                                int returnableQty = line.getQuantity() - returnedMap.getOrDefault(line.getId(), 0);
+                                if (returnableQty <= 0) {
+                                    return null;
+                                }
+                                SalesSourceOptionLineVO vo = new SalesSourceOptionLineVO();
+                                vo.setSalesDetailId(line.getId());
+                                vo.setGoodsId(line.getGoodsId());
+                                vo.setGoodsName(line.getGoodsName());
+                                vo.setQuantity(line.getQuantity());
+                                vo.setUnitPrice(line.getUnitPrice());
+                                vo.setReturnedQuantity(returnedMap.getOrDefault(line.getId(), 0));
+                                vo.setReturnableQuantity(returnableQty);
+                                return vo;
+                            })
+                            .filter(Objects::nonNull)
+                            .toList();
+                    if (optionLines.isEmpty()) {
                         return null;
                     }
                     SalesSourceOptionVO vo = new SalesSourceOptionVO();
-                    vo.setId(item.getId());
-                    vo.setSalesNo(item.getSalesNo());
-                    vo.setGoodsId(item.getGoodsId());
-                    vo.setGoodsName(item.getGoodsName());
-                    vo.setCustomerName(item.getCustomerName());
-                    vo.setQuantity(item.getQuantity());
-                    vo.setReturnedQuantity(returnedQty);
-                    vo.setReturnableQuantity(returnableQty);
-                    vo.setUnitPrice(item.getUnitPrice());
-                    vo.setOperationTime(item.getOperationTime());
+                    vo.setId(head.getId());
+                    vo.setSalesNo(head.getSalesNo());
+                    vo.setCustomerName(head.getCustomerName());
+                    vo.setOperationTime(head.getOperationTime());
+                    vo.setLines(optionLines);
                     return vo;
                 })
-                .filter(item -> item != null)
+                .filter(Objects::nonNull)
                 .toList();
     }
 
     /**
      * D70：生产建单关联销售单下拉——该成品「正常且待出库」的销售单（生产/销售/仓储可读）。
-     * 与 requireLinkableSalesOrder 的校验口径一致（bizStatus=1 + 待出库），仅做候选展示。
+     * D110：明细行锚定——头单正常+待出库且存在该成品的明细行；顶层 quantity 取该行数量
+     * （同一成品一单只允许一行，(头单,成品) 唯一解析），前端仍只传头单 id，零改动复用。
      */
     public List<SalesSourceOptionVO> linkableOptions(Long goodsId) {
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -229,22 +314,37 @@ public class SalesService {
         LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizSales::getBizStatus, 1)
                 .eq(BizSales::getConfirmStatus, CONFIRM_PENDING)
-                .eq(BizSales::getGoodsId, goodsId)
+                .apply("EXISTS (SELECT 1 FROM biz_sales_detail d WHERE d.sales_id = biz_sales.id AND d.is_deleted = 0"
+                        + " AND d.goods_id = {0})", goodsId)
                 .orderByDesc(BizSales::getOperationTime)
                 .orderByDesc(BizSales::getId)
                 .last("LIMIT 50");
-        return bizSalesMapper.selectList(wrapper).stream()
+        List<BizSales> salesList = bizSalesMapper.selectList(wrapper);
+        if (salesList.isEmpty()) {
+            return List.of();
+        }
+        List<Long> salesIds = salesList.stream().map(BizSales::getId).toList();
+        Map<Long, BizSalesDetail> lineBySales = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                        .in(BizSalesDetail::getSalesId, salesIds)
+                        .eq(BizSalesDetail::getGoodsId, goodsId)
+                        .orderByAsc(BizSalesDetail::getSortNo)
+                        .orderByAsc(BizSalesDetail::getId)).stream()
+                .collect(Collectors.toMap(BizSalesDetail::getSalesId, d -> d, (a, b) -> a));
+        return salesList.stream()
                 .map(item -> {
+                    BizSalesDetail line = lineBySales.get(item.getId());
+                    if (line == null) {
+                        return null;
+                    }
                     SalesSourceOptionVO vo = new SalesSourceOptionVO();
                     vo.setId(item.getId());
                     vo.setSalesNo(item.getSalesNo());
-                    vo.setGoodsId(item.getGoodsId());
-                    vo.setGoodsName(item.getGoodsName());
                     vo.setCustomerName(item.getCustomerName());
-                    vo.setQuantity(item.getQuantity());
+                    vo.setQuantity(line.getQuantity());
                     vo.setOperationTime(item.getOperationTime());
                     return vo;
                 })
+                .filter(Objects::nonNull)
                 .toList();
     }
 
@@ -252,29 +352,66 @@ public class SalesService {
     public void create(SalesSaveDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesModuleAccess();
-        validateQuantity(dto.getQuantity());
+        if (dto.getItems() == null || dto.getItems().isEmpty()) {
+            throw BusinessException.validateFail("销售明细不能为空");
+        }
+        // D110 决策①：同一成品一单只允许一行（保证生产联动可由(头单,成品)唯一解析）
+        Set<Long> goodsIds = new HashSet<>();
+        for (SalesSaveDTO.Item item : dto.getItems()) {
+            if (item.getGoodsId() == null || !goodsIds.add(item.getGoodsId())) {
+                throw BusinessException.validateFail("同一商品在一张销售单中只能有一行，请合并数量");
+            }
+        }
 
-        BaseGoods goods = requireGoods(dto.getGoodsId());
-        ensureGoodsEnabled(goods);
-        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "销售单只可选择成品（type=product）"); // D67
-        // D69：建单零库存校验（定制模式销售单=需求单，允许超卖）；库存扣减在仓储确认出库硬校验兜底
-        BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getSalePrice(), "商品售价为空，请传入销售单价");
         // D106：销售日期 = 开单时间自动生成（不接受客户端传入，不可补录；「出库日期」标签废除）
         LocalDateTime operationTime = LocalDateTime.now();
-        CostSnapshot costSnapshot = buildSalesCostSnapshot(goods.getId(), operationTime, goods.getPurchasePrice());
-
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+
+        // 逐行校验+构建明细行（先全量校验再落库，避免半张单）
+        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        List<BizSalesDetail> detailEntities = new ArrayList<>();
+        int totalQuantity = 0;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        int sortNo = 0;
+        // review 补强：最近有效进价一次批量预取（口径同 latestValidUnitPrice），避免逐行单查
+        Map<Long, BigDecimal> recentPurchasePrices = bizPurchaseMapper.latestValidUnitPrices(goodsIds, operationTime).stream()
+                .collect(Collectors.toMap(BizPurchaseMapper.LatestPurchasePrice::getGoodsId,
+                        BizPurchaseMapper.LatestPurchasePrice::getUnitPrice));
+        for (SalesSaveDTO.Item item : dto.getItems()) {
+            sortNo++;
+            BaseGoods goods = goodsMap.get(item.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("商品不存在");
+            }
+            ensureGoodsEnabled(goods);
+            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_PRODUCT, "销售单只可选择成品（type=product）"); // D67
+            BigDecimal unitPrice = resolveUnitPrice(item.getUnitPrice(), goods.getSalePrice(),
+                    "商品「" + goods.getGoodsName() + "」售价为空，请传入销售单价");
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(item.getQuantity()));
+            CostSnapshot costSnapshot = buildSalesCostSnapshot(
+                    recentPurchasePrices.get(goods.getId()), goods.getPurchasePrice());
+
+            BizSalesDetail detail = new BizSalesDetail();
+            detail.setGoodsId(goods.getId());
+            detail.setGoodsName(goods.getGoodsName());
+            detail.setQuantity(item.getQuantity());
+            detail.setUnitPrice(unitPrice);
+            detail.setCostUnitPrice(costSnapshot.unitPrice());
+            detail.setCostTotalPrice(costSnapshot.unitPrice().multiply(BigDecimal.valueOf(item.getQuantity())));
+            detail.setCostSource(costSnapshot.source());
+            detail.setTotalPrice(lineTotal);
+            detail.setSortNo(sortNo);
+            detailEntities.add(detail);
+
+            totalQuantity += item.getQuantity();
+            totalAmount = totalAmount.add(lineTotal);
+        }
 
         BizSales entity = new BizSales();
         entity.setSalesNo(CodeGenerator.salesNo());
-        entity.setGoodsId(goods.getId());
-        entity.setGoodsName(goods.getGoodsName());
-        entity.setQuantity(dto.getQuantity());
-        entity.setUnitPrice(unitPrice);
-        entity.setCostUnitPrice(costSnapshot.unitPrice());
-        entity.setCostTotalPrice(costSnapshot.unitPrice().multiply(BigDecimal.valueOf(dto.getQuantity())));
-        entity.setCostSource(costSnapshot.source());
-        entity.setTotalPrice(unitPrice.multiply(BigDecimal.valueOf(dto.getQuantity())));
+        entity.setTotalQuantity(totalQuantity);
+        entity.setTotalAmount(totalAmount);
         entity.setOperatorId(loginUser.getId());
         entity.setOperatorName(loginUser.getRealName());
         entity.setOperationTime(operationTime);
@@ -286,27 +423,63 @@ public class SalesService {
         entity.setTaxIncluded(dto.getTaxIncluded());
 
         bizSalesMapper.insert(entity);
-
-        // 价格偏离探测（D29/D30）：偏离超阈值则自动建超管审批单 + 通知超管，仓储 confirm 前置校验审批通过
-        if (isPriceDeviated(unitPrice, goods.getSalePrice())) {
-            createPriceDeviationApproval(entity, goods.getSalePrice(), unitPrice, loginUser.getRealName(), loginUser.getRole());
+        for (BizSalesDetail detail : detailEntities) {
+            detail.setSalesId(entity.getId());
+            bizSalesDetailMapper.insert(detail);
         }
 
-        // 销售下单后不立即扣库存，待仓库管理员确认出库时再扣减；同时通知仓储管理员有待确认单据
+        // 价格偏离探测（D29/D30，D110 决策④整单一笔）：任一行偏离即建一张审批单，request_reason 列出偏离行
+        List<String> deviationDescs = buildDeviationDescs(detailEntities, goodsMap);
+        if (!deviationDescs.isEmpty()) {
+            createPriceDeviationApproval(entity, deviationDescs, loginUser.getRealName(), loginUser.getRole());
+        }
+
+        // 销售下单后不立即扣库存，待仓库管理员确认出库时再按行扣减；同时通知仓储管理员有待确认单据
         messageService.sendSalesPendingConfirmToWarehouseAdmins(
                 entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName(), entity.getId());
 
-        // D70 销售需求联动：现货不足（含超卖）→ 通知生产管理员有销售需求待排产（biz 绑定本单，删/作废/出库撤未读）
-        int available = goods.getStock() == null ? 0 : goods.getStock();
-        if (dto.getQuantity() > available) {
+        // D70/D110 决策⑤：缺货行按单汇总一条消息通知生产管理员（不再逐行刷屏）
+        List<String> shortageDescs = new ArrayList<>();
+        for (BizSalesDetail detail : detailEntities) {
+            BaseGoods goods = goodsMap.get(detail.getGoodsId());
+            int available = goods.getStock() == null ? 0 : goods.getStock();
+            if (detail.getQuantity() > available) {
+                shortageDescs.add(detail.getGoodsName() + "×" + detail.getQuantity() + "（现存 " + available + "）");
+            }
+        }
+        if (!shortageDescs.isEmpty()) {
             messageService.sendSalesDemandToProductionAdmins(
-                    entity.getSalesNo(), entity.getGoodsName(), entity.getQuantity(), available,
+                    entity.getSalesNo(), String.join("、", shortageDescs),
                     entity.getCustomerName(), loginUser.getRealName(), entity.getId());
         }
     }
 
     /**
-     * 仓储管理员确认销售单出库：扣减库存，状态由待确认转为已确认出库。
+     * D110 决策④：逐行对照标准售价判偏离，返回「第N行 品名 偏离 X%」描述列表。
+     */
+    private List<String> buildDeviationDescs(List<BizSalesDetail> details, Map<Long, BaseGoods> goodsMap) {
+        List<String> descs = new ArrayList<>();
+        int lineNo = 0;
+        for (BizSalesDetail detail : details) {
+            lineNo++;
+            BaseGoods goods = goodsMap.get(detail.getGoodsId());
+            if (isPriceDeviated(detail.getUnitPrice(), goods.getSalePrice())) {
+                descs.add("第" + lineNo + "行 " + detail.getGoodsName()
+                        + " 偏离 " + deviationRatio(detail.getUnitPrice(), goods.getSalePrice())
+                        .multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP) + "%");
+            }
+        }
+        return descs;
+    }
+
+    private BigDecimal deviationRatio(BigDecimal unitPrice, BigDecimal standardSalePrice) {
+        return unitPrice.subtract(standardSalePrice).abs()
+                .divide(standardSalePrice, 4, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 仓储管理员确认销售单出库（D110 决策②整单一次确认）：逐行条件扣库存，
+     * 任一行不足整单失败回滚并提示缺货行；不出现部分出库。
      */
     @Transactional(rollbackFor = Exception.class)
     public void confirm(Long id) {
@@ -319,10 +492,14 @@ public class SalesService {
             throw BusinessException.validateFail("销售单已确认出库，禁止重复确认");
         }
 
-        // 价格偏离前置门闸（D29）：偏离订单需存在已通过的价格偏离审批单，否则仓储不可确认出库
+        // 价格偏离前置门闸（D29/D110 决策④）：偏离订单需存在已通过的价格偏离审批单（整单级）
         ensurePriceDeviationApproved(entity);
 
-        decreaseStock(entity.getGoodsId(), entity.getQuantity(), "库存不足，确认出库失败");
+        List<BizSalesDetail> details = requireDetails(entity.getId());
+        for (BizSalesDetail detail : details) {
+            decreaseStock(detail.getGoodsId(), detail.getQuantity(),
+                    "库存不足，确认出库失败（" + detail.getGoodsName() + " 需 " + detail.getQuantity() + "）");
+        }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LocalDateTime now = LocalDateTime.now();
@@ -350,9 +527,11 @@ public class SalesService {
         ensureNormalStatus(entity.getBizStatus(), "销售单");
         validateDeleteWindow(entity.getOperationTime(), "销售单");
         ensureCanDeleteSales(entity);
-        // 仅已确认出库（已扣库存）的销售单删除时需回补库存；待确认单据尚未扣库存，直接删除
+        // 仅已确认出库（已扣库存）的销售单删除时需按行回补库存；待确认单据尚未扣库存，直接删除
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
-            increaseStock(entity.getGoodsId(), entity.getQuantity());
+            for (BizSalesDetail detail : requireDetails(entity.getId())) {
+                increaseStock(detail.getGoodsId(), detail.getQuantity());
+            }
         }
         // 撤销该单未读待确认消息（待确认单被删除后，仓储侧不再有悬挂通知）
         messageService.revokeUnreadByBiz("sales", id);
@@ -360,6 +539,11 @@ public class SalesService {
         revokePriceDeviationApprovals(id);
         notifyLinkedProductionOrderIfUnfinished(entity, "删除");
         bizSalesMapper.deleteById(id);
+        // review 补强：级联软删明细行——GoodsReferenceService 按明细行统计成品引用，
+        // 头删行留会让该成品永久无法删除（对齐 PurchaseRequestService.delete 的级联口径）
+        LambdaQueryWrapper<BizSalesDetail> detailWrapper = new LambdaQueryWrapper<>();
+        detailWrapper.eq(BizSalesDetail::getSalesId, id);
+        bizSalesDetailMapper.delete(detailWrapper);
     }
 
     /**
@@ -388,16 +572,28 @@ public class SalesService {
     /**
      * D73：销售单删除/作废生效后，若存在关联的未终态生产任务单 → 通知生产管理员手动终止+退料。
      * 已完工/已作废/已报废/已终止的生产单不打扰（SQL 层 in 过滤）；关联保留，生产端列表标注"已取消"。
+     * D110：消息中的成品描述按明细行汇总（PTO153×5、轴承×3）。
      */
     private void notifyLinkedProductionOrderIfUnfinished(BizSales entity, String cancelAction) {
         LambdaQueryWrapper<BizProductionOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizProductionOrder::getSalesOrderId, entity.getId())
                 .in(BizProductionOrder::getStatus, BizProductionOrder.UNFINISHED_STATUSES);
-        for (BizProductionOrder order : bizProductionOrderMapper.selectList(wrapper)) {
-            messageService.sendSalesCancelledToProductionAdmins(
-                    entity.getSalesNo(), entity.getGoodsName(), entity.getQuantity(),
-                    order.getOrderNo(), order.getId(), cancelAction);
+        List<BizProductionOrder> orders = bizProductionOrderMapper.selectList(wrapper);
+        if (orders.isEmpty()) {
+            return;
         }
+        String goodsDesc = describeLines(requireDetails(entity.getId()));
+        for (BizProductionOrder order : orders) {
+            messageService.sendSalesCancelledToProductionAdmins(
+                    entity.getSalesNo(), goodsDesc, order.getOrderNo(), order.getId(), cancelAction);
+        }
+    }
+
+    /** D110：行序列描述「PTO153×5、轴承×3」（跨部门消息汇总文案用） */
+    private String describeLines(List<BizSalesDetail> details) {
+        return details.stream()
+                .map(d -> d.getGoodsName() + "×" + d.getQuantity())
+                .collect(Collectors.joining("、"));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -429,36 +625,15 @@ public class SalesService {
         // 撤销价格偏离审批待办（单据已作废，超管不再需要审批）
         revokePriceDeviationApprovals(id);
 
-        // 仅已确认出库（已扣库存）的销售单作废时需回补库存；待确认单据尚未扣库存，不回补
-        boolean shipped = entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED;
-        if (shipped) {
-            increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // 仅已确认出库（已扣库存）的销售单作废时需按行回补库存；待确认单据尚未扣库存，不回补
+        // D110 决策⑨：红冲死代码不再随头行改造移植（D99 已封死入口），直接移除
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
+            for (BizSalesDetail detail : requireDetails(entity.getId())) {
+                increaseStock(detail.getGoodsId(), detail.getQuantity());
+            }
         }
-        // D73：作废生效后通知关联未终态生产任务单（stock 回补之后、红冲之前）
+        // D73：作废生效后通知关联未终态生产任务单（库存回补之后）
         notifyLinkedProductionOrderIfUnfinished(entity, "作废");
-
-        if (shipped && dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
-            LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-            BizSales redFlushDoc = new BizSales();
-            redFlushDoc.setSalesNo(CodeGenerator.salesNo());
-            redFlushDoc.setGoodsId(entity.getGoodsId());
-            redFlushDoc.setGoodsName(entity.getGoodsName());
-            redFlushDoc.setQuantity(-entity.getQuantity());
-            redFlushDoc.setUnitPrice(entity.getUnitPrice());
-            redFlushDoc.setCostUnitPrice(entity.getCostUnitPrice());
-            redFlushDoc.setCostTotalPrice(entity.getCostTotalPrice() == null ? null : entity.getCostTotalPrice().negate());
-            redFlushDoc.setCostSource(entity.getCostSource());
-            redFlushDoc.setTotalPrice(entity.getTotalPrice().negate());
-            redFlushDoc.setOperatorId(loginUser.getId());
-            redFlushDoc.setOperatorName(loginUser.getRealName());
-            redFlushDoc.setOperationTime(now);
-            redFlushDoc.setRemark("红冲来源:" + entity.getSalesNo());
-            redFlushDoc.setBizStatus(3);
-            redFlushDoc.setConfirmStatus(CONFIRM_SHIPPED);
-            redFlushDoc.setSourceId(entity.getId());
-            redFlushDoc.setVoidReason(reason);
-            bizSalesMapper.insert(redFlushDoc);
-        }
     }
 
     private void requireSalesVoidExecutionAccess() {
@@ -479,12 +654,16 @@ public class SalesService {
         return entity;
     }
 
-    private BaseGoods requireGoods(Long goodsId) {
-        BaseGoods goods = baseGoodsMapper.selectById(goodsId);
-        if (goods == null) {
-            throw BusinessException.validateFail("商品不存在");
+    /** D110：加载销售单明细行（按 sort_no 稳定排序）；缺失视为数据异常拦截 */
+    private List<BizSalesDetail> requireDetails(Long salesId) {
+        List<BizSalesDetail> details = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                .eq(BizSalesDetail::getSalesId, salesId)
+                .orderByAsc(BizSalesDetail::getSortNo)
+                .orderByAsc(BizSalesDetail::getId));
+        if (details.isEmpty()) {
+            throw BusinessException.validateFail("销售单缺少明细行，无法执行该操作");
         }
-        return goods;
+        return details;
     }
 
     private void ensureGoodsEnabled(BaseGoods goods) {
@@ -540,12 +719,6 @@ public class SalesService {
         };
     }
 
-    private void validateQuantity(Integer quantity) {
-        if (quantity == null || quantity <= 0) {
-            throw BusinessException.validateFail("数量必须大于0");
-        }
-    }
-
     private BigDecimal resolveUnitPrice(BigDecimal inputPrice, BigDecimal fallbackPrice, String emptyPriceMsg) {
         BigDecimal finalPrice = inputPrice == null ? fallbackPrice : inputPrice;
         if (finalPrice == null) {
@@ -557,10 +730,9 @@ public class SalesService {
         return finalPrice;
     }
 
-    private CostSnapshot buildSalesCostSnapshot(Long goodsId, LocalDateTime bizTime, BigDecimal fallbackPurchasePrice) {
-        BigDecimal purchasePrice = bizPurchaseMapper.latestValidUnitPrice(goodsId, bizTime);
-        if (purchasePrice != null && purchasePrice.compareTo(BigDecimal.ZERO) > 0) {
-            return new CostSnapshot(purchasePrice, "RECENT_PURCHASE");
+    private CostSnapshot buildSalesCostSnapshot(BigDecimal recentPurchasePrice, BigDecimal fallbackPurchasePrice) {
+        if (recentPurchasePrice != null && recentPurchasePrice.compareTo(BigDecimal.ZERO) > 0) {
+            return new CostSnapshot(recentPurchasePrice, "RECENT_PURCHASE");
         }
         if (fallbackPurchasePrice != null && fallbackPurchasePrice.compareTo(BigDecimal.ZERO) > 0) {
             return new CostSnapshot(fallbackPurchasePrice, "GOODS_PRICE");
@@ -612,8 +784,6 @@ public class SalesService {
         SalesVO vo = new SalesVO();
         BeanUtils.copyProperties(entity, vo);
         LocalDateTime bizTime = entity.getOperationTime() == null ? entity.getCreateTime() : entity.getOperationTime();
-        vo.setSalesPrice(entity.getUnitPrice());
-        vo.setTotalAmount(entity.getTotalPrice());
         vo.setOperationTime(bizTime);
         vo.setSalesDate(bizTime);
         vo.setOperator(entity.getOperatorName());
@@ -632,7 +802,7 @@ public class SalesService {
     private record CostSnapshot(BigDecimal unitPrice, String source) {
     }
 
-    // ============================== 价格偏离审批（D29/D30） ==============================
+    // ============================== 价格偏离审批（D29/D30，D110 决策④整单一笔） ==============================
 
     /**
      * 判断销售价是否偏离标准售价超阈值（阈值由超管配置，默认 5%）。
@@ -645,27 +815,22 @@ public class SalesService {
         if (unitPrice == null || unitPrice.compareTo(BigDecimal.ZERO) <= 0) {
             return false;
         }
-        BigDecimal diff = unitPrice.subtract(standardSalePrice).abs();
-        BigDecimal ratio = diff.divide(standardSalePrice, 4, java.math.RoundingMode.HALF_UP);
-        return ratio.compareTo(sysConfigService.getPriceDeviationThreshold()) > 0;
+        return deviationRatio(unitPrice, standardSalePrice).compareTo(sysConfigService.getPriceDeviationThreshold()) > 0;
     }
 
     /**
-     * 建价格偏离超管审批单（biz_type=sales, action=price_deviation_confirm, status=pending）。
-     * 复用 biz_approval_order 的快照与 pending 唯一约束。
+     * 建价格偏离超管审批单（biz_type=sales, action=price_deviation_confirm, status=pending；整单一笔）。
+     * request_reason 列出全部偏离行（行号+成品+偏离幅度）；超管一次批准/驳回整单。
      */
-    private void createPriceDeviationApproval(BizSales entity, BigDecimal standardSalePrice, BigDecimal unitPrice, String operatorName, String operatorRole) {
+    private void createPriceDeviationApproval(BizSales entity, List<String> deviationDescs, String operatorName, String operatorRole) {
         BizApprovalOrder approval = new BizApprovalOrder();
         approval.setApprovalNo(CodeGenerator.approvalNo());
         approval.setBizType("sales");
         approval.setBizId(entity.getId());
         approval.setBizNo(entity.getSalesNo());
         approval.setRequestAction(PRICE_DEVIATION_APPROVAL_ACTION);
-        BigDecimal ratio = standardSalePrice.compareTo(BigDecimal.ZERO) > 0
-                ? unitPrice.subtract(standardSalePrice).abs().divide(standardSalePrice, 4, java.math.RoundingMode.HALF_UP)
-                : BigDecimal.ZERO;
-        BigDecimal thresholdPct = sysConfigService.getPriceDeviationThreshold().multiply(BigDecimal.valueOf(100)).setScale(0, java.math.RoundingMode.HALF_UP);
-        approval.setRequestReason("销售价偏离标准售价 " + ratio.multiply(BigDecimal.valueOf(100)).setScale(0, java.math.RoundingMode.HALF_UP) + "%，超 " + thresholdPct + "% 阈值，需超管审批");
+        BigDecimal thresholdPct = sysConfigService.getPriceDeviationThreshold().multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP);
+        approval.setRequestReason("销售价偏离标准售价（" + String.join("；", deviationDescs) + "），超 " + thresholdPct + "% 阈值，需超管审批");
         approval.setBeforeBizStatus(entity.getBizStatus());
         approval.setAfterBizStatus(entity.getBizStatus());
         approval.setStatus(1);
@@ -678,11 +843,11 @@ public class SalesService {
             // pending 唯一约束：已存在待审批，忽略（避免重复建单时报错）
             return;
         }
-        messageService.sendPriceDeviationToSuperAdmin(entity.getSalesNo(), operatorName, ratio, entity.getId());
+        messageService.sendPriceDeviationToSuperAdmin(entity.getSalesNo(), operatorName, String.join("；", deviationDescs), entity.getId());
     }
 
     /**
-     * confirm 前置校验：偏离订单必须存在已通过（status=2）的价格偏离审批单，否则拦截。
+     * confirm 前置校验：偏离订单必须存在已通过（status=2）的价格偏离审批单（整单级），否则拦截。
      * 非偏离订单（无偏离审批单记录）直接放行。
      */
     private void ensurePriceDeviationApproved(BizSales entity) {

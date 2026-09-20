@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 /**
  * 销售记录 Mapper 接口,数据库操作接口
+ * D110 头行结构：金额/数量/成本/商品维度统计全部下沉到 biz_sales_detail 行聚合（JOIN 头表供时间/状态过滤）。
  */
 public interface BizSalesMapper extends BaseMapper<BizSales> {
 	@Select("SELECT MIN(operation_time) FROM biz_sales WHERE is_deleted = 0 AND confirm_status = 2")
@@ -26,12 +27,13 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT COALESCE(SUM(total_price), 0)
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
+			SELECT COALESCE(SUM(d.total_price), 0)
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			</script>
 			""")
 	BigDecimal sumSalesAmount(@Param("startTime") LocalDateTime startTime,
@@ -39,12 +41,13 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT COALESCE(SUM(quantity), 0)
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
+			SELECT COALESCE(SUM(d.quantity), 0)
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			</script>
 			""")
 	Long sumSalesQuantity(@Param("startTime") LocalDateTime startTime,
@@ -52,13 +55,14 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT COALESCE(SUM(total_price), 0)
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND biz_status = 1
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
+			SELECT COALESCE(SUM(d.total_price), 0)
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			</script>
 			""")
 	BigDecimal sumValidSalesAmount(@Param("startTime") LocalDateTime startTime,
@@ -66,13 +70,14 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT COALESCE(SUM(quantity), 0)
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND biz_status = 1
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
+			SELECT COALESCE(SUM(d.quantity), 0)
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
 			</script>
 			""")
 	Long sumValidSalesQuantity(@Param("startTime") LocalDateTime startTime,
@@ -80,9 +85,10 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT COALESCE(SUM(COALESCE(s.cost_total_price, 0)), 0)
-			FROM biz_sales s
-			WHERE s.is_deleted = 0
+			SELECT COALESCE(SUM(COALESCE(d.cost_total_price, 0)), 0)
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -94,13 +100,14 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT goods_name AS name, SUM(quantity) AS quantity
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
-			GROUP BY goods_id, goods_name
+			SELECT d.goods_name AS name, SUM(d.quantity) AS quantity
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
+			GROUP BY d.goods_id, d.goods_name
 			ORDER BY quantity DESC
 			LIMIT 5
 			</script>
@@ -111,10 +118,11 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 	@Select("""
 			<script>
 			SELECT COALESCE(NULLIF(TRIM(bg.brand), ''), '未标注品牌') AS name,
-				   SUM(s.total_price) AS amount
-			FROM biz_sales s
-			LEFT JOIN base_goods bg ON s.goods_id = bg.id
-			WHERE s.is_deleted = 0
+			       SUM(d.total_price) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			LEFT JOIN base_goods bg ON d.goods_id = bg.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
 			  AND s.confirm_status = 2
 			  AND (bg.is_deleted = 0 OR bg.id IS NULL)
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -128,15 +136,16 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 
 	@Select("""
 			<script>
-			SELECT DATE(operation_time) AS stat_date,
-				   SUM(total_price) AS amount
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND confirm_status = 2
-			  AND operation_time <![CDATA[>=]]> #{startTime}
-			  AND operation_time <![CDATA[<]]> #{endTime}
-			GROUP BY DATE(operation_time)
-			ORDER BY DATE(operation_time)
+			SELECT DATE(s.operation_time) AS stat_date,
+			       SUM(d.total_price) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.confirm_status = 2
+			  AND s.operation_time <![CDATA[>=]]> #{startTime}
+			  AND s.operation_time <![CDATA[<]]> #{endTime}
+			GROUP BY DATE(s.operation_time)
+			ORDER BY DATE(s.operation_time)
 			</script>
 			""")
 	List<DailyAmountAgg> dailySalesAmount(@Param("startTime") LocalDateTime startTime,
@@ -145,10 +154,11 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 	@Select("""
 			<script>
 			SELECT COALESCE(NULLIF(TRIM(bg.brand), ''), '未标注品牌') AS name,
-			       SUM(s.total_price - COALESCE(s.cost_total_price, 0)) AS amount
-			FROM biz_sales s
-			LEFT JOIN base_goods bg ON s.goods_id = bg.id
-			WHERE s.is_deleted = 0
+			       SUM(d.total_price - COALESCE(d.cost_total_price, 0)) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			LEFT JOIN base_goods bg ON d.goods_id = bg.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -157,14 +167,15 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			</script>
 			""")
 	List<BrandAmountAgg> brandGrossProfitPart(@Param("startTime") LocalDateTime startTime,
-									   @Param("endTime") LocalDateTime endTime);
+								   @Param("endTime") LocalDateTime endTime);
 
 	@Select("""
 			<script>
 			SELECT DATE(s.operation_time) AS stat_date,
-			       SUM(s.total_price) AS amount
-			FROM biz_sales s
-			WHERE s.is_deleted = 0
+			       SUM(d.total_price) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -179,9 +190,10 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 	@Select("""
 			<script>
 			SELECT DATE(s.operation_time) AS stat_date,
-			       SUM(COALESCE(s.cost_total_price, 0)) AS amount
-			FROM biz_sales s
-			WHERE s.is_deleted = 0
+			       SUM(COALESCE(d.cost_total_price, 0)) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -196,22 +208,24 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 	// ============================== 年度经营统计（ADR-0008） ==============================
 
 	@Select("""
-			SELECT YEAR(operation_time) AS stat_year, SUM(total_price) AS amount
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND biz_status = 1
-			  AND confirm_status = 2
-			GROUP BY YEAR(operation_time)
+			SELECT YEAR(s.operation_time) AS stat_year, SUM(d.total_price) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
+			GROUP BY YEAR(s.operation_time)
 			""")
 	List<YearAmountAgg> yearlyValidSalesAmount();
 
 	@Select("""
-			SELECT YEAR(operation_time) AS stat_year, SUM(COALESCE(cost_total_price, 0)) AS amount
-			FROM biz_sales
-			WHERE is_deleted = 0
-			  AND biz_status = 1
-			  AND confirm_status = 2
-			GROUP BY YEAR(operation_time)
+			SELECT YEAR(s.operation_time) AS stat_year, SUM(COALESCE(d.cost_total_price, 0)) AS amount
+			FROM biz_sales_detail d
+			JOIN biz_sales s ON d.sales_id = s.id
+			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND s.biz_status = 1
+			  AND s.confirm_status = 2
+			GROUP BY YEAR(s.operation_time)
 			""")
 	List<YearAmountAgg> yearlyValidSalesCost();
 

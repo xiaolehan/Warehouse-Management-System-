@@ -4,7 +4,11 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * 销售单 VO（D110 头行结构）：头汇总 + 明细行列表。
+ */
 @Data
 public class SalesVO {
 
@@ -12,19 +16,17 @@ public class SalesVO {
 
     private String salesNo;
 
-    private Long goodsId;
-
-    private String goodsName;
-
-    private Integer quantity;
-
-    private BigDecimal unitPrice;
-
-    private BigDecimal salesPrice;
-
-    private BigDecimal totalPrice;
+    private Integer totalQuantity;
 
     private BigDecimal totalAmount;
+
+    /** 均价 = totalAmount / totalQuantity（单行时即行单价，列表展示用） */
+    private BigDecimal avgPrice;
+
+    /** 商品汇总描述：单行 "PTO153"，多行 "PTO153 等 3 种" */
+    private String goodsSummary;
+
+    private List<SalesDetailVO> details;
 
     private LocalDateTime operationTime;
 
@@ -69,9 +71,6 @@ public class SalesVO {
     private Integer isDeleted;
 
     private Integer approvalStatus;
-
-    /** D69：当前库存快照（列表批量填充），仓储出库确认页据此标红"库存不足"的待确认单 */
-    private Integer stock;
 
     private String approvalRequestAction;
 

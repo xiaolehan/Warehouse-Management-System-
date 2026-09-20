@@ -40,18 +40,22 @@
       <el-table :data="tableData" border style="width: 100%" v-loading="loading" :row-class-name="shortageRowClass">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="salesNo" label="销售单号" width="150" />
-        <el-table-column prop="goodsName" label="出库商品" />
+        <!-- D110：一单 N 个成品行，列表汇总展示「首品名 等 N 种」，明细进详情 -->
+        <el-table-column prop="goodsSummary" label="出库商品" min-width="160" show-overflow-tooltip />
         <el-table-column prop="customerName" label="客户公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-        <el-table-column prop="quantity" label="销售数量" width="100" />
-        <!-- D69：仓储视角当前库存列——待确认且缺货的行标红，提示先协调生产/采购再确认出库 -->
-        <el-table-column v-if="isWarehouseUser" label="当前库存" width="130">
+        <el-table-column prop="totalQuantity" label="销售数量" width="100" />
+        <!-- D110：仓储视角行级缺货标识——任一明细行缺货即整单标红并汇总展示（出库整单硬校验） -->
+        <!-- 仅待出库单展示（review 修复）：已确认出库/作废单的 shortage 是当前库存回看，不代表仍未交付 -->
+        <el-table-column v-if="isWarehouseUser" label="缺货明细" width="220">
           <template #default="scope">
-            <span v-if="isShortageRow(scope.row)" class="stock-shortage-text">库存不足（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</span>
-            <span v-else>{{ scope.row.stock ?? '—' }}</span>
+            <span v-if="isShortageRow(scope.row)" class="stock-shortage-text">
+              {{ shortageLines(scope.row).map((d) => `${d.goodsName} 需${d.quantity}/现存${d.stock ?? 0}`).join('；') }}
+            </span>
+            <span v-else>—</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="showPrice" prop="salesPrice" label="销售均价(元)" width="120" />
+        <el-table-column v-if="showPrice" prop="avgPrice" label="销售均价(元)" width="120" />
         <el-table-column v-if="showPrice" prop="totalAmount" label="销售总额(元)" width="120" />
         <el-table-column v-if="showPrice" label="是否含税" width="100" align="center">
           <template #default="scope">
@@ -147,47 +151,126 @@
       </div>
     </el-card>
 
-    <el-dialog :title="dialogType === 'view' ? '销售单详情' : '新增销售单'" v-model="dialogVisible" width="500px">
-      <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
-        <el-form-item label="客户公司名" prop="customerName">
-          <el-input v-model="dialogForm.customerName" placeholder="请输入客户公司名（可选）"></el-input>
+    <el-dialog :title="dialogType === 'view' ? '销售单详情' : '新增销售单'" v-model="dialogVisible" width="760px">
+      <!-- D110：详情=头信息 + 明细行表；新增=多明细行编辑（同一成品一单只允许一行） -->
+      <el-form v-if="dialogType === 'view'" :model="viewForm" label-width="100px" disabled>
+        <el-row :gutter="16">
+          <el-col :span="12"><el-form-item label="销售单号"><el-input :value="viewForm.salesNo" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="客户公司名"><el-input :value="viewForm.customerName" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="合同编号"><el-input :value="viewForm.contractNo" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="销售日期"><el-input :value="viewForm.salesDate" /></el-form-item></el-col>
+          <el-col v-if="showPrice" :span="12"><el-form-item label="销售总额"><el-input :value="viewForm.totalAmount"><template #append>元</template></el-input></el-form-item></el-col>
+          <el-col v-if="showPrice" :span="12"><el-form-item label="销售均价"><el-input :value="viewForm.avgPrice"><template #append>元</template></el-input></el-form-item></el-col>
+          <el-col v-if="showPrice" :span="12">
+            <el-form-item label="是否含税">
+              <el-input :value="Number(viewForm.taxIncluded) === 1 ? '含税' : '不含税'" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" /></el-form-item></el-col>
+          <el-col :span="24"><el-form-item label="备注"><el-input :value="viewForm.remark" type="textarea" :rows="2" /></el-form-item></el-col>
+        </el-row>
+      </el-form>
+      <el-form v-if="dialogType === 'view'" label-width="100px">
+        <el-form-item label="成品明细">
+          <el-table :data="viewForm.details" size="small" border style="width: 100%">
+            <el-table-column type="index" label="#" width="50" align="center" />
+            <el-table-column prop="goodsName" label="成品" min-width="140" />
+            <el-table-column prop="quantity" label="数量" width="80" align="center" />
+            <el-table-column v-if="showPrice" prop="unitPrice" label="销售单价(元)" width="110" />
+            <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />
+            <el-table-column v-if="isWarehouseUser" label="库存/缺货" width="170">
+              <template #default="scope">
+                <el-tag v-if="scope.row.shortage" type="danger" size="small">缺货（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</el-tag>
+                <span v-else>库存 {{ scope.row.stock ?? '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-form-item>
-        <el-form-item label="合同编号" prop="contractNo">
-          <el-input v-model="dialogForm.contractNo" placeholder="请输入合同编号（可选）"></el-input>
+      </el-form>
+
+      <el-form v-if="dialogType !== 'view'" ref="dialogFormRef" :model="dialogForm" label-width="100px">
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="客户公司名">
+              <el-input v-model="dialogForm.customerName" placeholder="请输入客户公司名（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="合同编号">
+              <el-input v-model="dialogForm.contractNo" placeholder="请输入合同编号（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="成品明细" required>
+          <div class="items-editor">
+            <el-table :data="dialogForm.items" size="small" border style="width: 100%">
+              <el-table-column type="index" label="#" width="50" align="center" />
+              <el-table-column label="成品" min-width="180">
+                <template #default="scope">
+                  <el-select v-model="scope.row.goodsId" placeholder="选择成品" style="width: 100%" filterable @change="onGoodsSelected(scope.row)">
+                    <el-option
+                      v-for="g in availableGoods(scope.$index)"
+                      :key="g.id"
+                      :label="`${g.name}（库存 ${g.stock || 0}${g.unit ? ' ' + g.unit : ''}）`"
+                      :value="g.id"
+                    />
+                  </el-select>
+                  <div v-if="lineStock(scope.row) !== null" class="stock-hint">
+                    当前库存：{{ lineStock(scope.row) }} {{ lineUnit(scope.row) }}<span v-if="lineSalePrice(scope.row)"> ｜ 标准售价：¥{{ lineSalePrice(scope.row) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="130">
+                <template #default="scope">
+                  <el-input-number v-model="scope.row.quantity" :min="1" style="width: 100%" />
+                </template>
+              </el-table-column>
+              <el-table-column v-if="showPrice" label="销售单价" width="160">
+                <template #default="scope">
+                  <el-input-number v-model="scope.row.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="70" align="center">
+                <template #default="scope">
+                  <el-button
+                    size="small"
+                    type="danger"
+                    link
+                    :disabled="dialogForm.items.length <= 1"
+                    @click="dialogForm.items.splice(scope.$index, 1)"
+                  >
+                    删除
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="items-editor-footer">
+              <el-button size="small" :icon="Plus" @click="addItemRow">添加成品行</el-button>
+              <span class="items-editor-hint">同一成品一张销售单只能有一行，多件请合并数量</span>
+            </div>
+            <div v-for="(hint, idx) in lineHints" :key="idx" class="line-hints">
+              <div v-if="hint.shortage" class="shortage-hint">⚠ 第{{ idx + 1 }}行库存不足（需 {{ hint.quantity }} / 现存 {{ hint.stock }}），建单后将通知生产排产</div>
+              <div v-if="hint.deviated" class="price-deviation-hint">⚠ 第{{ idx + 1 }}行销售价偏离标准售价 {{ hint.deviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，整单提交后将需超管审批后仓储方可确认出库</div>
+            </div>
+          </div>
         </el-form-item>
-        <el-form-item label="出库商品" prop="goodsId">
-          <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
-            <el-option v-for="item in goodsOptions" :key="item.id" :label="`${item.name}（库存 ${item.stock || 0}${item.unit ? ' ' + item.unit : ''}）`" :value="item.id" />
-          </el-select>
-          <div v-if="selectedStock !== null" class="stock-hint">当前库存：{{ selectedStock }} {{ selectedUnit }}<span v-if="selectedSalePrice"> ｜ 标准售价：¥{{ selectedSalePrice }}</span></div>
-        </el-form-item>
-        <el-form-item label="备注" prop="remark">
-          <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
-        </el-form-item>
-        <el-form-item label="出库数量" prop="quantity">
-          <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
-          <!-- D69：缺货提示（不拦截建单），现货不足将通知生产管理员排产 -->
-          <div v-if="isShortage" class="shortage-hint">⚠ 当前库存不足（需 {{ dialogForm.quantity }} / 现存 {{ selectedStock }}），建单后将通知生产排产，可在详情查看履约进度</div>
-        </el-form-item>
-        <el-form-item v-if="showPrice" label="销售单价" prop="unitPrice">
-          <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
-          <div v-if="isPriceDeviated" class="price-deviation-hint">⚠ 销售价偏离标准售价 {{ priceDeviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，提交后将需超管审批后仓储方可确认出库</div>
-        </el-form-item>
-        <el-form-item v-if="showPrice" label="是否含税" prop="taxIncluded">
+        <el-form-item v-if="showPrice" label="是否含税">
           <el-radio-group v-model="dialogForm.taxIncluded">
             <el-radio :value="1">含税</el-radio>
             <el-radio :value="0">不含税</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="showPrice" label="销售总额" prop="totalAmount">
+        <el-form-item v-if="showPrice" label="销售总额">
           <el-input :value="totalAmountText" disabled>
             <template #append>元</template>
           </el-input>
         </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="dialogForm.remark" placeholder="请输入备注说明"></el-input>
+        </el-form-item>
         <!-- D106：销售日期 = 开单时间自动生成，删除原「出库日期」选择器（不可补录/不可改） -->
         <el-form-item label="销售日期">
-          <el-input v-if="dialogType === 'view'" :value="dialogForm.salesDate" disabled />
-          <div v-else class="sales-date-hint">开单时自动生成（当前时间），不可选择</div>
+          <div class="sales-date-hint">开单时自动生成（当前时间），不可选择</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -196,7 +279,7 @@
           <el-button v-if="dialogType !== 'view'" type="primary" :icon="Check" @click="submitForm">确定新增</el-button>
         </span>
       </template>
-      <!-- D71：履约时间线（类淘宝物流），仅详情态展示 -->
+      <!-- D71/D110：履约时间线按明细行逐行展示（类淘宝物流），仅详情态展示 -->
       <SalesTimeline v-if="dialogType === 'view' && dialogVisible" :sales-id="currentViewId" />
     </el-dialog>
 
@@ -213,7 +296,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
+import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
@@ -243,16 +326,16 @@ const isSalesAdmin = userRole === 'admin' && userDept === 'sales'
 const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
 const voidStockEffect = computed(() => {
   const row = voidTarget.value
-  // 已确认出库的销售单，作废审批通过后须把发出去的货补回来
+  // 已确认出库的销售单，作废审批通过后须把发出去的货补回来（D110：按明细行回补，提示按汇总）
   if (!row || Number(row.confirmStatus) !== 2) return null
-  return { goodsName: row.goodsName, quantity: row.quantity, mode: 'return' }
+  return { goodsName: row.goodsSummary || '多成品', quantity: row.totalQuantity, mode: 'return' }
 })
 // D36：销售金额列仅销售部门可见（售价）；仓储看库存不看价格；超管全见
 const showPrice = userDept === 'sales' || isSuperAdmin(userRole)
-// D69：仓储视角展示当前库存列并标红缺货待确认单
+// D110：仓储视角展示行级缺货明细并整单标红
 const isWarehouseUser = userDept === 'warehouse'
-const isShortageRow = (row) =>
-  Number(row?.confirmStatus) === 1 && !isBizDocumentDeleted(row) && Number(row?.quantity) > Number(row?.stock ?? 0)
+const shortageLines = (row) => (row?.details || []).filter((d) => d.shortage)
+const isShortageRow = (row) => Number(row?.confirmStatus) === 1 && !isBizDocumentDeleted(row) && shortageLines(row).length > 0
 const shortageRowClass = ({ row }) => (isWarehouseUser && isShortageRow(row) ? 'shortage-row' : '')
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -266,44 +349,66 @@ const dialogVisible = ref(false)
 const dialogType = ref('add')
 const currentViewId = ref(null) // 详情态当前查看的销售单id（履约时间线数据源）
 const dialogFormRef = ref(null)
-const dialogForm = reactive({ goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '', taxIncluded: 0 })
-
-const totalAmountText = computed(() => {
-  const qty = Number(dialogForm.quantity || 0)
-  const price = Number(dialogForm.unitPrice || 0)
-  return (qty * price).toFixed(2)
+// D110：新增=多明细行；unitPrice 由所选成品标准售价预填（可改）
+const dialogForm = reactive({
+  items: [emptyItem()],
+  customerName: '',
+  contractNo: '',
+  taxIncluded: 0,
+  remark: ''
 })
+const viewForm = reactive({ salesNo: '', customerName: '', contractNo: '', salesDate: '', totalAmount: '', avgPrice: '', taxIncluded: 0, operator: '', remark: '', details: [] })
 
-const selectedGoods = computed(() => goodsOptions.value.find((i) => i.id === dialogForm.goodsId) || null)
-const selectedStock = computed(() => (selectedGoods.value ? selectedGoods.value.stock ?? 0 : null))
-const selectedUnit = computed(() => selectedGoods.value?.unit || '')
-const selectedSalePrice = computed(() => selectedGoods.value?.salePrice ?? null)
-// 价格偏离比例（D30：阈值由超管在系统参数页配置，默认 5%）
+function emptyItem() {
+  return { goodsId: null, quantity: 1, unitPrice: 0 }
+}
+
+const lineGoods = (row) => goodsOptions.value.find((g) => g.id === row.goodsId) || null
+const lineStock = (row) => (lineGoods(row) ? lineGoods(row).stock ?? 0 : null)
+const lineUnit = (row) => lineGoods(row)?.unit || ''
+const lineSalePrice = (row) => lineGoods(row)?.salePrice ?? null
+
+/** 同一成品一单只允许一行：其他行已选中的成品从当前行下拉中排除 */
+const availableGoods = (index) => {
+  const chosen = new Set(dialogForm.items.filter((_, i) => i !== index).map((i) => i.goodsId))
+  return goodsOptions.value.filter((g) => !chosen.has(g.id))
+}
+
+const addItemRow = () => dialogForm.items.push(emptyItem())
+
+// review 修复：选中成品后按标准售价预填单价（初始 0 会被后端 DTO 拒收「单价必须大于0」），用户可改
+const onGoodsSelected = (row) => {
+  const sp = lineSalePrice(row)
+  if (showPrice && sp) {
+    row.unitPrice = Number(sp)
+  }
+}
+
+// 价格偏离比例（D30：阈值由超管在系统参数页配置，默认 5%；D110 决策④：整单一笔审批，逐行提示）
 const priceDeviationThreshold = ref(0.05) // 比例小数，如 0.05
 const priceDeviationThresholdPct = computed(() => Math.round(priceDeviationThreshold.value * 100))
-const priceDeviationPct = computed(() => {
-  const sp = selectedSalePrice.value
-  const up = dialogForm.unitPrice
-  if (!sp || sp <= 0 || !up || up <= 0) return 0
-  return Math.round(Math.abs(up - sp) / sp * 100)
-})
-const isPriceDeviated = computed(() => priceDeviationPct.value > priceDeviationThresholdPct.value)
-// D69：建单缺货提示（零库存/超卖允许建单）
-const isShortage = computed(() => {
-  const s = selectedStock.value
-  return s !== null && Number(dialogForm.quantity) > s
-})
+const lineHints = computed(() =>
+  dialogForm.items.map((row) => {
+    const sp = lineSalePrice(row)
+    const up = Number(row.unitPrice || 0)
+    const deviationPct = sp && sp > 0 && up > 0 ? Math.round(Math.abs(up - sp) / sp * 100) : 0
+    const stock = lineStock(row)
+    return {
+      quantity: Number(row.quantity || 0),
+      stock: stock ?? 0,
+      shortage: stock !== null && Number(row.quantity || 0) > stock,
+      deviationPct,
+      deviated: deviationPct > priceDeviationThresholdPct.value
+    }
+  })
+)
+
+const totalAmountText = computed(() =>
+  dialogForm.items.reduce((sum, row) => sum + Number(row.quantity || 0) * Number(row.unitPrice || 0), 0).toFixed(2)
+)
 
 // D69：定制公司销售单=需求单，零库存/超卖均可建单（缺货自动通知生产排产，出库时仓储硬校验兜底），
 // 故不再钳制数量、不再拦截库存为 0，仅在输入区提示缺货。
-
-const dialogRules = {
-  goodsId: [{ required: true, message: '请选择商品', trigger: 'change' }],
-  quantity: [
-    { required: true, message: '请输入数量', trigger: 'blur' }
-  ],
-  unitPrice: [{ required: true, message: '请输入销售单价', trigger: 'blur' }]
-}
 
 const normalizeDateTime = (val) => {
   if (!val) return ''
@@ -448,7 +553,7 @@ const handleCurrentChange = (val) => {
 const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
-  Object.assign(dialogForm, { goodsId: null, remark: '', quantity: 1, unitPrice: 0, salesDate: '', customerName: '', contractNo: '', taxIncluded: 0 })
+  Object.assign(dialogForm, { items: [emptyItem()], customerName: '', contractNo: '', taxIncluded: 0, remark: '' })
   dialogVisible.value = true
 }
 
@@ -458,15 +563,17 @@ const handleView = async (row) => {
     const detail = res.data || {}
     dialogType.value = 'view'
     currentViewId.value = row.id
-    Object.assign(dialogForm, {
-      goodsId: detail.goodsId ?? null,
-      remark: detail.remark || '',
-      quantity: detail.quantity ?? 1,
-      unitPrice: detail.salesPrice ?? detail.unitPrice ?? 0,
-      salesDate: normalizeDateTime(detail.salesDate || detail.operationTime || detail.createTime),
+    Object.assign(viewForm, {
+      salesNo: detail.salesNo || '',
       customerName: detail.customerName || '',
       contractNo: detail.contractNo || '',
-      taxIncluded: detail.taxIncluded ?? 0
+      salesDate: normalizeDateTime(detail.salesDate || detail.operationTime || detail.createTime),
+      totalAmount: detail.totalAmount ?? '—',
+      avgPrice: detail.avgPrice ?? '—',
+      taxIncluded: detail.taxIncluded ?? 0,
+      operator: detail.operator || detail.operatorName || '',
+      remark: detail.remark || '',
+      details: detail.details || []
     })
     dialogVisible.value = true
   } catch {
@@ -484,7 +591,12 @@ const handleDelete = (row) => {
 }
 
 const handleConfirm = (row) => {
-  ElMessageBox.confirm('确认出库将从库存扣减该销售数量，确认继续吗？', '确认出库', { type: 'warning' }).then(async () => {
+  // D110 决策②：整单一次确认出库，任一行缺货整单失败——确认前给出缺货行预告
+  const shortage = shortageLines(row)
+  const tip = shortage.length
+    ? `以下成品现货不足，确认出库将失败，请先协调生产/采购：\n${shortage.map((d) => `· ${d.goodsName} 需 ${d.quantity}/现存 ${d.stock ?? 0}`).join('\n')}`
+    : '确认出库将按明细行从库存扣减，任一行不足则整单失败，确认继续吗？'
+  ElMessageBox.confirm(tip, '确认出库', { type: 'warning' }).then(async () => {
     await confirmSalesAPI(row.id)
     ElMessage.success('已确认出库')
     loadList()
@@ -518,15 +630,36 @@ const submitVoid = async (reason) => {
 }
 
 const submitForm = () => {
+  const items = dialogForm.items
+  if (!items.length) {
+    ElMessage.warning('请至少添加一行成品明细')
+    return
+  }
+  if (items.some((row) => !row.goodsId)) {
+    ElMessage.warning('请为每一行选择成品')
+    return
+  }
+  const goodsIds = items.map((row) => row.goodsId)
+  if (new Set(goodsIds).size !== goodsIds.length) {
+    ElMessage.warning('同一成品在一张销售单中只能有一行，请合并数量')
+    return
+  }
+  if (showPrice && items.some((row) => !Number(row.unitPrice) || Number(row.unitPrice) <= 0)) {
+    ElMessage.warning('请为每一行填写大于 0 的销售单价')
+    return
+  }
   dialogFormRef.value.validate(async (valid) => {
     if (!valid) {
       return
     }
     try {
       const payload = {
-        goodsId: dialogForm.goodsId,
-        quantity: dialogForm.quantity,
-        unitPrice: Number(dialogForm.unitPrice),
+        // D110：一单多明细行；员工不传单价（后端按标准售价取值）
+        items: items.map((row) => ({
+          goodsId: row.goodsId,
+          quantity: row.quantity,
+          unitPrice: showPrice ? Number(row.unitPrice) : undefined
+        })),
         // D106：销售日期由后端按开单时间自动生成，不再上传
         customerName: dialogForm.customerName || undefined,
         contractNo: dialogForm.contractNo || undefined,
@@ -616,6 +749,26 @@ onMounted(async () => {
   color: #909399;
   font-size: 15px;
   cursor: pointer;
+}
+
+.items-editor {
+  width: 100%;
+}
+
+.items-editor-footer {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.items-editor-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.line-hints {
+  width: 100%;
 }
 
 .shortage-hint {

@@ -13,12 +13,17 @@ import org.example.back.dto.SalesReturnSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizSales;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.entity.BizSalesReturn;
+import org.example.back.entity.BizSalesReturnDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
+import org.example.back.mapper.BizSalesReturnDetailMapper;
 import org.example.back.mapper.BizSalesReturnMapper;
+import org.example.back.vo.SalesReturnDetailVO;
 import org.example.back.vo.SalesReturnVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,9 +34,13 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class SalesReturnService {
@@ -41,6 +50,12 @@ public class SalesReturnService {
 
     @Autowired
     private BizSalesReturnMapper bizSalesReturnMapper;
+
+    @Autowired
+    private BizSalesReturnDetailMapper bizSalesReturnDetailMapper;
+
+    @Autowired
+    private BizSalesDetailMapper bizSalesDetailMapper;
 
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
@@ -90,40 +105,119 @@ public class SalesReturnService {
 
         LambdaQueryWrapper<BizSalesReturn> wrapper = new LambdaQueryWrapper<>();
         wrapper.like(StringUtils.hasText(queryDTO.getReturnNo()), BizSalesReturn::getReturnNo, queryDTO.getReturnNo())
-                .like(StringUtils.hasText(queryDTO.getGoodsName()), BizSalesReturn::getGoodsName, queryDTO.getGoodsName())
                 .like(StringUtils.hasText(queryDTO.getCustomerName()), BizSalesReturn::getCustomerName, queryDTO.getCustomerName())
-                .eq(queryDTO.getGoodsId() != null, BizSalesReturn::getGoodsId, queryDTO.getGoodsId())
             .ge(startTime != null, BizSalesReturn::getOperationTime, startTime)
             .lt(endTime != null, BizSalesReturn::getOperationTime, endTime)
                 .orderByDesc(BizSalesReturn::getId);
+        // D110：商品名/商品id 过滤下沉明细行（头单已无商品字段）
+        wrapper.apply(StringUtils.hasText(queryDTO.getGoodsName()),
+                        "EXISTS (SELECT 1 FROM biz_sales_return_detail d WHERE d.return_id = biz_sales_return.id AND d.is_deleted = 0"
+                                + " AND d.goods_name LIKE CONCAT('%', {0}, '%'))", queryDTO.getGoodsName());
+        wrapper.apply(queryDTO.getGoodsId() != null,
+                        "EXISTS (SELECT 1 FROM biz_sales_return_detail d WHERE d.return_id = biz_sales_return.id AND d.is_deleted = 0"
+                                + " AND d.goods_id = {0})", queryDTO.getGoodsId());
 
         Page<BizSalesReturn> page = bizSalesReturnMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizSalesReturn::getId).toList());
         List<SalesReturnVO> records = page.getRecords().stream().map(item -> toVO(item, approvalMap.get(item.getId()))).toList();
+        fillDetails(records); // D110：明细行 + 商品汇总
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     public SalesReturnVO getById(Long id) {
         requireSalesReturnReadAccess();
         BizSalesReturn entity = requireEntity(id);
-        return toVO(entity, resolveLatestApproval(entity.getId()));
+        SalesReturnVO vo = toVO(entity, resolveLatestApproval(entity.getId()));
+        fillDetails(List.of(vo));
+        return vo;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void create(SalesReturnSaveDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesReturnModuleAccess();
-        validateQuantity(dto.getQuantity());
+        if (dto.getItems() == null || dto.getItems().isEmpty()) {
+            throw BusinessException.validateFail("退货明细不能为空");
+        }
+        // D110：同一来源明细行只允许退一行（避免同单内重复退同一行，请合并数量）
+        Set<Long> sourceDetailIds = new HashSet<>();
+        for (SalesReturnSaveDTO.Item item : dto.getItems()) {
+            if (item.getSourceSalesDetailId() == null || !sourceDetailIds.add(item.getSourceSalesDetailId())) {
+                throw BusinessException.validateFail("同一来源明细行在一张退货单中只能出现一次，请合并数量");
+            }
+        }
 
         BizSales sourceSales = requireSourceSales(dto.getSourceSalesId());
         ensureSourceSalesNormal(sourceSales);
-        validateReturnableQuantity(sourceSales, dto.getQuantity());
 
-        BaseGoods goods = requireGoods(sourceSales.getGoodsId());
-        ensureGoodsEnabled(goods);
-        BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), sourceSales.getUnitPrice(), "来源销售单缺少单价，请传入客退单价");
+        // 来源明细行加载 + 归属校验（行必须属于该来源销售单）
+        List<BizSalesDetail> sourceLines = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                .in(BizSalesDetail::getId, sourceDetailIds)
+                .eq(BizSalesDetail::getSalesId, sourceSales.getId())
+                .orderByAsc(BizSalesDetail::getSortNo));
+        if (sourceLines.size() != sourceDetailIds.size()) {
+            throw BusinessException.validateFail("退货明细行不属于来源销售单，禁止越单退货");
+        }
+
+        // 行级可退量校验（D110 决策③）
+        Map<Long, Integer> returnedMap = returnedQtyBySourceDetail(new ArrayList<>(sourceDetailIds));
+        for (BizSalesDetail sourceLine : sourceLines) {
+            SalesReturnSaveDTO.Item item = itemsBySourceDetailId(dto.getItems()).get(sourceLine.getId());
+            int returnable = sourceLine.getQuantity() - returnedMap.getOrDefault(sourceLine.getId(), 0);
+            if (returnable <= 0) {
+                throw BusinessException.validateFail("明细行「" + sourceLine.getGoodsName() + "」已无可退数量");
+            }
+            if (item.getQuantity() == null || item.getQuantity() <= 0) {
+                throw BusinessException.validateFail("数量必须大于0");
+            }
+            if (item.getQuantity() > returnable) {
+                throw BusinessException.validateFail("明细行「" + sourceLine.getGoodsName() + "」退货数量超出可退数量，当前最多可退: " + returnable);
+            }
+        }
+
+        // 行商品启用校验（批量）+ 行成本/单价
+        List<Long> goodsIds = sourceLines.stream().map(BizSalesDetail::getGoodsId).distinct().toList();
+        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
-        CostSnapshot costSnapshot = buildReturnCostSnapshot(sourceSales, goods, operationTime);
+        // review 补强：最近有效进价一次批量预取（SOURCE_SALE 缺失时的 RECENT_PURCHASE 兜底，口径同单查版）
+        LocalDateTime costLookupTime = sourceSales.getOperationTime() == null ? operationTime : sourceSales.getOperationTime();
+        Map<Long, BigDecimal> recentPurchasePrices = bizPurchaseMapper.latestValidUnitPrices(goodsIds, costLookupTime).stream()
+                .collect(Collectors.toMap(BizPurchaseMapper.LatestPurchasePrice::getGoodsId,
+                        BizPurchaseMapper.LatestPurchasePrice::getUnitPrice));
+
+        List<BizSalesReturnDetail> detailEntities = new ArrayList<>();
+        int totalQuantity = 0;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        int sortNo = 0;
+        for (BizSalesDetail sourceLine : sourceLines) {
+            sortNo++;
+            SalesReturnSaveDTO.Item item = itemsBySourceDetailId(dto.getItems()).get(sourceLine.getId());
+            BaseGoods goods = goodsMap.get(sourceLine.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("商品不存在");
+            }
+            ensureGoodsEnabled(goods);
+            BigDecimal unitPrice = resolveUnitPrice(item.getUnitPrice(), sourceLine.getUnitPrice(), "来源销售单缺少单价，请传入客退单价");
+            CostSnapshot costSnapshot = buildReturnCostSnapshot(sourceLine, goods,
+                    recentPurchasePrices.get(sourceLine.getGoodsId()));
+
+            BizSalesReturnDetail detail = new BizSalesReturnDetail();
+            detail.setSourceSalesDetailId(sourceLine.getId());
+            detail.setGoodsId(sourceLine.getGoodsId());
+            detail.setGoodsName(sourceLine.getGoodsName());
+            detail.setQuantity(item.getQuantity());
+            detail.setUnitPrice(unitPrice);
+            detail.setCostUnitPrice(costSnapshot.unitPrice());
+            detail.setCostTotalPrice(costSnapshot.unitPrice().multiply(BigDecimal.valueOf(item.getQuantity())));
+            detail.setCostSource(costSnapshot.source());
+            detail.setTotalPrice(unitPrice.multiply(BigDecimal.valueOf(item.getQuantity())));
+            detail.setSortNo(sortNo);
+            detailEntities.add(detail);
+
+            totalQuantity += item.getQuantity();
+            totalAmount = totalAmount.add(detail.getTotalPrice());
+        }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
@@ -131,14 +225,8 @@ public class SalesReturnService {
         entity.setReturnNo(CodeGenerator.salesReturnNo());
         entity.setSourceSalesId(sourceSales.getId());
         entity.setSourceSalesNo(sourceSales.getSalesNo());
-        entity.setGoodsId(goods.getId());
-        entity.setGoodsName(goods.getGoodsName());
-        entity.setQuantity(dto.getQuantity());
-        entity.setUnitPrice(unitPrice);
-        entity.setCostUnitPrice(costSnapshot.unitPrice());
-        entity.setCostTotalPrice(costSnapshot.unitPrice().multiply(BigDecimal.valueOf(dto.getQuantity())));
-        entity.setCostSource(costSnapshot.source());
-        entity.setTotalPrice(unitPrice.multiply(BigDecimal.valueOf(dto.getQuantity())));
+        entity.setTotalQuantity(totalQuantity);
+        entity.setTotalAmount(totalAmount);
         entity.setOperatorId(loginUser.getId());
         entity.setOperatorName(loginUser.getRealName());
         entity.setOperationTime(operationTime);
@@ -150,10 +238,23 @@ public class SalesReturnService {
         entity.setConfirmStatus(CONFIRM_PENDING);
 
         bizSalesReturnMapper.insert(entity);
+        for (BizSalesReturnDetail detail : detailEntities) {
+            detail.setReturnId(entity.getId());
+            bizSalesReturnDetailMapper.insert(detail);
+        }
 
-        // 销售退货建单后不立即加库存，待仓库管理员确认入库时再加；同时通知仓储管理员有待确认单据
+        // 销售退货建单后不立即加库存，待仓库管理员确认入库时再按行加；同时通知仓储管理员有待确认单据
         messageService.sendSalesReturnPendingConfirmToWarehouseAdmins(
                 entity.getReturnNo(), loginUser.getRealName(), entity.getId());
+    }
+
+    /** items 按 sourceSalesDetailId 建索引 */
+    private Map<Long, SalesReturnSaveDTO.Item> itemsBySourceDetailId(List<SalesReturnSaveDTO.Item> items) {
+        Map<Long, SalesReturnSaveDTO.Item> map = new LinkedHashMap<>();
+        for (SalesReturnSaveDTO.Item item : items) {
+            map.put(item.getSourceSalesDetailId(), item);
+        }
+        return map;
     }
 
     /**
@@ -170,7 +271,10 @@ public class SalesReturnService {
             throw BusinessException.validateFail("客退单已确认入库，禁止重复确认");
         }
 
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+        // D110：按明细行逐行回补库存
+        for (BizSalesReturnDetail detail : requireReturnDetails(entity.getId())) {
+            increaseStock(detail.getGoodsId(), detail.getQuantity());
+        }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LocalDateTime now = LocalDateTime.now();
@@ -205,6 +309,11 @@ public class SalesReturnService {
         // 撤销该单未读待确认消息
         messageService.revokeUnreadByBiz("sales_return", id);
         bizSalesReturnMapper.deleteById(id);
+        // review 补强：级联软删退货行——GoodsReferenceService 按明细行统计成品引用，
+        // 头删行留会让该成品永久无法删除（对齐 PurchaseRequestService.delete 的级联口径）
+        LambdaQueryWrapper<BizSalesReturnDetail> detailWrapper = new LambdaQueryWrapper<>();
+        detailWrapper.eq(BizSalesReturnDetail::getReturnId, id);
+        bizSalesReturnDetailMapper.delete(detailWrapper);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -235,35 +344,13 @@ public class SalesReturnService {
         // 作废后撤销该单未读待确认消息
         messageService.revokeUnreadByBiz("sales_return", id);
 
-        // 仅已确认入库（已加库存）的客退单作废时需回冲库存；待确认单据尚未入库，不触碰库存
+        // 仅已确认入库（已加库存）的客退单作废时需按行回冲库存；待确认单据尚未入库，不触碰库存
+        // D110 决策⑨：红冲死代码不再随头行改造移植（D99 已封死入口），直接移除
         boolean received = entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_RECEIVED;
         if (received) {
-            decreaseStock(entity.getGoodsId(), entity.getQuantity(), "当前库存不足，无法作废该客退单");
-        }
-
-        if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
-            LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-            BizSalesReturn redFlushDoc = new BizSalesReturn();
-            redFlushDoc.setReturnNo(CodeGenerator.salesReturnNo());
-            redFlushDoc.setSourceSalesId(entity.getSourceSalesId());
-            redFlushDoc.setSourceSalesNo(entity.getSourceSalesNo());
-            redFlushDoc.setGoodsId(entity.getGoodsId());
-            redFlushDoc.setGoodsName(entity.getGoodsName());
-            redFlushDoc.setCustomerName(entity.getCustomerName());
-            redFlushDoc.setQuantity(-entity.getQuantity());
-            redFlushDoc.setUnitPrice(entity.getUnitPrice());
-            redFlushDoc.setCostUnitPrice(entity.getCostUnitPrice());
-            redFlushDoc.setCostTotalPrice(entity.getCostTotalPrice() == null ? null : entity.getCostTotalPrice().negate());
-            redFlushDoc.setCostSource(entity.getCostSource());
-            redFlushDoc.setTotalPrice(entity.getTotalPrice().negate());
-            redFlushDoc.setOperatorId(loginUser.getId());
-            redFlushDoc.setOperatorName(loginUser.getRealName());
-            redFlushDoc.setOperationTime(now);
-            redFlushDoc.setRemark("红冲来源:" + entity.getReturnNo());
-            redFlushDoc.setBizStatus(3);
-            redFlushDoc.setSourceId(entity.getId());
-            redFlushDoc.setVoidReason(reason);
-            bizSalesReturnMapper.insert(redFlushDoc);
+            for (BizSalesReturnDetail detail : requireReturnDetails(entity.getId())) {
+                decreaseStock(detail.getGoodsId(), detail.getQuantity(), "当前库存不足，无法作废该客退单");
+            }
         }
     }
 
@@ -292,14 +379,6 @@ public class SalesReturnService {
         return entity;
     }
 
-    private BaseGoods requireGoods(Long goodsId) {
-        BaseGoods goods = baseGoodsMapper.selectById(goodsId);
-        if (goods == null) {
-            throw BusinessException.validateFail("商品不存在");
-        }
-        return goods;
-    }
-
     private BizSales requireSourceSales(Long sourceSalesId) {
         BizSales sales = bizSalesMapper.selectById(sourceSalesId);
         if (sales == null) {
@@ -317,20 +396,34 @@ public class SalesReturnService {
         }
     }
 
-    private void validateReturnableQuantity(BizSales sourceSales, Integer returnQty) {
-        LambdaQueryWrapper<BizSalesReturn> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizSalesReturn::getSourceSalesId, sourceSales.getId())
-                .eq(BizSalesReturn::getBizStatus, 1)
-                .eq(BizSalesReturn::getConfirmStatus, CONFIRM_RECEIVED);
-        List<BizSalesReturn> linkedReturns = bizSalesReturnMapper.selectList(wrapper);
-        int returnedQty = linkedReturns.stream().map(BizSalesReturn::getQuantity).reduce(0, Integer::sum);
-        int availableQty = sourceSales.getQuantity() - returnedQty;
-        if (availableQty <= 0) {
-            throw BusinessException.validateFail("来源销售单已无可退数量");
+    /**
+     * D110：行级已退累计（仅统计有效退货：正常 + 已确认入库）。
+     * 行级可退量的唯一口径——SalesService.returnableOptions（可退下拉）与本服务 create
+     * （超退拦截）共用，改口径只改这一处，避免两侧校验漂移。
+     */
+    public Map<Long, Integer> returnedQtyBySourceDetail(List<Long> sourceDetailIds) {
+        if (sourceDetailIds.isEmpty()) {
+            return Map.of();
         }
-        if (returnQty > availableQty) {
-            throw BusinessException.validateFail("退货数量超出可退数量，当前最多可退: " + availableQty);
+        LambdaQueryWrapper<BizSalesReturnDetail> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(BizSalesReturnDetail::getSourceSalesDetailId, sourceDetailIds);
+        List<BizSalesReturnDetail> returnDetails = bizSalesReturnDetailMapper.selectList(wrapper);
+        if (returnDetails.isEmpty()) {
+            return Map.of();
         }
+        List<Long> returnIds = returnDetails.stream().map(BizSalesReturnDetail::getReturnId).distinct().toList();
+        Map<Long, BizSalesReturn> returnMap = bizSalesReturnMapper.selectBatchIds(returnIds).stream()
+                .collect(Collectors.toMap(BizSalesReturn::getId, r -> r));
+        Map<Long, Integer> result = new LinkedHashMap<>();
+        for (BizSalesReturnDetail rd : returnDetails) {
+            BizSalesReturn r = returnMap.get(rd.getReturnId());
+            if (r == null || r.getBizStatus() == null || r.getBizStatus() != 1
+                    || r.getConfirmStatus() == null || r.getConfirmStatus() != CONFIRM_RECEIVED) {
+                continue;
+            }
+            result.merge(rd.getSourceSalesDetailId(), rd.getQuantity(), Integer::sum);
+        }
+        return result;
     }
 
     private void ensureGoodsEnabled(BaseGoods goods) {
@@ -377,12 +470,6 @@ public class SalesReturnService {
         return reason.trim();
     }
 
-    private void validateQuantity(Integer quantity) {
-        if (quantity == null || quantity <= 0) {
-            throw BusinessException.validateFail("数量必须大于0");
-        }
-    }
-
     private BigDecimal resolveUnitPrice(BigDecimal inputPrice, BigDecimal fallbackPrice, String emptyPriceMsg) {
         BigDecimal finalPrice = inputPrice == null ? fallbackPrice : inputPrice;
         if (finalPrice == null) {
@@ -394,16 +481,18 @@ public class SalesReturnService {
         return finalPrice;
     }
 
-    private CostSnapshot buildReturnCostSnapshot(BizSales sourceSales, BaseGoods goods, LocalDateTime returnTime) {
-        BigDecimal sourceCost = sourceSales.getCostUnitPrice();
+    /**
+     * D110 决策③：行成本快照优先 SOURCE_SALE（取原销售行 cost_unit_price），
+     * 否则按来源销售单时间回溯最近进货价，兜底商品进价/零。
+     */
+    private CostSnapshot buildReturnCostSnapshot(BizSalesDetail sourceLine, BaseGoods goods, BigDecimal recentPurchasePrice) {
+        BigDecimal sourceCost = sourceLine.getCostUnitPrice();
         if (sourceCost != null && sourceCost.compareTo(BigDecimal.ZERO) > 0) {
             return new CostSnapshot(sourceCost, "SOURCE_SALE");
         }
 
-        LocalDateTime lookupTime = sourceSales.getOperationTime() == null ? returnTime : sourceSales.getOperationTime();
-        BigDecimal purchasePrice = bizPurchaseMapper.latestValidUnitPrice(goods.getId(), lookupTime);
-        if (purchasePrice != null && purchasePrice.compareTo(BigDecimal.ZERO) > 0) {
-            return new CostSnapshot(purchasePrice, "RECENT_PURCHASE");
+        if (recentPurchasePrice != null && recentPurchasePrice.compareTo(BigDecimal.ZERO) > 0) {
+            return new CostSnapshot(recentPurchasePrice, "RECENT_PURCHASE");
         }
         if (goods.getPurchasePrice() != null && goods.getPurchasePrice().compareTo(BigDecimal.ZERO) > 0) {
             return new CostSnapshot(goods.getPurchasePrice(), "GOODS_PRICE");
@@ -458,7 +547,6 @@ public class SalesReturnService {
         vo.setSourceSalesId(entity.getSourceSalesId());
         vo.setSourceSalesNo(entity.getSourceSalesNo());
         vo.setOrderNo(entity.getSourceSalesNo());
-        vo.setRefundAmount(entity.getTotalPrice());
         vo.setOperationTime(bizTime);
         vo.setReturnDate(bizTime);
         vo.setOperator(entity.getOperatorName());
@@ -472,6 +560,69 @@ public class SalesReturnService {
         vo.setApprovalStatus(approvalOrder == null ? null : approvalOrder.getStatus());
         vo.setApprovalRequestAction(approvalOrder == null ? null : approvalOrder.getRequestAction());
         return vo;
+    }
+
+    /**
+     * D110：批量填充退货行 + 商品汇总描述。
+     */
+    private void fillDetails(List<SalesReturnVO> records) {
+        if (records.isEmpty()) {
+            return;
+        }
+        List<Long> returnIds = records.stream().map(SalesReturnVO::getId).toList();
+        List<BizSalesReturnDetail> details = bizSalesReturnDetailMapper.selectList(
+                new LambdaQueryWrapper<BizSalesReturnDetail>()
+                        .in(BizSalesReturnDetail::getReturnId, returnIds)
+                        .orderByAsc(BizSalesReturnDetail::getSortNo)
+                        .orderByAsc(BizSalesReturnDetail::getId));
+        Map<Long, List<BizSalesReturnDetail>> byReturn = details.stream()
+                .collect(Collectors.groupingBy(BizSalesReturnDetail::getReturnId));
+        for (SalesReturnVO vo : records) {
+            List<SalesReturnDetailVO> lineVOs = byReturn.getOrDefault(vo.getId(), List.of()).stream()
+                    .map(this::toDetailVO)
+                    .toList();
+            vo.setDetails(lineVOs);
+            vo.setGoodsSummary(buildGoodsSummary(lineVOs));
+        }
+    }
+
+    private SalesReturnDetailVO toDetailVO(BizSalesReturnDetail d) {
+        SalesReturnDetailVO line = new SalesReturnDetailVO();
+        line.setId(d.getId());
+        line.setReturnId(d.getReturnId());
+        line.setSourceSalesDetailId(d.getSourceSalesDetailId());
+        line.setGoodsId(d.getGoodsId());
+        line.setGoodsName(d.getGoodsName());
+        line.setQuantity(d.getQuantity());
+        line.setUnitPrice(d.getUnitPrice());
+        line.setTotalPrice(d.getTotalPrice());
+        line.setSortNo(d.getSortNo());
+        return line;
+    }
+
+    /** 商品汇总描述：单行显示品名，多行显示「首品名 等 N 种」 */
+    private String buildGoodsSummary(List<SalesReturnDetailVO> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "-";
+        }
+        String firstName = lines.get(0).getGoodsName();
+        if (lines.size() == 1) {
+            return firstName;
+        }
+        return firstName + " 等 " + lines.size() + " 种";
+    }
+
+    /** D110：加载客退单明细行（按 sort_no 稳定排序）；缺失视为数据异常拦截 */
+    private List<BizSalesReturnDetail> requireReturnDetails(Long returnId) {
+        List<BizSalesReturnDetail> details = bizSalesReturnDetailMapper.selectList(
+                new LambdaQueryWrapper<BizSalesReturnDetail>()
+                        .eq(BizSalesReturnDetail::getReturnId, returnId)
+                        .orderByAsc(BizSalesReturnDetail::getSortNo)
+                        .orderByAsc(BizSalesReturnDetail::getId));
+        if (details.isEmpty()) {
+            throw BusinessException.validateFail("客退单缺少明细行，无法执行该操作");
+        }
+        return details;
     }
 
     private String confirmStatusText(Integer confirmStatus) {

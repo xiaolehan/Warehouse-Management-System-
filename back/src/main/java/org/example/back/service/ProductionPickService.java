@@ -1,6 +1,7 @@
 package org.example.back.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
@@ -230,9 +231,15 @@ public class ProductionPickService {
         }
 
         // 终态化 + 原因留痕 + 撤未读（含"关联销售单已取消"通知——已处理完毕）
-        order.setStatus(BizProductionOrder.STATUS_TERMINATED);
-        order.setRemark(appendRemark(order.getRemark(), "终止原因: " + reason.trim()));
-        productionOrderMapper.updateById(order);
+        // review 补强：条件更新兜底并发（守卫后任务单可能已被收尾为已完成）——仅未完结态可终止
+        LambdaUpdateWrapper<BizProductionOrder> terminateWrapper = new LambdaUpdateWrapper<>();
+        terminateWrapper.eq(BizProductionOrder::getId, orderId)
+                .in(BizProductionOrder::getStatus, BizProductionOrder.UNFINISHED_STATUSES)
+                .set(BizProductionOrder::getStatus, BizProductionOrder.STATUS_TERMINATED)
+                .set(BizProductionOrder::getRemark, appendRemark(order.getRemark(), "终止原因: " + reason.trim()));
+        if (productionOrderMapper.update(null, terminateWrapper) != 1) {
+            throw BusinessException.validateFail("生产任务单已被处理（已完工或已终态），请刷新后重试");
+        }
         messageService.revokeUnreadByBiz("production_order", orderId);
         // D107/review：终止离开待入库态——自动关闭待确认入库申请（置系统驳回+撤仓储待办+回执生产）
         productionOrderService.closePendingInboundApplication(orderId, "生产任务单已终止，入库申请自动关闭");

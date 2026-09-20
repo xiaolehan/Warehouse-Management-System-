@@ -128,7 +128,7 @@ class MessageServiceTest {
         recipient.setStatus(1);
         when(sysUserMapper.selectById(9L)).thenReturn(recipient);
 
-        service.sendSalesReadyToShipToUser(9L, "XS-1", "PTO153", 2, 55L);
+        service.sendSalesReadyToShipToUser(9L, "XS-1", "PTO153×2", 55L); // D110：成品描述按行汇总
 
         ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
         verify(sysMessageMapper).insert(captor.capture());
@@ -141,7 +141,7 @@ class MessageServiceTest {
         superadmin.setId(1L);
         when(sysUserMapper.selectOne(any())).thenReturn(superadmin);
 
-        service.sendPriceDeviationToSuperAdmin("XS-1", "销售甲", new java.math.BigDecimal("0.08"), 55L);
+        service.sendPriceDeviationToSuperAdmin("XS-1", "销售甲", "第1行 PTO153 偏离 8%", 55L); // D110：整单偏离行明细
 
         ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
         verify(sysMessageMapper).insert(captor.capture());

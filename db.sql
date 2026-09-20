@@ -374,20 +374,14 @@ CREATE TABLE `biz_purchase_return` (
     KEY `idx_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='退货表(商品退给供应商)';
 
--- 3.3 销售表 (biz_sales)
--- 记录商品销售信息，库存减少
+-- 3.3 销售表 (biz_sales) —— D110 头行结构：头表只留单据/汇总字段，成品行见 biz_sales_detail
+-- 记录商品销售信息，库存减少（确认出库时按明细行逐行扣减）
 DROP TABLE IF EXISTS `biz_sales`;
 CREATE TABLE `biz_sales` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `sales_no` VARCHAR(30) NOT NULL COMMENT '销售单号',
-    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
-    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
-    `quantity` INT NOT NULL COMMENT '销售数量',
-    `unit_price` DECIMAL(10,2) NOT NULL COMMENT '销售单价',
-    `cost_unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '成本单价快照',
-    `cost_total_price` DECIMAL(12,2) DEFAULT NULL COMMENT '成本总额快照',
-    `cost_source` VARCHAR(30) DEFAULT NULL COMMENT '成本来源: RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK',
-    `total_price` DECIMAL(10,2) NOT NULL COMMENT '总金额',
+    `total_quantity` INT NOT NULL DEFAULT 0 COMMENT '销售总数量(建单按明细行合计，单据不可编辑)',
+    `total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '销售总金额(建单按明细行合计，单据不可编辑)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
     `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
@@ -408,20 +402,39 @@ CREATE TABLE `biz_sales` (
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_sales_no` (`sales_no`),
-    KEY `idx_goods_id` (`goods_id`),
-    KEY `idx_goods_time` (`goods_id`, `operation_time`),
-    KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`),
-    KEY `idx_cost_stat` (`operation_time`, `biz_status`, `is_deleted`, `cost_total_price`),
     KEY `idx_biz_status` (`biz_status`),
     KEY `idx_confirm_status` (`confirm_status`),
     KEY `idx_source_id` (`source_id`),
     KEY `idx_operator_id` (`operator_id`),
     KEY `idx_operation_time` (`operation_time`),
     KEY `idx_is_deleted` (`is_deleted`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='销售表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='销售表(头单，成品行见biz_sales_detail)';
 
--- 3.4 客退表 (biz_sales_return)
--- 记录客户退货信息，库存增加
+-- 3.3.1 销售明细行表 (biz_sales_detail) —— D110 新增：一单可含一客户 N 种成品，同一成品一单只允许一行
+DROP TABLE IF EXISTS `biz_sales_detail`;
+CREATE TABLE `biz_sales_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `sales_id` BIGINT NOT NULL COMMENT '销售单ID(biz_sales.id)',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '行销售数量',
+    `unit_price` DECIMAL(10,2) NOT NULL COMMENT '行销售单价',
+    `cost_unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '成本单价快照',
+    `cost_total_price` DECIMAL(12,2) DEFAULT NULL COMMENT '成本总额快照',
+    `cost_source` VARCHAR(30) DEFAULT NULL COMMENT '成本来源: RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK',
+    `total_price` DECIMAL(10,2) NOT NULL COMMENT '行总金额',
+    `sort_no` INT NOT NULL DEFAULT 1 COMMENT '行序号(同单从1递增)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sales_goods` (`sales_id`, `goods_id`),
+    KEY `idx_goods_id` (`goods_id`),
+    KEY `idx_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='销售明细行表(同一成品一单仅一行)';
+
+-- 3.4 客退表 (biz_sales_return) —— D110 头行结构：头表只留单据/汇总字段，退货行见 biz_sales_return_detail
+-- 记录客户退货信息，库存增加（确认入库时按明细行逐行回补）
 DROP TABLE IF EXISTS `biz_sales_return`;
 CREATE TABLE `biz_sales_return` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
@@ -429,18 +442,12 @@ CREATE TABLE `biz_sales_return` (
     `source_sales_id` BIGINT DEFAULT NULL COMMENT '来源销售单ID',
     `source_sales_no` VARCHAR(30) DEFAULT NULL COMMENT '来源销售单号',
     `customer_name` VARCHAR(100) DEFAULT NULL COMMENT '退货公司名快照(从来源销售单带入)',
-    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
-    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
-    `quantity` INT NOT NULL COMMENT '退货数量',
-    `unit_price` DECIMAL(10,2) NOT NULL COMMENT '退货单价',
-    `cost_unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '成本单价快照',
-    `cost_total_price` DECIMAL(12,2) DEFAULT NULL COMMENT '成本总额快照',
-    `cost_source` VARCHAR(30) DEFAULT NULL COMMENT '成本来源: SOURCE_SALE/RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK',
-    `total_price` DECIMAL(10,2) NOT NULL COMMENT '总金额',
+    `total_quantity` INT NOT NULL DEFAULT 0 COMMENT '退货总数量(建单按明细行合计，单据不可编辑)',
+    `total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '退货总金额(建单按明细行合计，单据不可编辑)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
     `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
-    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注(退货原因)',
     `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
     `source_id` BIGINT DEFAULT NULL COMMENT '红冲来源单ID',
     `void_time` DATETIME DEFAULT NULL COMMENT '作废时间',
@@ -454,10 +461,6 @@ CREATE TABLE `biz_sales_return` (
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_return_no` (`return_no`),
-    KEY `idx_goods_id` (`goods_id`),
-    KEY `idx_goods_time` (`goods_id`, `operation_time`),
-    KEY `idx_stat_time_status` (`operation_time`, `biz_status`, `is_deleted`, `goods_id`, `source_sales_id`),
-    KEY `idx_cost_stat` (`operation_time`, `biz_status`, `is_deleted`, `cost_total_price`),
     KEY `idx_source_sales_id` (`source_sales_id`),
     KEY `idx_return_confirm_status` (`confirm_status`),
     KEY `idx_source_sales_no` (`source_sales_no`),
@@ -466,7 +469,32 @@ CREATE TABLE `biz_sales_return` (
     KEY `idx_operator_id` (`operator_id`),
     KEY `idx_operation_time` (`operation_time`),
     KEY `idx_is_deleted` (`is_deleted`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客退表(客户退回商品)';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客退表(头单，退货行见biz_sales_return_detail)';
+
+-- 3.4.1 客退明细行表 (biz_sales_return_detail) —— D110 新增：按来源销售明细行退，行级可退量=原行量-该行已退累计
+DROP TABLE IF EXISTS `biz_sales_return_detail`;
+CREATE TABLE `biz_sales_return_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `return_id` BIGINT NOT NULL COMMENT '退货单ID(biz_sales_return.id)',
+    `source_sales_detail_id` BIGINT NOT NULL COMMENT '来源销售明细行ID(biz_sales_detail.id)',
+    `goods_id` BIGINT NOT NULL COMMENT '商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
+    `quantity` INT NOT NULL COMMENT '行退货数量',
+    `unit_price` DECIMAL(10,2) NOT NULL COMMENT '行退货单价',
+    `cost_unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '成本单价快照',
+    `cost_total_price` DECIMAL(12,2) DEFAULT NULL COMMENT '成本总额快照',
+    `cost_source` VARCHAR(30) DEFAULT NULL COMMENT '成本来源: SOURCE_SALE/RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK',
+    `total_price` DECIMAL(10,2) NOT NULL COMMENT '行总金额',
+    `sort_no` INT NOT NULL DEFAULT 1 COMMENT '行序号(同单从1递增)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_return_source_line` (`return_id`, `source_sales_detail_id`),
+    KEY `idx_source_detail_id` (`source_sales_detail_id`),
+    KEY `idx_goods_id` (`goods_id`),
+    KEY `idx_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客退明细行表(一退货单N行，按销售明细行退)';
 
 -- 3.5 作废审批单表 (biz_approval_order)
 -- 记录普通员工发起的“作废/作废并红冲”审批请求，由管理员审批后执行
@@ -658,14 +686,11 @@ JOIN `biz_purchase` AS source_purchase ON source_purchase.`purchase_no` = seed.`
 JOIN `base_goods` AS goods ON goods.`goods_code` = seed.`goods_code`
 JOIN `sys_user` AS operator ON operator.`username` = seed.`username`;
 
--- 4.8 初始化销售记录
-INSERT INTO `biz_sales` (`sales_no`, `goods_id`, `goods_name`, `quantity`, `unit_price`, `total_price`, `operator_id`, `operator_name`, `operation_time`, `remark`)
+-- 4.8 初始化销售记录（D110 头行结构：先插头单，再按单插明细行）
+INSERT INTO `biz_sales` (`sales_no`, `total_quantity`, `total_amount`, `operator_id`, `operator_name`, `operation_time`, `remark`)
 SELECT
     seed.`sales_no`,
-    goods.`id`,
-    goods.`goods_name`,
     seed.`quantity`,
-    seed.`unit_price`,
     seed.`total_price`,
     operator.`id`,
     seed.`operator_name`,
@@ -691,19 +716,48 @@ FROM (
     UNION ALL SELECT 'SAL202503007', 'GD012', 4, 2000.0, 8000.00, 'sales_employee', '李四', '2025-03-09 09:00:00', '新品销售'
     UNION ALL SELECT 'SAL202503008', 'GD007', 15, 1299.0, 19485.00, 'sales_employee', '李四', '2025-03-10 10:00:00', '正常销售'
 ) AS seed
-JOIN `base_goods` AS goods ON goods.`goods_code` = seed.`goods_code`
 JOIN `sys_user` AS operator ON operator.`username` = seed.`username`;
 
--- 4.9 初始化客退记录 (客户退货)
-INSERT INTO `biz_sales_return` (`return_no`, `source_sales_id`, `source_sales_no`, `goods_id`, `goods_name`, `quantity`, `unit_price`, `total_price`, `operator_id`, `operator_name`, `operation_time`, `remark`)
+-- 4.8.1 初始化销售明细行（D110：种子数据一单一行，行字段取自种子）
+INSERT INTO `biz_sales_detail` (`sales_id`, `goods_id`, `goods_name`, `quantity`, `unit_price`, `total_price`, `sort_no`)
 SELECT
-    seed.`return_no`,
-    source_sales.`id`,
-    source_sales.`sales_no`,
+    s.`id`,
     goods.`id`,
     goods.`goods_name`,
     seed.`quantity`,
     seed.`unit_price`,
+    seed.`total_price`,
+    1
+FROM (
+    SELECT 'SAL202501001' AS `sales_no`, 'GD003' AS `goods_code`, 10 AS `quantity`, 5999.0 AS `unit_price`, 59990.00 AS `total_price`
+    UNION ALL SELECT 'SAL202501002', 'GD004', 8, 4999.0, 39992.00
+    UNION ALL SELECT 'SAL202501003', 'GD005', 5, 7500.0, 37500.00
+    UNION ALL SELECT 'SAL202501004', 'GD006', 10, 1699.0, 16990.00
+    UNION ALL SELECT 'SAL202501005', 'GD008', 30, 499.0, 14970.00
+    UNION ALL SELECT 'SAL202501006', 'GD009', 50, 129.0, 6450.00
+    UNION ALL SELECT 'SAL202502001', 'GD003', 15, 5999.0, 89985.00
+    UNION ALL SELECT 'SAL202502002', 'GD004', 12, 4999.0, 59988.00
+    UNION ALL SELECT 'SAL202502003', 'GD006', 8, 1699.0, 13592.00
+    UNION ALL SELECT 'SAL202502004', 'GD008', 40, 499.0, 19960.00
+    UNION ALL SELECT 'SAL202503001', 'GD003', 20, 5999.0, 119980.00
+    UNION ALL SELECT 'SAL202503002', 'GD004', 18, 4999.0, 89982.00
+    UNION ALL SELECT 'SAL202503003', 'GD005', 8, 7500.0, 60000.00
+    UNION ALL SELECT 'SAL202503004', 'GD006', 12, 1699.0, 20388.00
+    UNION ALL SELECT 'SAL202503005', 'GD010', 5, 1200.0, 6000.00
+    UNION ALL SELECT 'SAL202503006', 'GD011', 3, 4500.0, 13500.00
+    UNION ALL SELECT 'SAL202503007', 'GD012', 4, 2000.0, 8000.00
+    UNION ALL SELECT 'SAL202503008', 'GD007', 15, 1299.0, 19485.00
+) AS seed
+JOIN `biz_sales` AS s ON s.`sales_no` = seed.`sales_no`
+JOIN `base_goods` AS goods ON goods.`goods_code` = seed.`goods_code`;
+
+-- 4.9 初始化客退记录 (客户退货，D110 头行结构：先插头单，再按单插明细行)
+INSERT INTO `biz_sales_return` (`return_no`, `source_sales_id`, `source_sales_no`, `total_quantity`, `total_amount`, `operator_id`, `operator_name`, `operation_time`, `remark`)
+SELECT
+    seed.`return_no`,
+    source_sales.`id`,
+    source_sales.`sales_no`,
+    seed.`quantity`,
     seed.`total_price`,
     operator.`id`,
     seed.`operator_name`,
@@ -715,19 +769,40 @@ FROM (
     UNION ALL SELECT 'CSTRET202502001', 'SAL202501005', 'GD008', 2, 499.0, 998.00, 'sales_employee', '李四', '2025-02-20 10:00:00', '客户退货'
 ) AS seed
 JOIN `biz_sales` AS source_sales ON source_sales.`sales_no` = seed.`source_sales_no`
-JOIN `base_goods` AS goods ON goods.`goods_code` = seed.`goods_code`
 JOIN `sys_user` AS operator ON operator.`username` = seed.`username`;
 
--- 4.9.1 初始化成本快照字段（V2.2）
--- 销售单：按销售时间回溯最近有效进货价，兜底商品进价
-UPDATE `biz_sales` s
-LEFT JOIN `base_goods` bg ON bg.id = s.goods_id
+-- 4.9.1 初始化客退明细行（D110：退货行锚定来源销售明细行）
+INSERT INTO `biz_sales_return_detail` (`return_id`, `source_sales_detail_id`, `goods_id`, `goods_name`, `quantity`, `unit_price`, `total_price`, `sort_no`)
+SELECT
+    ret.`id`,
+    sd.`id`,
+    goods.`id`,
+    goods.`goods_name`,
+    seed.`quantity`,
+    seed.`unit_price`,
+    seed.`total_price`,
+    1
+FROM (
+    SELECT 'CSTRET202501001' AS `return_no`, 'SAL202501001' AS `source_sales_no`, 'GD003' AS `goods_code`, 1 AS `quantity`, 5999.0 AS `unit_price`, 5999.00 AS `total_price`
+    UNION ALL SELECT 'CSTRET202501002', 'SAL202501002', 'GD004', 1, 4999.0, 4999.00
+    UNION ALL SELECT 'CSTRET202502001', 'SAL202501005', 'GD008', 2, 499.0, 998.00
+) AS seed
+JOIN `biz_sales_return` AS ret ON ret.`return_no` = seed.`return_no`
+JOIN `biz_sales` AS source_sales ON source_sales.`sales_no` = seed.`source_sales_no`
+JOIN `base_goods` AS goods ON goods.`goods_code` = seed.`goods_code`
+JOIN `biz_sales_detail` AS sd ON sd.`sales_id` = source_sales.`id` AND sd.`goods_id` = goods.`id`;
+
+-- 4.9.2 初始化成本快照字段（V2.2 口径，D110 落到明细行表）
+-- 销售明细行：按头单销售时间回溯最近有效进货价，兜底商品进价
+UPDATE `biz_sales_detail` sd
+JOIN `biz_sales` s ON s.id = sd.sales_id
+LEFT JOIN `base_goods` bg ON bg.id = sd.goods_id
 SET
-        s.cost_unit_price = COALESCE(
+        sd.cost_unit_price = COALESCE(
                 (
                         SELECT p.unit_price
                         FROM `biz_purchase` p
-                        WHERE p.goods_id = s.goods_id
+                        WHERE p.goods_id = sd.goods_id
                             AND p.is_deleted = 0
                             AND p.biz_status = 1
                             AND p.operation_time <= s.operation_time
@@ -737,12 +812,12 @@ SET
                 bg.purchase_price,
                 0
         ),
-        s.cost_total_price = ROUND(
-                s.quantity * COALESCE(
+        sd.cost_total_price = ROUND(
+                sd.quantity * COALESCE(
                         (
                                 SELECT p.unit_price
                                 FROM `biz_purchase` p
-                                WHERE p.goods_id = s.goods_id
+                                WHERE p.goods_id = sd.goods_id
                                     AND p.is_deleted = 0
                                     AND p.biz_status = 1
                                     AND p.operation_time <= s.operation_time
@@ -754,11 +829,11 @@ SET
                 ),
                 2
         ),
-        s.cost_source = CASE
+        sd.cost_source = CASE
                 WHEN (
                         SELECT p.unit_price
                         FROM `biz_purchase` p
-                        WHERE p.goods_id = s.goods_id
+                        WHERE p.goods_id = sd.goods_id
                             AND p.is_deleted = 0
                             AND p.biz_status = 1
                             AND p.operation_time <= s.operation_time
@@ -768,19 +843,21 @@ SET
                 WHEN bg.purchase_price IS NOT NULL THEN 'GOODS_PRICE'
                 ELSE 'ZERO_FALLBACK'
         END
-WHERE s.is_deleted = 0;
+WHERE sd.is_deleted = 0;
 
--- 客退单：优先继承来源销售成本快照，兜底最近进货价/商品进价
-UPDATE `biz_sales_return` r
-LEFT JOIN `biz_sales` s ON s.id = r.source_sales_id
-LEFT JOIN `base_goods` bg ON bg.id = r.goods_id
+-- 客退明细行：优先继承来源销售行成本快照(SOURCE_SALE)，兜底最近进货价/商品进价
+UPDATE `biz_sales_return_detail` rd
+JOIN `biz_sales_return` r ON r.id = rd.return_id
+LEFT JOIN `biz_sales_detail` sd ON sd.id = rd.source_sales_detail_id
+LEFT JOIN `biz_sales` s ON s.id = sd.sales_id
+LEFT JOIN `base_goods` bg ON bg.id = rd.goods_id
 SET
-        r.cost_unit_price = COALESCE(
-                s.cost_unit_price,
+        rd.cost_unit_price = COALESCE(
+                sd.cost_unit_price,
                 (
                         SELECT p.unit_price
                         FROM `biz_purchase` p
-                        WHERE p.goods_id = r.goods_id
+                        WHERE p.goods_id = rd.goods_id
                             AND p.is_deleted = 0
                             AND p.biz_status = 1
                             AND p.operation_time <= COALESCE(s.operation_time, r.operation_time)
@@ -790,13 +867,13 @@ SET
                 bg.purchase_price,
                 0
         ),
-        r.cost_total_price = ROUND(
-                r.quantity * COALESCE(
-                        s.cost_unit_price,
+        rd.cost_total_price = ROUND(
+                rd.quantity * COALESCE(
+                        sd.cost_unit_price,
                         (
                                 SELECT p.unit_price
                                 FROM `biz_purchase` p
-                                WHERE p.goods_id = r.goods_id
+                                WHERE p.goods_id = rd.goods_id
                                     AND p.is_deleted = 0
                                     AND p.biz_status = 1
                                     AND p.operation_time <= COALESCE(s.operation_time, r.operation_time)
@@ -808,12 +885,12 @@ SET
                 ),
                 2
         ),
-        r.cost_source = CASE
-                WHEN s.cost_unit_price IS NOT NULL THEN 'SOURCE_SALE'
+        rd.cost_source = CASE
+                WHEN sd.cost_unit_price IS NOT NULL THEN 'SOURCE_SALE'
                 WHEN (
                         SELECT p.unit_price
                         FROM `biz_purchase` p
-                        WHERE p.goods_id = r.goods_id
+                        WHERE p.goods_id = rd.goods_id
                             AND p.is_deleted = 0
                             AND p.biz_status = 1
                             AND p.operation_time <= COALESCE(s.operation_time, r.operation_time)
@@ -823,30 +900,30 @@ SET
                 WHEN bg.purchase_price IS NOT NULL THEN 'GOODS_PRICE'
                 ELSE 'ZERO_FALLBACK'
         END
-WHERE r.is_deleted = 0;
+WHERE rd.is_deleted = 0;
 
 -- 成本快照覆盖率校验（应返回 0）
-SELECT 'biz_sales' AS table_name,
+SELECT 'biz_sales_detail' AS table_name,
              COUNT(*) AS missing_count
-FROM `biz_sales`
+FROM `biz_sales_detail`
 WHERE is_deleted = 0
     AND (cost_unit_price IS NULL OR cost_total_price IS NULL OR cost_source IS NULL)
 UNION ALL
-SELECT 'biz_sales_return' AS table_name,
+SELECT 'biz_sales_return_detail' AS table_name,
              COUNT(*) AS missing_count
-FROM `biz_sales_return`
+FROM `biz_sales_return_detail`
 WHERE is_deleted = 0
     AND (cost_unit_price IS NULL OR cost_total_price IS NULL OR cost_source IS NULL);
 
--- 4.9.2 可选严格模式（S4）
+-- 4.9.3 可选严格模式（S4）
 -- 仅当上方 missing_count 均为 0 时再启用。
 -- 如需启用，请取消注释后执行。
--- ALTER TABLE `biz_sales`
+-- ALTER TABLE `biz_sales_detail`
 -- MODIFY COLUMN `cost_unit_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 -- MODIFY COLUMN `cost_total_price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
 -- MODIFY COLUMN `cost_source` VARCHAR(30) NOT NULL DEFAULT 'ZERO_FALLBACK';
 --
--- ALTER TABLE `biz_sales_return`
+-- ALTER TABLE `biz_sales_return_detail`
 -- MODIFY COLUMN `cost_unit_price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 -- MODIFY COLUMN `cost_total_price` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
 -- MODIFY COLUMN `cost_source` VARCHAR(30) NOT NULL DEFAULT 'ZERO_FALLBACK';
@@ -909,30 +986,34 @@ LEFT JOIN `base_goods` g ON p.goods_id = g.id
 LEFT JOIN `sys_user` u ON p.operator_id = u.id
 WHERE p.is_deleted = 0;
 
--- 5.3 销售详情视图 (包含商品和操作人信息)
+-- 5.3 销售明细视图 (D110 头行结构：明细行 JOIN 头单与商品、操作人信息)
 CREATE OR REPLACE VIEW `v_sales_detail` AS
 SELECT
-    s.id,
+    sd.id AS detail_id,
+    s.id AS sales_id,
     s.sales_no,
-    s.goods_id,
-    s.goods_name,
+    sd.goods_id,
+    sd.goods_name,
     g.goods_code,
     g.category,
     g.brand,
-    s.quantity,
-    s.unit_price,
-    s.total_price,
+    sd.quantity,
+    sd.unit_price,
+    sd.total_price,
+    s.total_quantity,
+    s.total_amount,
     s.operator_id,
     s.operator_name,
     u.real_name AS operator_real_name,
     s.operation_time,
     s.remark,
-    s.create_time,
-    s.update_time
-FROM `biz_sales` s
-LEFT JOIN `base_goods` g ON s.goods_id = g.id
+    sd.create_time,
+    sd.update_time
+FROM `biz_sales_detail` sd
+JOIN `biz_sales` s ON sd.sales_id = s.id
+LEFT JOIN `base_goods` g ON sd.goods_id = g.id
 LEFT JOIN `sys_user` u ON s.operator_id = u.id
-WHERE s.is_deleted = 0;
+WHERE sd.is_deleted = 0 AND s.is_deleted = 0;
 
 -- =============================================
 -- 六、存储过程示例
@@ -1705,3 +1786,33 @@ CREATE TABLE IF NOT EXISTS `biz_stocktake_detail` (
 -- ALTER TABLE `biz_production`
 --     ADD COLUMN `pending_order_key` BIGINT GENERATED ALWAYS AS (CASE WHEN `confirm_status` = 1 AND `is_deleted` = 0 THEN `production_order_id` ELSE NULL END) STORED COMMENT '待确认申请唯一键生成列(D107)' AFTER `is_deleted`,
 --     ADD UNIQUE KEY `uk_production_pending_order` (`pending_order_key`);
+
+-- =============================================
+-- 二十一、D110 销售单头行结构改造（一客户多型号，ADR-0013）
+-- =============================================
+-- 改造时 biz_sales / biz_sales_return / biz_production_order 关联行均为 0 行，直接重定义表结构：
+-- 规范段(3.3/3.3.1/3.4/3.4.1)已同步重写为本节终态；本节记录本地库已执行的变更。
+-- 1) biz_sales 头表：删除 goods_id/goods_name/quantity/unit_price/cost_*/total_price 及
+--    idx_goods_id/idx_goods_time/idx_stat_time_status/idx_cost_stat，新增 total_quantity/total_amount；
+-- 2) biz_sales_return 头表：同样删除行字段与相应索引，新增 total_quantity/total_amount；
+-- 3) 新建 biz_sales_detail / biz_sales_return_detail（见规范段 3.3.1/3.4.1）；
+-- 4) v_sales_detail 视图重建到 biz_sales_detail JOIN biz_sales（原 Java 无消费者，语义改为明细行视图）。
+-- 本地执行方式（表为空，直接重建）：
+-- DROP VIEW IF EXISTS `v_sales_detail`;
+-- DROP TABLE IF EXISTS `biz_sales_return_detail`;
+-- DROP TABLE IF EXISTS `biz_sales_return`;
+-- DROP TABLE IF EXISTS `biz_sales_detail`;
+-- DROP TABLE IF EXISTS `biz_sales`;
+-- （随后按规范段 3.3/3.3.1/3.4/3.4.1 重建四张表并重建视图 5.3）
+-- 5) 生产任务单锚定明细行（D110 决策⑥：由"同一成品一单只允许一行"约束唯一解析）：
+ALTER TABLE `biz_production_order`
+    ADD COLUMN `sales_detail_id` BIGINT DEFAULT NULL COMMENT '关联的销售明细行ID(D110: 由(销售单,成品)唯一解析；前端仍只传销售单ID)' AFTER `sales_order_id`,
+    ADD KEY `idx_sales_detail_id` (`sales_detail_id`);
+-- 6) 行级不变量数据库兜底（review 补强）：同一成品一单只允许一行 / 同一来源行一退货单只允许一行
+--    （idx_sales_id 被 uk_sales_goods 最左前缀覆盖，故同时删除；应用层去重校验保留用于友好报错）
+ALTER TABLE `biz_sales_detail`
+    ADD UNIQUE KEY `uk_sales_goods` (`sales_id`, `goods_id`),
+    DROP KEY `idx_sales_id`;
+ALTER TABLE `biz_sales_return_detail`
+    ADD UNIQUE KEY `uk_return_source_line` (`return_id`, `source_sales_detail_id`),
+    DROP KEY `idx_return_id`;

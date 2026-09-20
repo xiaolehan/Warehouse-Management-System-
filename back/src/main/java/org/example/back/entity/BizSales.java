@@ -9,6 +9,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 销售单头表（D110 头行结构）：只留单据与汇总字段，成品行见 {@link BizSalesDetail}。
+ */
 @Data
 @TableName("biz_sales")
 public class BizSales {
@@ -18,30 +21,15 @@ public class BizSales {
 
     private String salesNo;
 
-    private Long goodsId;
-
-    private String goodsName;
-
-    private Integer quantity;
-
-    private BigDecimal unitPrice;
+    /**
+     * 销售总数量(建单按明细行合计，单据不可编辑)
+     */
+    private Integer totalQuantity;
 
     /**
-     * 成本单价快照
+     * 销售总金额(建单按明细行合计，单据不可编辑)
      */
-    private BigDecimal costUnitPrice;
-
-    /**
-     * 成本总额快照
-     */
-    private BigDecimal costTotalPrice;
-
-    /**
-     * 成本来源: RECENT_PURCHASE/GOODS_PRICE/ZERO_FALLBACK
-     */
-    private String costSource;
-
-    private BigDecimal totalPrice;
+    private BigDecimal totalAmount;
 
     private Long operatorId;
 

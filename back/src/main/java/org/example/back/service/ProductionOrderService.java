@@ -16,6 +16,7 @@ import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizProduction;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizSales;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
@@ -23,6 +24,7 @@ import org.example.back.mapper.BizProductionMapper;
 import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionOrderVO;
@@ -80,6 +82,9 @@ public class ProductionOrderService {
 
     @Autowired
     private BizSalesMapper bizSalesMapper;
+
+    @Autowired
+    private BizSalesDetailMapper bizSalesDetailMapper;
 
     @Autowired
     private org.example.back.mapper.BizPurchaseRequestMapper bizPurchaseRequestMapper;
@@ -209,8 +214,8 @@ public class ProductionOrderService {
         requireOrderWriteAccess();
         BaseGoods product = requireProduct(dto.getGoodsId());
         KuaiTaoResult kit = computeKit(dto.getGoodsId(), dto.getQuantity());
-        // D70：选填关联销售单（须同成品、正常且待出库）；通用备货单留空
-        BizSales linkedSales = requireLinkableSalesOrder(dto.getSalesOrderId(), product.getId());
+        // D70/D110：选填关联销售单（须同成品、正常且待出库，且单内有该成品明细行）；通用备货单留空
+        BizSalesDetail linkedDetail = requireLinkableSalesOrder(dto.getSalesOrderId(), product.getId());
 
         BizProductionOrder order = new BizProductionOrder();
         order.setOrderNo(CodeGenerator.productionNo());
@@ -221,7 +226,8 @@ public class ProductionOrderService {
         order.setStatus(BizProductionOrder.STATUS_PENDING);
         order.setKitStatus(kit.kitStatus);
         order.setSource(BizProductionOrder.SOURCE_MANUAL);
-        order.setSalesOrderId(linkedSales == null ? null : linkedSales.getId());
+        order.setSalesOrderId(linkedDetail == null ? null : linkedDetail.getSalesId());
+        order.setSalesDetailId(linkedDetail == null ? null : linkedDetail.getId());
         order.setProcessSnapshot(String.join("\n", ProductionStepService.PROCESS_STEPS));
         order.setRemark(dto.getRemark());
         orderMapper.insert(order);
@@ -394,8 +400,15 @@ public class ProductionOrderService {
             throw BusinessException.validateFail(
                     "生产任务单当前为「" + statusText(order.getStatus()) + "」状态，不能确认入库，请驳回该入库申请");
         }
-        order.setStatus(BizProductionOrder.STATUS_DONE);
-        orderMapper.updateById(order);
+        // review 补强：条件更新兜底并发（读守卫与写之间任务单可能被终止/完工）——只有仍处待入库态才转已完成
+        LambdaUpdateWrapper<BizProductionOrder> doneWrapper = new LambdaUpdateWrapper<>();
+        doneWrapper.eq(BizProductionOrder::getId, orderId)
+                .eq(BizProductionOrder::getStatus, BizProductionOrder.STATUS_AWAIT_QC)
+                .set(BizProductionOrder::getStatus, BizProductionOrder.STATUS_DONE);
+        if (orderMapper.update(null, doneWrapper) != 1) {
+            throw BusinessException.validateFail(
+                    "生产任务单已被处理（当前为「" + statusText(requireOrder(orderId).getStatus()) + "」），不能确认入库，请刷新后重试");
+        }
         // D73：订单终态（已完成）——撤销该单未读待办（含"关联销售单已取消"等绑 production_order 的消息）
         messageService.revokeUnreadByBiz("production_order", orderId);
         // D70：关联销售单仍待出库 → 通知建单销售本人"可发货"（biz 绑定销售单，出库/作废撤未读）
@@ -575,8 +588,12 @@ public class ProductionOrderService {
 
     // ============================== 私有：校验与工具 ==============================
 
-    /** D70：校验可关联的销售单——存在、正常（未作废）、待出库、同成品；null 表示不关联（备货单） */
-    private BizSales requireLinkableSalesOrder(Long salesOrderId, Long goodsId) {
+    /**
+     * D70/D110：校验可关联的销售单——存在、正常（未作废）、待出库，且存在该成品的明细行
+     * （「同一成品一单只允许一行」约束保证 (头单,成品) 唯一解析出行）；null 表示不关联（备货单）。
+     * 返回解析出的销售明细行（create 据此写 sales_detail_id 锚定）。
+     */
+    private BizSalesDetail requireLinkableSalesOrder(Long salesOrderId, Long goodsId) {
         if (salesOrderId == null) {
             return null;
         }
@@ -590,10 +607,16 @@ public class ProductionOrderService {
         if (sales.getConfirmStatus() == null || sales.getConfirmStatus() != SalesService.CONFIRM_PENDING) {
             throw BusinessException.validateFail("关联销售单已确认出库，无需排产");
         }
-        if (!goodsId.equals(sales.getGoodsId())) {
-            throw BusinessException.validateFail("关联销售单的成品与本任务单不一致");
+        List<BizSalesDetail> lines = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                .eq(BizSalesDetail::getSalesId, salesOrderId)
+                .eq(BizSalesDetail::getGoodsId, goodsId)
+                .orderByAsc(BizSalesDetail::getSortNo)
+                .orderByAsc(BizSalesDetail::getId)
+                .last("LIMIT 1"));
+        if (lines.isEmpty()) {
+            throw BusinessException.validateFail("关联销售单中没有本任务单成品的明细行，无法关联");
         }
-        return sales;
+        return lines.get(0);
     }
 
     /** D70：生产入库后，若关联销售单仍正常且待出库 → 通知建单销售本人 */
@@ -607,7 +630,7 @@ public class ProductionOrderService {
             return;
         }
         messageService.sendSalesReadyToShipToUser(
-                sales.getOperatorId(), sales.getSalesNo(), order.getGoodsName(), sales.getQuantity(), sales.getId());
+                sales.getOperatorId(), sales.getSalesNo(), order.getGoodsName() + "×" + order.getQuantity(), sales.getId());
     }
 
     /** D70/D73：批量填充关联销售单号；销售单已作废→"单号（已作废）"、已删除→"已取消的销售单" */
@@ -747,8 +770,9 @@ public class ProductionOrderService {
     }
 
     /**
-     * D107：列表批量回填待确认入库申请 id（仅待入库行）——一次 in 查询，
-     * 供列表行内「提交入库申请/撤销申请」按钮与详情同口径显隐。
+     * D107：列表批量回填待确认入库申请 id/单号（仅待入库行）——一次 in 查询，
+     * 供列表行内「提交入库申请/撤销申请」按钮与详情同口径显隐；
+     * 撤销确认弹窗文案需要 pendingInboundNo（review 补强：原先只填 id，弹窗单号显示 undefined）。
      */
     private void fillPendingInboundIdBatch(List<ProductionOrderVO> records, List<BizProductionOrder> orders) {
         List<Long> awaitIds = orders.stream()
@@ -761,12 +785,13 @@ public class ProductionOrderService {
         w.in(BizProduction::getProductionOrderId, awaitIds)
                 .eq(BizProduction::getConfirmStatus, BizProduction.CONFIRM_PENDING)
                 .eq(BizProduction::getBizStatus, 1);
-        Map<Long, Long> pendingByOrder = productionMapper.selectList(w).stream()
-                .collect(Collectors.toMap(BizProduction::getProductionOrderId, BizProduction::getId, (a, b) -> a));
+        Map<Long, BizProduction> pendingByOrder = productionMapper.selectList(w).stream()
+                .collect(Collectors.toMap(BizProduction::getProductionOrderId, p -> p, (a, b) -> a));
         for (ProductionOrderVO vo : records) {
-            Long pendingId = pendingByOrder.get(vo.getId());
-            if (pendingId != null) {
-                vo.setPendingInboundId(pendingId);
+            BizProduction pending = pendingByOrder.get(vo.getId());
+            if (pending != null) {
+                vo.setPendingInboundId(pending.getId());
+                vo.setPendingInboundNo(pending.getProductionNo());
             }
         }
     }

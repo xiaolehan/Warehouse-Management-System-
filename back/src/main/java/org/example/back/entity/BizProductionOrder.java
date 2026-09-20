@@ -66,6 +66,10 @@ public class BizProductionOrder {
     /** D70：关联销售单 id（可空，一张生产单最多关联一张销售单）；通用备货单留空 */
     private Long salesOrderId;
 
+    /** D110：关联的销售明细行 id（建单时由(销售单,成品)唯一解析写入的行级锚点，ADR-0013；
+     * 当前行级读取走 (sales_order_id, goods_id) 解析，本列留给行级直连场景（如一单同成品多行的未来扩展）） */
+    private Long salesDetailId;
+
     /** D71：生产手工修正的预计完工时间（可空），优先于系统推算 */
     private LocalDateTime expectedCompletionTime;
 

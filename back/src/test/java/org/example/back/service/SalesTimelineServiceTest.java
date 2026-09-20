@@ -6,15 +6,18 @@ import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.entity.BizSales;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionStepVO;
 import org.example.back.vo.QcStateVO;
+import org.example.back.vo.SalesTimelineLineVO;
 import org.example.back.vo.SalesTimelineVO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,11 +36,13 @@ import static org.mockito.Mockito.when;
 
 /**
  * D71：履约时间线 + 预计可交付时间推算（现货/缺料/齐套/未排产/手工修正 分支）。
+ * D110 决策⑦：时间线按明细行逐行展示——一单 N 行 → N 根时间线，单行节点结构与旧版一致。
  */
 @ExtendWith(MockitoExtension.class)
 class SalesTimelineServiceTest {
 
     @Mock private BizSalesMapper bizSalesMapper;
+    @Mock private BizSalesDetailMapper bizSalesDetailMapper;
     @Mock private BaseGoodsMapper baseGoodsMapper;
     @Mock private BizProductionOrderMapper productionOrderMapper;
     @Mock private BizBomMapper bomMapper;
@@ -50,13 +55,10 @@ class SalesTimelineServiceTest {
 
     @InjectMocks private SalesTimelineService service;
 
-    private BizSales sales(int quantity, int confirmStatus) {
+    private BizSales sales(int confirmStatus) {
         BizSales sales = new BizSales();
         sales.setId(501L);
         sales.setSalesNo("XS260910001");
-        sales.setGoodsId(29L);
-        sales.setGoodsName("PTO153");
-        sales.setQuantity(quantity);
         sales.setBizStatus(1);
         sales.setConfirmStatus(confirmStatus);
         sales.setOperationTime(LocalDateTime.of(2026, 9, 10, 9, 0));
@@ -64,11 +66,22 @@ class SalesTimelineServiceTest {
         return sales;
     }
 
+    private BizSalesDetail detail(long id, long goodsId, String name, int quantity) {
+        BizSalesDetail d = new BizSalesDetail();
+        d.setId(id);
+        d.setSalesId(501L);
+        d.setGoodsId(goodsId);
+        d.setGoodsName(name);
+        d.setQuantity(quantity);
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(List.of(d));
+        return d;
+    }
+
     private void goodsWithStock(int stock) {
         BaseGoods goods = new BaseGoods();
         goods.setId(29L);
         goods.setStock(stock);
-        when(baseGoodsMapper.selectById(29L)).thenReturn(goods);
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(goods));
     }
 
     private BizProductionOrder order(int status) {
@@ -81,7 +94,7 @@ class SalesTimelineServiceTest {
         order.setSalesOrderId(501L);
         order.setCreateTime(LocalDateTime.of(2026, 9, 10, 10, 0));
         order.setUpdateTime(LocalDateTime.of(2026, 9, 11, 10, 0));
-        when(productionOrderMapper.selectOne(any())).thenReturn(order);
+        when(productionOrderMapper.selectList(any())).thenReturn(List.of(order));
         return order;
     }
 
@@ -95,47 +108,93 @@ class SalesTimelineServiceTest {
 
     @Test
     void noOrder_sufficientStock_twoNodesReadyToShip() {
-        sales(5, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 5);
         goodsWithStock(10);
-        when(productionOrderMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.selectList(any())).thenReturn(List.of());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(2, vo.getNodes().size()); // 下单 → 发货
-        assertEquals("下单", vo.getNodes().get(0).getTitle());
-        assertEquals("发货", vo.getNodes().get(1).getTitle());
-        assertTrue(vo.getEstimatedDeliveryText().contains("立即可发"), "实际: " + vo.getEstimatedDeliveryText());
-        assertEquals("none", vo.getEstimatedSource());
+        assertEquals("PTO153", line.getGoodsName());
+        assertEquals(5, line.getQuantity());
+        assertEquals(10, line.getStock());
+        assertEquals(2, line.getNodes().size()); // 下单 → 发货
+        assertEquals("下单", line.getNodes().get(0).getTitle());
+        assertEquals("发货", line.getNodes().get(1).getTitle());
+        assertTrue(line.getEstimatedDeliveryText().contains("立即可发"), "实际: " + line.getEstimatedDeliveryText());
+        assertEquals("none", line.getEstimatedSource());
     }
 
     @Test
     void noOrder_insufficientStock_pendingScheduling() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
-        when(productionOrderMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.selectList(any())).thenReturn(List.of());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(3, vo.getNodes().size()); // 下单 → 排产(待) → 发货(待)
-        assertEquals("pending", vo.getNodes().get(1).getStatus());
-        assertEquals("待生产排产", vo.getEstimatedDeliveryText());
+        assertEquals(3, line.getNodes().size()); // 下单 → 排产(待) → 发货(待)
+        assertEquals("pending", line.getNodes().get(1).getStatus());
+        assertEquals("待生产排产", line.getEstimatedDeliveryText());
     }
 
     @Test
     void shippedOrder_showsShipped() {
-        sales(5, SalesService.CONFIRM_SHIPPED);
+        BizSales s = sales(SalesService.CONFIRM_SHIPPED);
+        java.time.LocalDateTime confirmTime = java.time.LocalDateTime.of(2026, 9, 12, 16, 0);
+        s.setConfirmTime(confirmTime);
+        detail(1L, 29L, "PTO153", 5);
         goodsWithStock(10);
-        when(productionOrderMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.selectList(any())).thenReturn(List.of());
+
+        SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
+
+        assertEquals("done", line.getNodes().get(1).getStatus());
+        assertEquals(confirmTime, line.getNodes().get(1).getTime()); // review 修复：无关联单发货节点须带确认出库时间
+        assertEquals("已发货", line.getEstimatedDeliveryText());
+    }
+
+    // ---------- D110 决策⑦：多明细行 → 多根时间线 ----------
+
+    @Test
+    void multiLineOrder_oneTimelinePerLine() {
+        sales(SalesService.CONFIRM_PENDING);
+        BizSalesDetail line1 = detail(1L, 29L, "PTO153", 5);
+        BizSalesDetail line2 = new BizSalesDetail();
+        line2.setId(2L);
+        line2.setSalesId(501L);
+        line2.setGoodsId(30L);
+        line2.setGoodsName("轴承");
+        line2.setQuantity(3);
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(List.of(line1, line2));
+        BaseGoods g29 = new BaseGoods();
+        g29.setId(29L);
+        g29.setStock(10);
+        BaseGoods g30 = new BaseGoods();
+        g30.setId(30L);
+        g30.setStock(0);
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(g29, g30));
+        when(productionOrderMapper.selectList(any())).thenReturn(List.of());
 
         SalesTimelineVO vo = service.getTimeline(501L);
 
-        assertEquals("done", vo.getNodes().get(1).getStatus());
-        assertEquals("已发货", vo.getEstimatedDeliveryText());
+        assertEquals(2, vo.getLines().size());
+        assertEquals("PTO153", vo.getLines().get(0).getGoodsName());
+        assertEquals(5, vo.getLines().get(0).getQuantity());
+        assertTrue(vo.getLines().get(0).getEstimatedDeliveryText().contains("立即可发"));
+        assertEquals("轴承", vo.getLines().get(1).getGoodsName());
+        assertEquals(3, vo.getLines().get(1).getQuantity());
+        assertEquals("待生产排产", vo.getLines().get(1).getEstimatedDeliveryText()); // 缺货行独立判断
     }
 
     @Test
     void linkedOrder_manualExpectedCompletionWins() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         BizProductionOrder order = order(BizProductionOrder.STATUS_IN_PROGRESS);
         LocalDateTime manual = LocalDateTime.of(2026, 9, 25, 18, 0);
@@ -144,30 +203,34 @@ class SalesTimelineServiceTest {
         when(qcService.buildState(any())).thenReturn(new QcStateVO());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(manual, vo.getEstimatedDeliveryTime());
-        assertEquals("manual", vo.getEstimatedSource());
-        assertTrue(vo.getEstimatedDeliveryText().contains("生产确认"), "实际: " + vo.getEstimatedDeliveryText());
-        assertEquals(8, vo.getNodes().size());
+        assertEquals(manual, line.getEstimatedDeliveryTime());
+        assertEquals("manual", line.getEstimatedSource());
+        assertTrue(line.getEstimatedDeliveryText().contains("生产确认"), "实际: " + line.getEstimatedDeliveryText());
+        assertEquals(8, line.getNodes().size());
     }
 
     @Test
     void linkedOrder_done_readyToShip() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_DONE);
         when(productionStepService.listSteps(any())).thenReturn(null);
         when(qcService.buildState(any())).thenReturn(new QcStateVO());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertTrue(vo.getEstimatedDeliveryText().contains("立即可发"), "实际: " + vo.getEstimatedDeliveryText());
-        assertEquals("done", vo.getNodes().get(6).getStatus()); // 成品入库
+        assertTrue(line.getEstimatedDeliveryText().contains("立即可发"), "实际: " + line.getEstimatedDeliveryText());
+        assertEquals("done", line.getNodes().get(6).getStatus()); // 成品入库
     }
 
     @Test
     void linkedOrder_noLeadDays_pendingEvaluation() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_PENDING);
         bomWithLeadDays(null);
@@ -175,14 +238,16 @@ class SalesTimelineServiceTest {
         when(qcService.buildState(any())).thenReturn(new QcStateVO());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertTrue(vo.getEstimatedDeliveryText().contains("待生产评估"), "实际: " + vo.getEstimatedDeliveryText());
-        assertNull(vo.getEstimatedDeliveryTime());
+        assertTrue(line.getEstimatedDeliveryText().contains("待生产评估"), "实际: " + line.getEstimatedDeliveryText());
+        assertNull(line.getEstimatedDeliveryTime());
     }
 
     @Test
     void linkedOrder_shortage_estimatedByMaxArrivalPlusLeadDays() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_PENDING);
         bomWithLeadDays(5);
@@ -193,21 +258,23 @@ class SalesTimelineServiceTest {
         BizPurchaseRequest request = new BizPurchaseRequest();
         request.setId(77L);
         when(purchaseRequestMapper.selectList(any())).thenReturn(List.of(request));
-        BizPurchaseRequestDetail detail = new BizPurchaseRequestDetail();
-        detail.setExpectedArrivalTime(LocalDateTime.of(2026, 9, 20, 0, 0));
-        when(purchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(detail));
+        BizPurchaseRequestDetail purchaseDetail = new BizPurchaseRequestDetail();
+        purchaseDetail.setExpectedArrivalTime(LocalDateTime.of(2026, 9, 20, 0, 0));
+        when(purchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(purchaseDetail));
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(LocalDateTime.of(2026, 9, 25, 0, 0), vo.getEstimatedDeliveryTime());
-        assertEquals("system", vo.getEstimatedSource());
-        assertTrue(vo.getEstimatedDeliveryText().contains("系统推算"), "实际: " + vo.getEstimatedDeliveryText());
-        assertEquals("current", vo.getNodes().get(2).getStatus()); // 物料准备 进行中
+        assertEquals(LocalDateTime.of(2026, 9, 25, 0, 0), line.getEstimatedDeliveryTime());
+        assertEquals("system", line.getEstimatedSource());
+        assertTrue(line.getEstimatedDeliveryText().contains("系统推算"), "实际: " + line.getEstimatedDeliveryText());
+        assertEquals("current", line.getNodes().get(2).getStatus()); // 物料准备 进行中
     }
 
     @Test
     void linkedOrder_shortageNoArrival_pendingPurchaseClaim() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_PENDING);
         bomWithLeadDays(5);
@@ -217,14 +284,16 @@ class SalesTimelineServiceTest {
         when(purchaseRequestMapper.selectList(any())).thenReturn(List.of());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals("缺料待采购确认到货时间", vo.getEstimatedDeliveryText());
-        assertNull(vo.getEstimatedDeliveryTime());
+        assertEquals("缺料待采购确认到货时间", line.getEstimatedDeliveryText());
+        assertNull(line.getEstimatedDeliveryTime());
     }
 
     @Test
     void linkedOrder_inProgress_estimatedByStartPlusLeadDays() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_IN_PROGRESS);
         bomWithLeadDays(3);
@@ -236,38 +305,43 @@ class SalesTimelineServiceTest {
         when(qcService.buildState(any())).thenReturn(new QcStateVO());
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(LocalDateTime.of(2026, 9, 15, 8, 0), vo.getEstimatedDeliveryTime());
-        assertEquals("system", vo.getEstimatedSource());
-        assertEquals("done", vo.getNodes().get(3).getStatus()); // 开工
-        assertEquals(LocalDateTime.of(2026, 9, 12, 8, 0), vo.getNodes().get(3).getTime());
+        assertEquals(LocalDateTime.of(2026, 9, 15, 8, 0), line.getEstimatedDeliveryTime());
+        assertEquals("system", line.getEstimatedSource());
+        assertEquals("done", line.getNodes().get(3).getStatus()); // 开工
+        assertEquals(LocalDateTime.of(2026, 9, 12, 8, 0), line.getNodes().get(3).getTime());
     }
 
     @Test
     void linkedOrder_voidedOrder_backToPendingScheduling() {
-        sales(10, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 10);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_VOIDED);
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals(3, vo.getNodes().size());
-        assertTrue(vo.getNodes().get(1).getDescription().contains("已作废"), "实际: " + vo.getNodes().get(1).getDescription());
-        assertEquals("待生产排产", vo.getEstimatedDeliveryText());
+        assertEquals(3, line.getNodes().size());
+        assertTrue(line.getNodes().get(1).getDescription().contains("已作废"), "实际: " + line.getNodes().get(1).getDescription());
+        assertEquals("待生产排产", line.getEstimatedDeliveryText());
     }
 
     // ---------- D73：关联生产单已终止 → 时间线回退待排产 ----------
 
     @Test
     void getTimeline_terminatedLinkedOrder_fallsBackToReschedule() {
-        sales(5, SalesService.CONFIRM_PENDING);
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 5);
         goodsWithStock(0);
         order(BizProductionOrder.STATUS_TERMINATED);
 
         SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
 
-        assertEquals("待生产排产", vo.getEstimatedDeliveryText());
-        assertTrue(vo.getNodes().stream().anyMatch(n -> "scheduled".equals(n.getKey())
+        assertEquals("待生产排产", line.getEstimatedDeliveryText());
+        assertTrue(line.getNodes().stream().anyMatch(n -> "scheduled".equals(n.getKey())
                 && n.getDescription() != null && n.getDescription().contains("已终止")));
     }
 }

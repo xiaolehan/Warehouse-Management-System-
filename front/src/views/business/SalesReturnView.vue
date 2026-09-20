@@ -41,11 +41,12 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="returnNo" label="销售退货单号" width="150" />
         <el-table-column prop="orderNo" label="原销售单" width="150" />
-        <el-table-column prop="goodsName" label="退回商品" />
+        <!-- D110：一单 N 个退货行，列表汇总展示「首品名 等 N 种」，明细进详情 -->
+        <el-table-column prop="goodsSummary" label="退回商品" min-width="160" show-overflow-tooltip />
         <el-table-column prop="customerName" label="退货公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="reason" label="退货原因" show-overflow-tooltip />
-        <el-table-column prop="quantity" label="退货数量" width="100" />
-        <el-table-column v-if="showPrice" prop="refundAmount" label="退货金额(元)" width="120" />
+        <el-table-column prop="totalQuantity" label="退货数量" width="100" />
+        <el-table-column v-if="showPrice" prop="totalAmount" label="退货金额(元)" width="120" />
         <el-table-column prop="returnDate" label="退货日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column label="确认状态" width="120">
@@ -126,8 +127,34 @@
       </div>
     </el-card>
 
-    <el-dialog :title="dialogType === 'view' ? '销售退货详情' : '新增销售退货单'" v-model="dialogVisible" width="500px">
-      <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
+    <el-dialog :title="dialogType === 'view' ? '销售退货详情' : '新增销售退货单'" v-model="dialogVisible" width="720px">
+      <!-- D110：查看=头信息 + 退货行明细 -->
+      <template v-if="dialogType === 'view'">
+        <el-form label-width="100px" disabled>
+          <el-row :gutter="16">
+            <el-col :span="12"><el-form-item label="退货单号"><el-input :value="viewForm.returnNo" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="原销售单"><el-input :value="viewForm.orderNo" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="退货公司名"><el-input :value="viewForm.customerName" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="退货日期"><el-input :value="viewForm.returnDate" /></el-form-item></el-col>
+            <el-col v-if="showPrice" :span="12"><el-form-item label="退货总额"><el-input :value="viewForm.totalAmount"><template #append>元</template></el-input></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="退货原因"><el-input :value="viewForm.reason" type="textarea" :rows="2" /></el-form-item></el-col>
+          </el-row>
+        </el-form>
+        <el-form label-width="100px">
+          <el-form-item label="退回明细">
+            <el-table :data="viewForm.details" size="small" border style="width: 100%">
+              <el-table-column type="index" label="#" width="50" align="center" />
+              <el-table-column prop="goodsName" label="成品" min-width="140" />
+              <el-table-column prop="quantity" label="退货数量" width="100" align="center" />
+              <el-table-column v-if="showPrice" prop="unitPrice" label="退货单价(元)" width="110" />
+              <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />
+            </el-table>
+          </el-form-item>
+        </el-form>
+      </template>
+
+      <el-form v-else ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px">
         <el-form-item label="来源销售单" prop="sourceSalesId">
           <el-select
             v-model="dialogForm.sourceSalesId"
@@ -139,10 +166,11 @@
             <el-option
               v-for="item in sourceSalesOptions"
               :key="item.id"
-              :label="`${item.salesNo} | ${item.goodsName} | 可退:${item.returnableQuantity}`"
+              :label="`${item.salesNo} | ${item.customerName || '未填客户'} | ${normalizeDateTime(item.operationTime)}`"
               :value="item.id"
             />
           </el-select>
+          <div class="source-hint">按原销售单选择，下方按明细行填写退货数量（行级可退 = 原行数量 − 已退累计）</div>
         </el-form-item>
         <el-form-item label="退货公司名" prop="customerName">
           <el-select
@@ -158,19 +186,41 @@
             <el-option v-for="name in customerNameOptions" :key="name" :label="name" :value="name" />
           </el-select>
         </el-form-item>
-        <el-form-item label="退回商品">
-          <el-input :value="selectedSourceSales?.goodsName || '-'" disabled />
+        <el-form-item v-if="selectedSourceSales" label="退回明细" required>
+          <div class="return-lines">
+            <el-table :data="selectedSourceSales.lines" size="small" border style="width: 100%">
+              <el-table-column prop="goodsName" label="成品" min-width="140" />
+              <el-table-column prop="quantity" label="原行数量" width="90" align="center" />
+              <el-table-column prop="returnableQuantity" label="可退数量" width="90" align="center" />
+              <el-table-column label="退回数量" width="140">
+                <template #default="scope">
+                  <el-input-number
+                    v-model="returnQty[scope.row.salesDetailId]"
+                    :min="0"
+                    :max="scope.row.returnableQuantity"
+                    :precision="0"
+                    size="small"
+                    style="width: 100%"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column v-if="showPrice" label="退货单价" width="150">
+                <template #default="scope">
+                  <el-input-number
+                    v-model="returnPrice[scope.row.salesDetailId]"
+                    :min="0.01"
+                    :precision="2"
+                    :step="0.1"
+                    size="small"
+                    style="width: 100%"
+                  />
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="return-lines-hint">不需要退的行保持 0 即可；同一来源行只允许一行退货</div>
+          </div>
         </el-form-item>
-        <el-form-item label="可退数量">
-          <el-input :value="String(selectedSourceSales?.returnableQuantity ?? '-')" disabled />
-        </el-form-item>
-        <el-form-item label="退回数量" prop="quantity">
-          <el-input-number v-model="dialogForm.quantity" :min="1" style="width: 100%" />
-        </el-form-item>
-        <el-form-item v-if="showPrice" label="退货单价" prop="unitPrice">
-          <el-input-number v-model="dialogForm.unitPrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
-        </el-form-item>
-        <el-form-item v-if="showPrice" label="退货金额" prop="refundAmount">
+        <el-form-item v-if="showPrice && selectedSourceSales" label="退货总额">
           <el-input :value="refundAmountText" disabled>
             <template #append>元</template>
           </el-input>
@@ -215,7 +265,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
+import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
@@ -241,7 +291,6 @@ const pageSize = ref(10)
 const total = ref(0)
 const loading = ref(false)
 const sourceSalesOptions = ref([])
-const selectedSourceSales = ref(null)
 
 // D94：作废说明弹窗 + 行内「作废审批中」状态（仅 admin 拉取，与作废按钮可见性一致）
 const voidDialogVisible = ref(false)
@@ -252,9 +301,9 @@ const isSalesAdmin = userRole === 'admin' && userDept === 'sales'
 const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
 const voidStockEffect = computed(() => {
   const row = voidTarget.value
-  // 已确认入库的销退单，作废审批通过后须把退回来的货扣回去
+  // 已确认入库的销退单，作废审批通过后须把退回来的货扣回去（D110：按明细行回冲，提示按汇总）
   if (!row || row.confirmStatus !== 2) return null
-  return { goodsName: row.goodsName, quantity: row.quantity, mode: 'deduct' }
+  return { goodsName: row.goodsSummary || '多成品', quantity: row.totalQuantity, mode: 'deduct' }
 })
 
 // 来源销售单的历史客户公司名（去重）作为下拉提示；允许手动输入任意文字
@@ -276,18 +325,22 @@ const tableData = ref([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')
 const dialogFormRef = ref(null)
-const dialogForm = reactive({ sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '', customerName: '' })
+const selectedSourceSales = ref(null)
+// D110：行级退货录入——来源明细行 id → 退回数量 / 退货单价（默认原行单价）
+const returnQty = reactive({})
+const returnPrice = reactive({})
+const dialogForm = reactive({ sourceSalesId: null, returnDate: '', reason: '', customerName: '' })
+const viewForm = reactive({ returnNo: '', orderNo: '', customerName: '', returnDate: '', totalAmount: '', operator: '', reason: '', details: [] })
 
 const refundAmountText = computed(() => {
-  const qty = Number(dialogForm.quantity || 0)
-  const price = Number(dialogForm.unitPrice || 0)
-  return (qty * price).toFixed(2)
+  if (!selectedSourceSales.value) return '0.00'
+  return selectedSourceSales.value.lines
+    .reduce((sum, line) => sum + Number(returnQty[line.salesDetailId] || 0) * Number(returnPrice[line.salesDetailId] || 0), 0)
+    .toFixed(2)
 })
 
 const dialogRules = {
   sourceSalesId: [{ required: true, message: '请选择来源销售单', trigger: 'change' }],
-  quantity: [{ required: true, message: '请输入数量', trigger: 'blur' }],
-  unitPrice: [{ required: true, message: '请输入退货单价', trigger: 'blur' }],
   returnDate: [{ required: true, message: '请选择退货日期', trigger: 'change' }]
 }
 
@@ -355,8 +408,13 @@ const loadSourceSalesOptions = async () => {
 
 const handleSourceSalesChange = (sourceSalesId) => {
   selectedSourceSales.value = sourceSalesOptions.value.find((item) => item.id === sourceSalesId) || null
+  // 清空上一单的行级录入；单价默认取原行单价
+  Object.keys(returnQty).forEach((k) => delete returnQty[k])
+  Object.keys(returnPrice).forEach((k) => delete returnPrice[k])
   if (dialogType.value === 'add' && selectedSourceSales.value) {
-    dialogForm.unitPrice = Number(selectedSourceSales.value.unitPrice || 0)
+    for (const line of selectedSourceSales.value.lines || []) {
+      returnPrice[line.salesDetailId] = Number(line.unitPrice || 0)
+    }
     // 选中来源单后自动带出该公司名（仍可手动修改）
     dialogForm.customerName = selectedSourceSales.value.customerName || dialogForm.customerName || ''
   }
@@ -431,7 +489,9 @@ const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
   selectedSourceSales.value = null
-  Object.assign(dialogForm, { sourceSalesId: null, quantity: 1, unitPrice: 0, returnDate: '', reason: '', customerName: '' })
+  Object.keys(returnQty).forEach((k) => delete returnQty[k])
+  Object.keys(returnPrice).forEach((k) => delete returnPrice[k])
+  Object.assign(dialogForm, { sourceSalesId: null, returnDate: '', reason: '', customerName: '' })
   dialogVisible.value = true
 }
 
@@ -453,19 +513,15 @@ const handleView = async (row) => {
     const detail = res.data || {}
     dialogType.value = 'view'
     loadTimeline(row.id)
-    selectedSourceSales.value = {
-      id: detail.sourceSalesId,
-      salesNo: detail.sourceSalesNo,
-      goodsName: detail.goodsName,
-      returnableQuantity: detail.quantity
-    }
-    Object.assign(dialogForm, {
-      sourceSalesId: detail.sourceSalesId ?? null,
+    Object.assign(viewForm, {
+      returnNo: detail.returnNo || '',
+      orderNo: detail.orderNo || detail.sourceSalesNo || '',
       customerName: detail.customerName || '',
-      quantity: detail.quantity ?? 1,
-      unitPrice: detail.unitPrice ?? (detail.refundAmount && detail.quantity ? Number(detail.refundAmount) / Number(detail.quantity) : 0),
       returnDate: normalizeDateTime(detail.returnDate || detail.operationTime || detail.createTime),
-      reason: detail.reason || detail.remark || ''
+      totalAmount: detail.totalAmount ?? '—',
+      operator: detail.operator || detail.operatorName || '',
+      reason: detail.reason || detail.remark || '',
+      details: detail.details || []
     })
     dialogVisible.value = true
   } catch {
@@ -483,7 +539,7 @@ const handleDelete = (row) => {
 }
 
 const handleConfirm = (row) => {
-  ElMessageBox.confirm('确认入库将把退货数量加回库存，确认继续吗？', '确认入库', { type: 'warning' }).then(async () => {
+  ElMessageBox.confirm('确认入库将按明细行把退货数量加回库存，确认继续吗？', '确认入库', { type: 'warning' }).then(async () => {
     await confirmSalesReturnAPI(row.id)
     ElMessage.success('已确认入库')
     loadList()
@@ -521,17 +577,29 @@ const submitForm = () => {
     if (!valid) {
       return
     }
-    // 本地校验（非 API 错误）：退货数量不可超出来源单可退数量
-    if (selectedSourceSales.value && dialogForm.quantity > selectedSourceSales.value.returnableQuantity) {
-      ElMessage.warning(`退货数量超出可退数量，最多可退 ${selectedSourceSales.value.returnableQuantity}`)
+    // D110：按明细行组装退货项（数量>0 的行）；同一来源行只允许一行（后端同口径校验）
+    const lines = selectedSourceSales.value?.lines || []
+    const items = lines
+      .filter((line) => Number(returnQty[line.salesDetailId] || 0) > 0)
+      .map((line) => ({
+        sourceSalesDetailId: line.salesDetailId,
+        quantity: Number(returnQty[line.salesDetailId]),
+        unitPrice: showPrice ? Number(returnPrice[line.salesDetailId]) : undefined
+      }))
+    if (!items.length) {
+      ElMessage.warning('请至少为一行填写大于 0 的退回数量')
+      return
+    }
+    const overLine = lines.find((line) => Number(returnQty[line.salesDetailId] || 0) > line.returnableQuantity)
+    if (overLine) {
+      ElMessage.warning(`「${overLine.goodsName}」退货数量超出可退数量，最多可退 ${overLine.returnableQuantity}`)
       return
     }
     try {
       const payload = {
         sourceSalesId: dialogForm.sourceSalesId,
+        items,
         customerName: dialogForm.customerName || undefined,
-        quantity: dialogForm.quantity,
-        unitPrice: Number(dialogForm.unitPrice),
         operationTime: buildOperationTime(dialogForm.returnDate),
         remark: dialogForm.reason || ''
       }
@@ -611,5 +679,22 @@ onMounted(async () => {
   color: #909399;
   font-size: 15px;
   cursor: pointer;
+}
+
+.source-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+  margin-top: 4px;
+}
+
+.return-lines {
+  width: 100%;
+}
+
+.return-lines-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

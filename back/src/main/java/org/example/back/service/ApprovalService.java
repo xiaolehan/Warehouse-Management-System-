@@ -379,7 +379,7 @@ public class ApprovalService {
                 LocalDateTime bizTime = sales.getOperationTime() == null ? sales.getCreateTime() : sales.getOperationTime();
                 return new BizDocumentMeta(sales.getSalesNo(), sales.getBizStatus(),
                         bizTime, sales.getConfirmStatus(), buildSnapshot("sales", sales.getId(), sales.getSalesNo(), sales.getBizStatus(),
-                        bizTime, sales.getVoidTime(), sales.getVoidReason(), sales.getQuantity(), sales.getTotalPrice(), sales.getSourceId()));
+                        bizTime, sales.getVoidTime(), sales.getVoidReason(), sales.getTotalQuantity(), sales.getTotalAmount(), sales.getSourceId()));
             }
             case "sales_return" -> {
                 BizSalesReturn salesReturn = bizSalesReturnMapper.selectById(bizId);
@@ -389,7 +389,7 @@ public class ApprovalService {
                 LocalDateTime bizTime = salesReturn.getOperationTime() == null ? salesReturn.getCreateTime() : salesReturn.getOperationTime();
                 return new BizDocumentMeta(salesReturn.getReturnNo(), salesReturn.getBizStatus(),
                         bizTime, salesReturn.getConfirmStatus(), buildSnapshot("sales_return", salesReturn.getId(), salesReturn.getReturnNo(), salesReturn.getBizStatus(),
-                        bizTime, salesReturn.getVoidTime(), salesReturn.getVoidReason(), salesReturn.getQuantity(), salesReturn.getTotalPrice(), salesReturn.getSourceId()));
+                        bizTime, salesReturn.getVoidTime(), salesReturn.getVoidReason(), salesReturn.getTotalQuantity(), salesReturn.getTotalAmount(), salesReturn.getSourceId()));
             }
             default -> throw BusinessException.validateFail("不支持的业务类型: " + bizType);
         }

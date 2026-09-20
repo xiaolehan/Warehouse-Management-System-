@@ -5,6 +5,22 @@
 
 ---
 
+## 会话 45 — 2026-09-20
+
+### 批次三 D110 一客户多型号落地（ADR-0013）——300 单测全绿 + E2E 27/27 + /code-review 15 findings 修 14 项
+
+- **范围（ADR-0013，grilling 拍板 10 决策）：** 销售单头行结构改造——`biz_sales_detail` 一单 N 成品行、**同一成品一单只允许一行**（重复报错合并）；头表只留单据+汇总（total_quantity/total_amount 建单算好）；**整单一次确认出库不拆单**（任一行缺货整单失败回滚）；客退对称多行化 `biz_sales_return_detail`（按来源行退，行级可退量=原行量−该行已退累计，成本快照 SOURCE_SALE 优先）；价格偏离**整单一笔**审批（request_reason 列偏离行明细）；行级缺货标识+建单缺货**按单汇总一条**消息；生产联动锚定明细行（前端仍传头单 id 零改动）；履约时间线**按明细行逐行展示**（方案 A）；统计 SQL 全部下沉 detail JOIN head；红冲死代码移除；消息成品描述汇总化。
+- **后端：** BizSales/BizSalesDetail、BizSalesReturn/BizSalesReturnDetail 实体+Mapper；SalesService（page EXISTS 过滤、fillDetails 行聚合+goodsSummary「首品名 等 N 种」+均价、returnableOptions 行分组、create 逐行构建+缺货/偏离汇总文案、confirm/void/delete 逐行库存）、SalesReturnService（越单/超退/重复来源行三拦截、行成本快照、逐行回补/回冲）、SalesTimelineService（getTimeline 逐行 buildLine，行级 8 节点+预计交付）、ProductionOrderService（requireLinkableSalesOrder 行解析+sales_detail_id 写入）、GoodsReferenceService（引用统计下沉明细行）、统计 Mapper SQL 全改、MessageService 文案汇总化+4 参数签名；db.sql 规范段 3.3/3.3.1/3.4/3.4.1 重写+种子 4.8/4.8.1/4.9 重写+增量段 21。
+- **前端：** SalesView 多行明细编辑器（行级缺货/偏离提示、同品一行去重、库存 hint）、列表汇总列+仓储缺货明细列+整单标红；SalesReturnView 来源单→行级退回数量编辑（可退量钳制、退款预览）；SalesTimeline 按行渲染（行头 品名×数量+现存+预计交付 tag）；business.js 形状无关零改动。
+- **单测：** SalesServiceTest 重写 9 例、SalesTimelineServiceTest 重写 12 例（含一单两行两根时间线）、SalesReturnServiceTest 新建 8 例、ProductionOrderServiceTest 行解析改造 31 例、MessageServiceTest 适配。**全量 300 全绿**；前端 build 8.9s。
+- **E2E（/tmp/e2e_d110.py）27/27：** 多行建单/同品两行拒绝/汇总字段/逐行扣库存/整单缺货失败不拆单且库存不动/缺货消息按单一条/行数量解析/超退/越单/重复来源行拒绝/两行退货确认逐行回补/已退后可退量扣减/时间线按行/明细结构。测后清理：单据/明细/退货全物理清、PTO153 库存恢复 10、测试商品删除（注：db.sql 种子引用 GD00x 仅新装库存在，本地空库合法）。
+- **/code-review 15 findings → 修 14 项：** ①SalesService.delete 头删行留会让成品永久不可删 → 级联软删 biz_sales_detail；②SalesReturnService.delete 同病 → 级联软删；③客退删除按钮误放开 employee（后端 admin-only）→ 收回 roles:['admin']；④时间线无关联单「发货」节点丢 confirmTime → 传参补齐+断言；⑤D107 finalizeAfterInboundConfirmed/terminate 读后无条件写 last-writer-wins → 条件更新（eq 待入库 / in UNFINISHED）+测试改包装器断言；⑥行级不变量仅靠内存去重 → db 唯一键 uk_sales_goods / uk_return_source_line（规范段+增量段 21+本地 ALTER，idx_sales_id/idx_return_id 被最左前缀覆盖删除）；⑦缺货明细列在已出库单误显当前库存回看 → 门控到待出库行（isShortageRow 同口径）；⑧单价无预填无校验（0 被 DTO 拒收）→ 选成品按标准售价预填+提交前>0 校验；⑨列表撤销入库申请弹窗单号 undefined → fillPendingInboundIdBatch 补填 pendingInboundNo；⑪退回数量缺 :precision="0"（2.5 静默截断）→ 补齐；⑫时间线逐行 N+1 → 商品 selectBatchIds+关联单单查分组；⑬建单/退货逐行查最近进价 → latestValidUnitPrices 批量窗口函数一次预取；⑭行级已退累计两服务重复 → 收口 SalesReturnService.returnedQtyBySourceDetail 公开共用；⑮sales_detail_id 注释误导 → 明确「写入锚点，读取走(单,品)解析」留 ADR。**不修 1 项：**⑩GoodsService.findLatestArrivalRemark 内存选最新（D109 已提交代码、非本 diff、本就 2 次查询）→ 留待后续。
+- **踩坑：** clean compile 暴露 GoodsReferenceService 实体 import 一直错的潜在编译错误（增量编译曾掩盖，CLAUDE.md 第 6 条实锤）——已修；Edit 大段替换截断 el-button 属性致 Vue parse 报错（SReturnView 删除按钮），Read 定位后补回。
+- **验证：** 修复后 clean test 300/300 + build 8.92s + 重启后端 smoke E2E 6/6（批量进价 SQL/timeline 批查/级联软删运行时全实证）+ 数据零残留（软删行+撤消息为 D21 设计态）。
+- **下一步：** 提交 main → 三批次全部完成，重启两端 dev 服务器，交用户统一手测（硬刷新+重新登录）。
+
+---
+
 ## 会话 44 — 2026-09-20
 
 ### 批次二 D109 未知物料供应商匹配落地（ADR-0014）——288 单测全绿 + E2E 28/28 → /code-review 7 findings 全修

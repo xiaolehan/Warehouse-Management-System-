@@ -448,12 +448,18 @@ class ProductionPickServiceTest {
         user.setRealName("生产管理员");
         when(authService.getUserInfo()).thenReturn(user);
 
+        // review 修复后：终止走条件更新（仅未完结态可终止）
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
         service.terminate(7L, terminateDTO("销售交易单 SAL-1 已取消", 50L, 4));
 
-        ArgumentCaptor<BizProductionOrder> orderCap = ArgumentCaptor.forClass(BizProductionOrder.class);
-        verify(productionOrderMapper).updateById(orderCap.capture());
-        assertEquals(BizProductionOrder.STATUS_TERMINATED, orderCap.getValue().getStatus());
-        assertTrue(orderCap.getValue().getRemark().contains("终止原因: 销售交易单 SAL-1 已取消"));
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> termCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), termCap.capture());
+        assertTrue(termCap.getValue().getParamNameValuePairs().containsValue(BizProductionOrder.STATUS_TERMINATED),
+                "应置已终止状态");
+        assertTrue(termCap.getValue().getParamNameValuePairs().containsValue("原备注 | 终止原因: 销售交易单 SAL-1 已取消"),
+                "应留痕终止原因");
 
         ArgumentCaptor<BizPickList> pickCap = ArgumentCaptor.forClass(BizPickList.class);
         verify(pickListMapper).insert(pickCap.capture());
@@ -508,15 +514,19 @@ class ProductionPickServiceTest {
     @Test
     void terminate_noItems_onlyTerminates() {
         mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_PENDING));
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
         ProductionTerminateDTO dto = new ProductionTerminateDTO();
         dto.setReason("销售单取消");
         dto.setItems(List.of());
 
         service.terminate(7L, dto);
 
-        ArgumentCaptor<BizProductionOrder> orderCap = ArgumentCaptor.forClass(BizProductionOrder.class);
-        verify(productionOrderMapper).updateById(orderCap.capture());
-        assertEquals(BizProductionOrder.STATUS_TERMINATED, orderCap.getValue().getStatus());
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> termCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), termCap.capture());
+        assertTrue(termCap.getValue().getParamNameValuePairs().containsValue(BizProductionOrder.STATUS_TERMINATED),
+                "应置已终止状态");
         verify(pickListMapper, never()).insert(any());
         verify(messageService).revokeUnreadByBiz("production_order", 7L);
     }
@@ -527,10 +537,11 @@ class ProductionPickServiceTest {
         mockReturnableData(6);
         when(pickListMapper.selectOne(any()))
                 .thenReturn(pickListOf(11L, PickListService.TYPE_RETURN, PickListService.STATUS_PENDING));
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
 
         service.terminate(7L, terminateDTO("销售单取消", 50L, 6));
 
-        verify(productionOrderMapper).updateById(any());
+        verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), any());
         verify(pickListMapper, never()).insert(any());
         verify(messageService).revokeUnreadByBiz("production_order", 7L);
     }
@@ -617,11 +628,15 @@ class ProductionPickServiceTest {
         dto.setReason("销售单取消");
         dto.setItems(List.of());
 
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
         service.terminate(7L, dto);
 
-        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
-        verify(productionOrderMapper).updateById(cap.capture());
-        assertEquals("原备注 | 终止原因: 销售单取消", cap.getValue().getRemark());
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> termCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), termCap.capture());
+        assertTrue(termCap.getValue().getParamNameValuePairs().containsValue("原备注 | 终止原因: 销售单取消"),
+                "应追加终止原因");
     }
 
     @Test
@@ -634,10 +649,14 @@ class ProductionPickServiceTest {
         dto.setReason("销售单取消");
         dto.setItems(List.of());
 
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
         service.terminate(7L, dto);
 
-        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
-        verify(productionOrderMapper).updateById(cap.capture());
-        assertEquals("终止原因: 销售单取消", cap.getValue().getRemark());
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> termCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), termCap.capture());
+        assertTrue(termCap.getValue().getParamNameValuePairs().containsValue("终止原因: 销售单取消"),
+                "应留痕终止原因");
     }
 }

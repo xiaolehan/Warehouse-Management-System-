@@ -76,6 +76,7 @@ class ProductionOrderServiceTest {
     @Mock private org.example.back.mapper.BizProductionMapper productionMapper;
     @Mock private AuthService authService;
     @Mock private org.example.back.mapper.BizSalesMapper bizSalesMapper;
+    @Mock private org.example.back.mapper.BizSalesDetailMapper bizSalesDetailMapper;
     @Mock private org.example.back.mapper.BizPurchaseRequestMapper bizPurchaseRequestMapper;
 
     @InjectMocks private ProductionOrderService service;
@@ -374,22 +375,33 @@ class ProductionOrderServiceTest {
         when(orderMapper.selectById(301L)).thenReturn(saved);
     }
 
-    private BizSales salesOrder(int bizStatus, int confirmStatus, Long goodsId) {
+    /** D110：销售单为头单结构，成品/数量在明细行上（goodsId 参数仅供旧调用参考，头单不再持有） */
+    private BizSales salesOrder(int bizStatus, int confirmStatus) {
         BizSales sales = new BizSales();
         sales.setId(501L);
         sales.setSalesNo("XS260910001");
-        sales.setGoodsId(goodsId);
-        sales.setQuantity(10);
         sales.setBizStatus(bizStatus);
         sales.setConfirmStatus(confirmStatus);
         sales.setOperatorId(7L);
         return sales;
     }
 
+    private org.example.back.entity.BizSalesDetail salesDetail(long goodsId) {
+        org.example.back.entity.BizSalesDetail line = new org.example.back.entity.BizSalesDetail();
+        line.setId(9001L);
+        line.setSalesId(501L);
+        line.setGoodsId(goodsId);
+        line.setGoodsName("PTO153");
+        line.setQuantity(10);
+        return line;
+    }
+
     @Test
-    void create_withLinkableSalesOrder_setsSalesOrderId() {
+    void create_withLinkableSalesOrder_setsSalesOrderIdAndDetailId() {
         mockCreateKitOk();
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING));
+        // D110：行锚定——(头单,成品) 解析明细行，任务单写 sales_detail_id
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(List.of(salesDetail(29L)));
 
         ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
         dto.setGoodsId(29L);
@@ -400,12 +412,13 @@ class ProductionOrderServiceTest {
         ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
         verify(orderMapper).insert(cap.capture());
         assertEquals(501L, cap.getValue().getSalesOrderId());
+        assertEquals(9001L, cap.getValue().getSalesDetailId());
     }
 
     @Test
     void create_withShippedSalesOrder_rejected() {
         mockCreateProductAndKit();
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED, 29L));
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED));
 
         ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
         dto.setGoodsId(29L);
@@ -416,16 +429,18 @@ class ProductionOrderServiceTest {
     }
 
     @Test
-    void create_withMismatchedGoodsSalesOrder_rejected() {
+    void create_withNoMatchingLineSalesOrder_rejected() {
         mockCreateProductAndKit();
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 999L));
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING));
+        // 头单正常但无本成品明细行 → 行锚定失败
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(List.of());
 
         ProductionOrderSaveDTO dto = new ProductionOrderSaveDTO();
         dto.setGoodsId(29L);
         dto.setQuantity(10);
         dto.setSalesOrderId(501L);
         BusinessException ex = assertThrows(BusinessException.class, () -> service.create(dto));
-        assertTrue(ex.getMessage().contains("成品与本任务单不一致"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("没有本任务单成品的明细行"), "实际: " + ex.getMessage());
     }
 
     // ---------- D71：生产手工修正预计完工时间（仅未完结单） ----------
@@ -519,15 +534,22 @@ class ProductionOrderServiceTest {
         BizProductionOrder order = awaitQcOrder();
         order.setSalesOrderId(501L);
         when(orderMapper.selectById(7L)).thenReturn(order);
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING, 29L));
+        // review 修复后：收尾走条件更新（仅待入库态可转已完成）
+        when(orderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING));
 
         service.finalizeAfterInboundConfirmed(7L);
 
-        assertEquals(BizProductionOrder.STATUS_DONE, order.getStatus());
-        verify(orderMapper).updateById(order);
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> doneCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(orderMapper).update(org.mockito.ArgumentMatchers.isNull(), doneCap.capture());
+        assertTrue(doneCap.getValue().getParamNameValuePairs().containsValue(BizProductionOrder.STATUS_DONE),
+                "应置已完成状态");
         verify(messageService).revokeUnreadByBiz("production_order", 7L);
+        // D110：成品描述按行汇总（单行 = 品名×数量）
         verify(messageService).sendSalesReadyToShipToUser(
-                eq(7L), eq("XS260910001"), eq("PTO153"), eq(10), eq(501L));
+                eq(7L), eq("XS260910001"), eq("PTO153×10"), eq(501L));
     }
 
     @Test
@@ -535,13 +557,14 @@ class ProductionOrderServiceTest {
         BizProductionOrder order = awaitQcOrder();
         order.setSalesOrderId(501L);
         when(orderMapper.selectById(7L)).thenReturn(order);
-        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED, 29L));
+        when(orderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_SHIPPED));
 
         service.finalizeAfterInboundConfirmed(7L);
 
-        assertEquals(BizProductionOrder.STATUS_DONE, order.getStatus());
+        verify(orderMapper).update(org.mockito.ArgumentMatchers.isNull(), any()); // 条件更新置已完成
         verify(messageService, org.mockito.Mockito.never()).sendSalesReadyToShipToUser(
-                any(), anyString(), anyString(), any(), any());
+                any(), anyString(), anyString(), any());
     }
 
     @Test
@@ -554,7 +577,7 @@ class ProductionOrderServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.finalizeAfterInboundConfirmed(7L));
         assertTrue(ex.getMessage().contains("不能确认入库"), "实际: " + ex.getMessage());
-        verify(orderMapper, org.mockito.Mockito.never()).updateById(any());
+        verify(orderMapper, org.mockito.Mockito.never()).update(org.mockito.ArgumentMatchers.isNull(), any());
         verify(messageService, org.mockito.Mockito.never()).revokeUnreadByBiz(anyString(), any());
     }
 
