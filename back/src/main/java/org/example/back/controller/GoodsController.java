@@ -1,6 +1,7 @@
 package org.example.back.controller;
 
 import jakarta.validation.Valid;
+import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
@@ -11,6 +12,7 @@ import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
 import org.example.back.vo.OptionVO;
+import org.example.back.vo.SupplierMatchVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -57,6 +59,17 @@ public class GoodsController {
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody GoodsSaveDTO dto) {
         goodsService.update(id, dto);
         return Result.success();
+    }
+
+    // D109：未知物料匹配供应商——仓储人工触发，按最新采购申请明细到货备注斜杠前的名称回绑
+    @PostMapping("/{id}/match-supplier")
+    @PreventDuplicateSubmit(message = "请勿重复提交匹配请求")
+    @AuditLog(module = "物料管理", action = "匹配供应商", targetType = "物料",
+            detail = "'为物料 #' + #id + '「' + #result.data?.goodsName + '」匹配供应商「' "
+                    + "+ #result.data?.supplierName + '」（来源采购申请单：' + #result.data?.sourceRequestNo "
+                    + "+ '，到货备注：' + #result.data?.sourceRemark + '）'")
+    public Result<SupplierMatchVO> matchSupplier(@PathVariable Long id) {
+        return Result.success(goodsService.matchSupplier(id));
     }
 
     @DeleteMapping("/{id}")

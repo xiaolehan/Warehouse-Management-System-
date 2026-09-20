@@ -304,12 +304,23 @@
             <el-date-picker v-model="row.expectedArrivalTime" type="date" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="必选" style="width: 155px" />
           </template>
         </el-table-column>
-        <el-table-column label="到货备注" min-width="150">
+        <el-table-column label="到货备注" min-width="180">
+          <template #header>
+            <span>到货备注</span>
+            <el-tooltip placement="top" content="格式「供应商名字/其他信息」，斜杠前为供应商全名；仓储将据此为未知物料匹配供应商。只写供应商名字亦可。">
+              <el-icon style="vertical-align: -2px; margin-left: 2px; color: #909399"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </template>
           <template #default="{ row }">
-            <el-input v-model="row.arrivalRemark" placeholder="供应商/发货方式等（选填）" />
+            <el-input v-model="row.arrivalRemark" placeholder="供应商名字/其他信息（选填）" />
           </template>
         </el-table-column>
       </el-table>
+      <!-- D109：格式契约直接显在录入处，不只藏在表头问号里 -->
+      <div style="font-size: 12px; color: #909399; margin-top: 8px; line-height: 1.6">
+        到货备注请按「供应商名字/其他信息」填写：斜杠前为供应商全名，须与供应商管理中的建档名称<b>完全一致</b>；
+        仓储会据此为仍挂「系统默认供应商」的未知物料匹配供应商。只写供应商名字亦可，斜杠后选填（如物流方式）。
+      </div>
       <template #footer>
         <el-button @click="processVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitProcess">{{ processForm.mode === 'process' ? '确认认领' : '保存修改' }}</el-button>
@@ -335,7 +346,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Refresh, Plus } from '@element-plus/icons-vue'
+import { Search, Refresh, Plus, QuestionFilled } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
 import {

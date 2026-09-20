@@ -43,7 +43,13 @@
       <el-table-column prop="description" label="备注" min-width="110">
         <template #default="scope">{{ scope.row.description || '—' }}</template>
       </el-table-column>
-      <el-table-column v-if="!isProduct" prop="supplierName" label="所属供应商" min-width="140" />
+      <el-table-column v-if="!isProduct" label="所属供应商" min-width="160">
+        <template #default="scope">
+          <span>{{ scope.row.supplierName || '—' }}</span>
+          <!-- D109：挂系统默认供应商的未知物料标「待匹配」，仓储行内一键匹配 -->
+          <el-tag v-if="scope.row.supplierId === DEFAULT_SUPPLIER_ID" size="small" type="warning" effect="plain" style="margin-left: 6px">待匹配</el-tag>
+        </template>
+      </el-table-column>
       <!-- 进价：仅供采购/超管可见，仓储隐藏；成品无进价概念；「历史」弹窗展示该物料全部有效已入库采购记录（D102） -->
       <el-table-column v-if="showPrice && !isProduct" prop="price" label="进价" width="130">
         <template #default="scope">
@@ -70,7 +76,7 @@
           <el-tag v-else type="success">手工建档</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="scope">
           <el-button link size="small" type="primary" @click="handleView(scope.row)">详情</el-button>
           <el-button v-if="!isProduct && (isWarehouse || isPurchase)" link size="small" type="success"
@@ -81,6 +87,10 @@
             v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }">售价编辑</el-button>
           <el-button v-else-if="isWarehouse" link size="small" type="success" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">编辑</el-button>
+          <!-- D109：未知物料一键匹配供应商（仅仍挂系统默认供应商的物料，仅仓储管理员） -->
+          <el-button v-if="!isProduct && isWarehouse && scope.row.supplierId === DEFAULT_SUPPLIER_ID" link size="small" type="warning"
+            @click="handleMatchSupplier(scope.row)"
+            v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">匹配供应商</el-button>
           <el-button link size="small" type="danger" @click="handleDelete(scope.row)"
             v-if="isWarehouse"
             v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">删除</el-button>
@@ -181,6 +191,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Plus, View, Edit, Delete, Close, Check } from '@element-plus/icons-vue'
 import { getDeptCode, getRole, isSuperAdmin } from '@/utils/auth'
+import { DEFAULT_SUPPLIER_ID } from '@/utils/constants'
 import {
   createGoodsAPI,
   deleteGoodsAPI,
@@ -188,6 +199,7 @@ import {
   getGoodsPageAPI,
   getGoodsPurchasePriceHistoryAPI,
   getSupplierOptionsAPI,
+  matchGoodsSupplierAPI,
   updateGoodsAPI
 } from '@/api/base'
 
@@ -390,6 +402,28 @@ const handleEdit = async (row) => {
   } catch {
     // 业务错误已由拦截器统一提示
   }
+}
+
+// D109：未知物料匹配供应商——读最新采购申请明细到货备注斜杠前的供应商名；失败文案由后端/拦截器提示，可重试
+const handleMatchSupplier = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `将读取该物料最新采购申请明细「到货备注」中斜杠前的供应商名字进行匹配，匹配失败不会改变当前绑定。确认匹配？`,
+      '匹配供应商', { type: 'info', confirmButtonText: '匹配' }
+    )
+  } catch {
+    return
+  }
+  let res
+  try {
+    res = await matchGoodsSupplierAPI(row.id)
+  } catch {
+    // 业务错误已由拦截器统一提示（未填备注/供应商未建档等），采购补做后重新点击即可
+    return
+  }
+  // 匹配已成功；列表刷新失败不应让操作者误判（loadList 内部已兜底，刷新后按钮自消失）
+  ElMessage.success(`已匹配供应商「${res.data.supplierName}」（来源采购申请 ${res.data.sourceRequestNo}）`)
+  await loadList()
 }
 
 const handleDelete = async (row) => {

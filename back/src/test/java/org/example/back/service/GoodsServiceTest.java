@@ -6,8 +6,13 @@ import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.entity.BizPurchaseRequest;
+import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.mapper.BizPurchaseRequestDetailMapper;
+import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.vo.SupplierMatchVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,9 +22,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,14 +43,18 @@ class GoodsServiceTest {
     @BeforeAll
     static void initMybatisPlusLambdaCache() {
         // 初始化 MyBatis-Plus lambda 缓存（纯 mock 测试下不会自动加载）
-        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
-                new org.apache.ibatis.builder.MapperBuilderAssistant(
-                        new org.apache.ibatis.session.Configuration(), "test"),
-                BaseGoods.class);
+        var assistant = new org.apache.ibatis.builder.MapperBuilderAssistant(
+                new org.apache.ibatis.session.Configuration(), "test");
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BaseGoods.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BaseSupplier.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BizPurchaseRequestDetail.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BizPurchaseRequest.class);
     }
 
     @Mock private BaseGoodsMapper baseGoodsMapper;
     @Mock private BaseSupplierMapper baseSupplierMapper;
+    @Mock private BizPurchaseRequestDetailMapper purchaseRequestDetailMapper;
+    @Mock private BizPurchaseRequestMapper purchaseRequestMapper;
     @Mock private AuthzService authzService;
     @Mock private GoodsReferenceService goodsReferenceService;
 
@@ -332,5 +343,245 @@ class GoodsServiceTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.update(9L, new GoodsSaveDTO()));
         assertTrue(ex.getMessage().contains("仅仓储管理员、采购部门或销售部门可编辑"), "实际: " + ex.getMessage());
+    }
+
+    // ==================== D109 未知物料供应商匹配 ====================
+
+    private BaseGoods unmatchedMaterial() {
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setType(GoodsService.GOODS_TYPE_MATERIAL);
+        g.setGoodsName("未知芯片");
+        g.setSpec("X1");
+        g.setSupplierId(GoodsService.DEFAULT_SUPPLIER_ID);
+        return g;
+    }
+
+    private BizPurchaseRequestDetail detailWithRemark(String remark) {
+        return detailWithRemark(700L, 100L, remark);
+    }
+
+    private BizPurchaseRequestDetail detailWithRemark(long detailId, long requestId, String remark) {
+        BizPurchaseRequestDetail d = new BizPurchaseRequestDetail();
+        d.setId(detailId);
+        d.setGoodsId(50L);
+        d.setRequestId(requestId);
+        d.setArrivalRemark(remark);
+        return d;
+    }
+
+    private BizPurchaseRequest purchaseRequest(long id, String no, LocalDateTime created) {
+        BizPurchaseRequest r = new BizPurchaseRequest();
+        r.setId(id);
+        r.setRequestNo(no);
+        r.setCreateTime(created);
+        return r;
+    }
+
+    /** 默认命中来源：明细 700 属申请单 100（PR-100，9/1 建单） */
+    private void stubRemarkSource(String remark) {
+        when(purchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(java.util.List.of(detailWithRemark(remark)));
+        when(purchaseRequestMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(purchaseRequest(100L, "PR-100",
+                        LocalDateTime.of(2026, 9, 1, 10, 0))));
+    }
+
+    private BaseSupplier supplier(long id, String name) {
+        BaseSupplier s = new BaseSupplier();
+        s.setId(id);
+        s.setSupplierName(name);
+        return s;
+    }
+
+    @Test
+    void extractSupplierName_rules() {
+        assertEquals("华强电子", GoodsService.extractSupplierName("华强电子/顺丰到付"));
+        assertEquals("华强电子", GoodsService.extractSupplierName("华强电子／顺丰到付"), "全角斜杠同样截断");
+        assertEquals("华强电子", GoodsService.extractSupplierName(" 华强电子 /顺丰 "), "trim 后取段");
+        assertEquals("华强电子", GoodsService.extractSupplierName("华强电子/顺丰/到付"), "多个斜杠取第一段");
+        assertEquals("华强电子", GoodsService.extractSupplierName("华强电子"), "无斜杠取整串");
+        assertNull(GoodsService.extractSupplierName(null));
+        assertNull(GoodsService.extractSupplierName("   "));
+        assertNull(GoodsService.extractSupplierName("/顺丰到付"), "斜杠前为空返回 null");
+        assertNull(GoodsService.extractSupplierName("／顺丰到付"), "全角斜杠前为空返回 null");
+        assertEquals("华强电子", GoodsService.extractSupplierName("　华强电子/顺丰"), "前导全角空格须规整");
+        assertEquals("华强电子", GoodsService.extractSupplierName(" 华强电子/顺丰"), "前导 NBSP 须规整");
+        assertEquals("华强电子", GoodsService.extractSupplierName("　华强电子　"), "无斜杠时两端全角空格也规整");
+    }
+
+    @Test
+    void matchSupplier_happyPath_writesBackAndReturnsVO() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("华强电子/顺丰到付");
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(20L, "华强电子")));
+        when(baseGoodsMapper.update(any(), any())).thenReturn(1);
+
+        SupplierMatchVO vo = service.matchSupplier(50L);
+
+        assertEquals(20L, vo.getSupplierId());
+        assertEquals("华强电子", vo.getSupplierName());
+        assertEquals("华强电子/顺丰到付", vo.getSourceRemark());
+        assertEquals("PR-100", vo.getSourceRequestNo(), "VO 须带来源申请单号");
+        assertEquals("未知芯片", vo.getGoodsName());
+        ArgumentCaptor<BaseGoods> cap = ArgumentCaptor.forClass(BaseGoods.class);
+        // 回写走条件 update wrapper，而非整行 updateById
+        verify(baseGoodsMapper).update(cap.capture(), any());
+        assertNull(cap.getValue(), "条件更新不应夹带实体参数");
+        verify(baseGoodsMapper, never()).updateById(any());
+    }
+
+    @Test
+    void matchSupplier_nonWarehouseAdmin_forbidden() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(false);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("仅仓储管理员"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_product_notSupported() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        BaseGoods product = new BaseGoods();
+        product.setId(51L);
+        product.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        product.setSupplierId(GoodsService.DEFAULT_SUPPLIER_ID);
+        when(baseGoodsMapper.selectById(51L)).thenReturn(product);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(51L));
+        assertTrue(ex.getMessage().contains("成品不参与"), "实际: " + ex.getMessage());
+        verify(purchaseRequestDetailMapper, never()).selectList(any());
+    }
+
+    @Test
+    void matchSupplier_alreadyBound_rejected() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        BaseGoods g = unmatchedMaterial();
+        g.setSupplierId(20L);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(g);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("已绑定供应商"), "实际: " + ex.getMessage());
+        verify(purchaseRequestDetailMapper, never()).selectList(any());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_noArrivalRemark_guidesPurchaseFill() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        when(purchaseRequestDetailMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("到货备注"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("直接在物料管理"), "须告知仓储兜底出路，实际: " + ex.getMessage());
+        verify(purchaseRequestMapper, never()).selectBatchIds(any());
+        verify(baseSupplierMapper, never()).selectList(any());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_blankBeforeSlash_rejectedWithRawTextAndRequestNo() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("/货到付款");
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("/货到付款"), "应回显原文案，实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("格式不正确"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("PR-100"), "应指明来源单据，实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_supplierNotFound_retryableWithoutWrite() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("华强电子");
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("查无此名"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("华强电子"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("建档"), "应引导采购建档，实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("PR-100"), "应指明来源单据，实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_duplicateSupplierNames_rejected() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("华强电子");
+        when(baseSupplierMapper.selectList(any()))
+                .thenReturn(java.util.List.of(supplier(20L, "华强电子"), supplier(21L, "华强电子")));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("多家"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_placeholderDefaultSupplier_rejectedWithoutWrite() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("系统默认供应商/待定");
+        when(baseSupplierMapper.selectList(any()))
+                .thenReturn(java.util.List.of(supplier(GoodsService.DEFAULT_SUPPLIER_ID, "系统默认供应商")));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("占位供应商"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void matchSupplier_concurrentManualEdit_losesAndThrows() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        stubRemarkSource("华强电子");
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(20L, "华强电子")));
+        when(baseGoodsMapper.update(any(), any())).thenReturn(0);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("刷新"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void matchSupplier_picksNewestRequest_thenNewestDetail() {
+        // 三张备注：旧单 R100（即便被就地"修正"也不优先）、新单 R101 两条明细取 id 大者
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        when(purchaseRequestDetailMapper.selectList(any())).thenReturn(java.util.List.of(
+                detailWithRemark(700L, 100L, "供应商A/旧单"),
+                detailWithRemark(701L, 101L, "供应商B/新单老明细"),
+                detailWithRemark(702L, 101L, "供应商C/新单新明细")));
+        when(purchaseRequestMapper.selectBatchIds(any())).thenReturn(java.util.List.of(
+                purchaseRequest(100L, "PR-100", LocalDateTime.of(2026, 9, 1, 10, 0)),
+                purchaseRequest(101L, "PR-101", LocalDateTime.of(2026, 9, 5, 10, 0))));
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(30L, "供应商C")));
+        when(baseGoodsMapper.update(any(), any())).thenReturn(1);
+
+        SupplierMatchVO vo = service.matchSupplier(50L);
+
+        assertEquals("供应商C", vo.getSupplierName());
+        assertEquals("PR-101", vo.getSourceRequestNo());
+        assertEquals("供应商C/新单新明细", vo.getSourceRemark());
+    }
+
+    @Test
+    void matchSupplier_remarksOnlyOnDeletedRequests_treatedAsNoRemark() {
+        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
+        when(purchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(java.util.List.of(detailWithRemark(700L, 100L, "华强电子")));
+        // 申请单已逻辑删除：selectBatchIds 查不到
+        when(purchaseRequestMapper.selectBatchIds(any())).thenReturn(java.util.List.of());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
+        assertTrue(ex.getMessage().contains("到货备注"), "实际: " + ex.getMessage());
+        verify(baseSupplierMapper, never()).selectList(any());
+        verify(baseGoodsMapper, never()).update(any(), any());
     }
 }

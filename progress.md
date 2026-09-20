@@ -5,6 +5,21 @@
 
 ---
 
+## 会话 44 — 2026-09-20
+
+### 批次二 D109 未知物料供应商匹配落地（ADR-0014）——288 单测全绿 + E2E 28/28 → /code-review 7 findings 全修
+
+- **范围（grilling 拍板）：** 采购在采购申请明细到货备注填「供应商名字/其他信息」（只取首个斜杠前，无斜杠取整串，兼容全角／）；采购手动在主数据建档供应商；仓储在物料管理页对仍挂系统默认供应商(id=1)的物料点「匹配供应商」精确同名回写 supplier_id；无后台扫描；失败不改写可重试；仅仓储管理员（超管 ADR-0009 不放行）；成功 @AuditLog 无站内信；无 DDL。
+- **后端：** GoodsService.matchSupplier（鉴权→物料类型→已绑守卫→取备注→解析→同名候选→重名/占位名守卫→条件更新 `WHERE id=? AND supplier_id=1` 防并发）；新 SupplierMatchVO；GoodsController `POST /base/goods/{id}/match-supplier`（@PreventDuplicateSubmit + @AuditLog SpEL 带 #result.data 字段）；findLatestArrivalRemark 查全部非空备注明细后按**申请单建单时间/id、同单明细 id 倒序** Java 侧选取（明细无 update_time、备注就地改，按明细 create_time 排「最新修正」不成立），逻辑删申请单跳过；命中来源带 requestNo。
+- **前端：** base.js matchGoodsSupplierAPI；GoodsView 供应商列「待匹配」tag + 行内「匹配供应商」按钮（supplierId=DEFAULT_SUPPLIER_ID，constants.js 单一数据源）+ 确认弹窗讲清斜杠规则/失败不改写，成功提示带来源单号，loadList 移出 API try 防刷新失败误判；PurchaseRequestView 到货备注列头问号 tooltip + placeholder + **认领/修改到货计划弹窗表格下方常驻格式说明**（原来契约只藏 tooltip）。
+- **单测：** GoodsServiceTest 新增 13 例（解析规则含全角空格 U+3000/NBSP 前导；happy path VO 带来源单号+条件更新不带实体；非仓储 403；成品/已绑/无备注/斜杠前空/查无/多家同名/占位供应商/并发 rows=0；最新申请单排序含「旧单修正不跑赢新单」；申请单全删按无备注处理）。**全量 288 全绿**，前端 build 8.78s。
+- **E2E（/tmp/e2e_d109.py）28/28：** M1 标准链路回写+VO 单号+tag 消失+重复匹配 400+采购角色 403；M2 无备注引导含仓储兜底；M3 斜杠前空回显原文+来源单号；M4 查无此名→补建档→重试成功（多斜杠取首段）；M5 备注写「系统默认供应商/待定」拒绝且不改写。审计核验：仅成功两行、detail 含来源申请单号。测后物理清理（物料/申请+明细/供应商+联系人/消息/审计），基线库存 20/11/10、阈值行 0.05 完好（注：清理 SQL 消息条件勿写死 biz_id，第二轮 run 的 id 已变为 7-11；宽 DELETE 被分类器 PII 拦截，改 id 区间+title/content 窄条件文件执行）。
+- **/code-review 修复 7 项（V4 禁用供应商、V6 前端刷新两处经核实驳回/低优先已顺手处理）：** ①失败指引死胡同——单据终态后采购改不了备注，三条失败文案统一加「也可由仓储直接在物料管理编辑绑定供应商」；②「最新备注」按明细 create_time 排序不反映就地修正且无来源追溯 → 改按申请单新旧 + VO/审计带 sourceRequestNo；③自由文本无斜杠整串精确匹配易诱导建垃圾供应商 → 查无文案提示核对建档全名/简称物流用语 + 弹窗常驻格式说明；④候选含 id=1 占位供应商会 1→1 假成功 → 显式拒绝；⑤ADR 说「审计全部匹配动作」与切面 @AfterReturning 成功语义矛盾 → 不修全局切面，改 ADR 明确仅成功落审计；⑥String.trim() 不去前导 U+3000/NBSP（reviewer 已在本地 MySQL 实证 PAD SPACE 只豁免结尾）→ 规整折空格；⑦SupplierMatchVO 手写构造体与 vo 包风格分叉 → @NoArgsConstructor/@AllArgsConstructor。
+- **文档：** ADR-0014 同步（空白规整/最新申请单口径/占位名/兜底出路/审计仅成功/来源单号/弹窗三处提示）；CONTEXT「供应商匹配（未知物料）」词条精修。
+- **下一步：** 提交 main → 批次三 D110 一客户多型号（ADR-0013）→ 全部批次完成后用户统一手测。
+
+---
+
 ## 会话 43 — 2026-09-20
 
 ### D108 误读纠正：阈值设置常驻 + 启动自愈（/grill-with-docs 三问全按推荐）——误造审批入口整体回退

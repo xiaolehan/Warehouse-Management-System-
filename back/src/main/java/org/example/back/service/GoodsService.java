@@ -1,6 +1,7 @@
 package org.example.back.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
@@ -10,21 +11,28 @@ import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizPurchase;
+import org.example.back.entity.BizPurchaseRequest;
+import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.mapper.BizPurchaseRequestDetailMapper;
+import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
+import org.example.back.vo.SupplierMatchVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -46,6 +54,14 @@ public class GoodsService {
     // D102：进价历史查询复用进货单 mapper
     @Autowired
     private BizPurchaseMapper bizPurchaseMapper;
+
+    // D109：未知物料供应商匹配——从采购申请明细到货备注取供应商名字
+    @Autowired
+    private BizPurchaseRequestDetailMapper purchaseRequestDetailMapper;
+
+    // D109：用申请单号/建单时间做命中来源追溯与新旧排序
+    @Autowired
+    private BizPurchaseRequestMapper purchaseRequestMapper;
 
     @Autowired
     private AuthzService authzService;
@@ -346,6 +362,147 @@ public class GoodsService {
         goods.setDescription("生产补料自动建档");
         baseGoodsMapper.insert(goods);
         return goods.getId();
+    }
+
+    /**
+     * D109：未知物料「匹配供应商」——仓储管理员人工触发（无后台扫描）。
+     * 读取该物料最新一张采购申请（建单时间倒序）明细上的到货备注
+     * （"供应商名字/其他信息"，只取首个斜杠前），按全名精确匹配采购已建档的供应商，
+     * 回写 base_goods.supplier_id。任何失败都不改写，采购补备注/建档后可重新触发；
+     * 每条失败指引同时告知仓储可直接编辑物料绑定供应商（单据终态后采购侧不可改备注）。
+     * @AuditLog 在 Controller 层留痕（仅成功落审计，定格来源单号与备注原文）。
+     */
+    @Transactional
+    public SupplierMatchVO matchSupplier(Long goodsId) {
+        if (!authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)) {
+            throw BusinessException.forbidden("仅仓储管理员可匹配供应商");
+        }
+        BaseGoods goods = requireGoods(goodsId);
+        if (!GOODS_TYPE_MATERIAL.equals(goods.getType())) {
+            throw BusinessException.validateFail("仅物料可匹配供应商，成品不参与");
+        }
+        if (!DEFAULT_SUPPLIER_ID.equals(goods.getSupplierId())) {
+            throw BusinessException.validateFail("该物料已绑定供应商，无需匹配；如需更换请直接编辑物料");
+        }
+
+        RemarkSource source = findLatestArrivalRemark(goodsId);
+        if (source == null) {
+            throw BusinessException.validateFail(
+                    "未找到该物料的采购到货备注，无法匹配。请让采购在对应采购申请明细的「到货备注」中"
+                            + "按「供应商名字/其他信息」填写（斜杠前为供应商名字）后再匹配；"
+                            + "也可由仓储直接在物料管理中编辑该物料绑定供应商");
+        }
+        String rawRemark = source.detail().getArrivalRemark();
+        String supplierName = extractSupplierName(rawRemark);
+        if (supplierName == null) {
+            throw BusinessException.validateFail(
+                    "采购申请单 " + source.requestNo() + " 的到货备注「" + rawRemark
+                            + "」格式不正确：斜杠前的供应商名字为空，"
+                            + "应为「供应商名字/其他信息」，请让采购修正后再匹配；"
+                            + "也可由仓储直接在物料管理中编辑该物料绑定供应商");
+        }
+
+        List<BaseSupplier> candidates = baseSupplierMapper.selectList(new LambdaQueryWrapper<BaseSupplier>()
+                .eq(BaseSupplier::getSupplierName, supplierName));
+        if (candidates.isEmpty()) {
+            throw BusinessException.validateFail(
+                    "采购申请单 " + source.requestNo() + " 的到货备注指向供应商「" + supplierName
+                            + "」，但供应商管理中查无此名。请确认斜杠前是供应商建档全名"
+                            + "（若填的是简称或物流说明，请让采购修正备注）；采购也可按该名称建档后"
+                            + "重新点击匹配；也可由仓储直接编辑物料绑定供应商");
+        }
+        if (candidates.size() > 1) {
+            throw BusinessException.validateFail(
+                    "存在多家名为「" + supplierName + "」的供应商（共 " + candidates.size()
+                            + " 家），无法判断应绑哪一家，请联系超级管理员核对供应商主数据后再匹配");
+        }
+        BaseSupplier supplier = candidates.get(0);
+        if (DEFAULT_SUPPLIER_ID.equals(supplier.getId())) {
+            // 备注写的是占位名「系统默认供应商」：1→1 条件更新会假成功
+            throw BusinessException.validateFail(
+                    "采购申请单 " + source.requestNo() + " 的到货备注斜杠前是占位供应商「"
+                            + supplierName + "」，不是真实建档供应商，无法匹配。"
+                            + "请让采购改为真实供应商名字，或由仓储直接编辑物料绑定供应商");
+        }
+
+        // 条件更新：仅当仍挂系统默认供应商时回写，防与手工编辑并发打架
+        LambdaUpdateWrapper<BaseGoods> uw = new LambdaUpdateWrapper<>();
+        uw.eq(BaseGoods::getId, goodsId)
+                .eq(BaseGoods::getSupplierId, DEFAULT_SUPPLIER_ID)
+                .set(BaseGoods::getSupplierId, supplier.getId());
+        int rows = baseGoodsMapper.update(null, uw);
+        if (rows != 1) {
+            throw BusinessException.validateFail("该物料的供应商刚被他人更新，请刷新后重试");
+        }
+        return new SupplierMatchVO(goodsId, goods.getGoodsName(), goods.getSpec(),
+                supplier.getId(), supplier.getSupplierName(), source.requestNo(), rawRemark);
+    }
+
+    /** 命中的到货备注来源：明细 + 所属采购申请单号。 */
+    private record RemarkSource(BizPurchaseRequestDetail detail, String requestNo) {
+    }
+
+    /**
+     * 该物料到货备注非空的采购申请明细中，取最新一张采购申请上的一条
+     * （申请单 create_time/id 倒序，同单按明细 id 倒序）。备注在明细上就地修改、
+     * 不更新任何时间戳，故「新旧」以申请单建单时间为准；随带申请单号供审计追溯。
+     * 申请单已删除/查无的明细跳过；一条都取不到返回 null。
+     */
+    private RemarkSource findLatestArrivalRemark(Long goodsId) {
+        List<BizPurchaseRequestDetail> details = purchaseRequestDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                        .eq(BizPurchaseRequestDetail::getGoodsId, goodsId)
+                        .isNotNull(BizPurchaseRequestDetail::getArrivalRemark)
+                        .ne(BizPurchaseRequestDetail::getArrivalRemark, ""));
+        if (details.isEmpty()) {
+            return null;
+        }
+        Set<Long> requestIds = details.stream()
+                .map(BizPurchaseRequestDetail::getRequestId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (requestIds.isEmpty()) {
+            return null;
+        }
+        Map<Long, BizPurchaseRequest> requests = purchaseRequestMapper.selectBatchIds(requestIds).stream()
+                .collect(Collectors.toMap(BizPurchaseRequest::getId, Function.identity()));
+
+        BizPurchaseRequestDetail bestDetail = null;
+        BizPurchaseRequest bestRequest = null;
+        for (BizPurchaseRequestDetail detail : details) {
+            BizPurchaseRequest request = requests.get(detail.getRequestId());
+            if (request == null) {
+                continue;
+            }
+            if (bestRequest == null
+                    || request.getCreateTime().isAfter(bestRequest.getCreateTime())
+                    || (request.getCreateTime().equals(bestRequest.getCreateTime())
+                        && (request.getId() > bestRequest.getId()
+                            || (request.getId().equals(bestRequest.getId())
+                                && (bestDetail == null || detail.getId() > bestDetail.getId()))))) {
+                bestDetail = detail;
+                bestRequest = request;
+            }
+        }
+        return bestRequest == null ? null : new RemarkSource(bestDetail, bestRequest.getRequestNo());
+    }
+
+    /**
+     * D109：从到货备注解析供应商名字——规整空白后取第一个斜杠（兼容全角／）之前的文本再 trim。
+     * 无斜杠=整串；多个斜杠=第一段；斜杠前为空（"/xxx"）=null（调用方报错让采购修正）。
+     */
+    static String extractSupplierName(String arrivalRemark) {
+        if (!StringUtils.hasText(arrivalRemark)) {
+            return null;
+        }
+        // 兼容中文输入法全角空格 U+3000 与不间断空格 U+00A0：前导位置 MySQL PAD SPACE 不豁免
+        String text = arrivalRemark.replace('　', ' ').replace(' ', ' ').trim();
+        int slash = text.indexOf('/');
+        int fullWidthSlash = text.indexOf('／');
+        int cut = slash < 0 ? fullWidthSlash
+                : (fullWidthSlash < 0 ? slash : Math.min(slash, fullWidthSlash));
+        String name = (cut >= 0 ? text.substring(0, cut) : text).trim();
+        return name.isEmpty() ? null : name;
     }
 
     private BaseGoods requireGoods(Long id) {
