@@ -22,6 +22,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,6 +40,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -326,6 +328,43 @@ class SalesServiceTest {
 
         verify(baseGoodsMapper, times(2)).update(isNull(), any()); // 每行一次条件扣减
         verify(messageService).revokeUnreadByBiz("sales", 501L);
+    }
+
+    // ---------- D127：出库完成 → 销售管理员提醒 ----------
+
+    @Test
+    void confirm_notifiesSalesAdminsAfterRevokingPendingMessages() {
+        BizSales entity = pendingSales();
+        entity.setCustomerName("华东一店");
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
+        when(bizApprovalOrderMapper.selectList(any())).thenReturn(List.of());
+        when(bizSalesDetailMapper.selectList(any()))
+                .thenReturn(List.of(detail(1L, 29L, "PTO153", 5)));
+        when(baseGoodsMapper.update(isNull(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
+
+        service.confirm(501L);
+
+        // D127：先撤旧待确认消息再发提醒——两者同 biz 绑定，顺序颠倒提醒会被本次撤销误撤
+        InOrder inOrder = inOrder(messageService);
+        inOrder.verify(messageService).revokeUnreadByBiz("sales", 501L);
+        inOrder.verify(messageService).sendSalesShippedToSalesAdmins(
+                eq("XS260910001"), eq("华东一店"), eq("销售管理员"), eq(501L));
+    }
+
+    @Test
+    void confirm_alreadyShipped_rejectedAndNotNotifies() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+
+        org.example.back.common.exception.BusinessException ex =
+                org.junit.jupiter.api.Assertions.assertThrows(
+                        org.example.back.common.exception.BusinessException.class, () -> service.confirm(501L));
+        assertTrue(ex.getMessage().contains("禁止重复确认"), "实际: " + ex.getMessage());
+        verify(messageService, never()).sendSalesShippedToSalesAdmins(anyString(), any(), anyString(), anyLong());
     }
 
     // ---------- D110 决策⑨前传：已出库单作废按行回补库存；D73 通知带汇总成品描述 ----------

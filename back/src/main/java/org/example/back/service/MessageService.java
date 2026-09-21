@@ -304,6 +304,30 @@ public class MessageService {
     }
 
     /**
+     * D127：仓储确认销售单出库后，通知销售部门管理员出库完成（可点击回单）。
+     * 绑 biz_type=sales：销售单后续删除/作废时随 D21 范式一并撤未读。
+     */
+    public void sendSalesShippedToSalesAdmins(String salesNo, String customerName, String confirmerName, Long salesId) {
+        Long salesDeptId = resolveDeptIdByCode(AuthzService.DEPT_SALES);
+        if (salesDeptId == null) {
+            return;
+        }
+        String customer = StringUtils.hasText(customerName) ? customerName : "未填写";
+        String confirmer = StringUtils.hasText(confirmerName) ? confirmerName : "仓储管理员";
+        sendToDeptAdminsWithBiz(
+                salesDeptId,
+                "销售单已出库",
+                String.format(
+                        Locale.ROOT,
+                        "销售单 %s（客户：%s）已由仓储 %s 确认出库完成。",
+                        salesNo, customer, confirmer
+                ),
+                "sales",
+                salesId,
+                ROUTE_SALES);
+    }
+
+    /**
      * 销售退货建单后通知仓储管理员有待确认入库的退货单。
      */
     public void sendSalesReturnPendingConfirmToWarehouseAdmins(String returnNo, String applicantName, Long returnId) {

@@ -546,6 +546,9 @@ public class SalesService {
 
         // 仓储已确认出库，撤销该单未读待确认消息
         messageService.revokeUnreadByBiz("sales", id);
+        // D127：出库完成后提醒销售部门管理员（先撤后发——新提醒与被撤消息同 biz 绑定，顺序颠倒会被本次撤销误撤）
+        messageService.sendSalesShippedToSalesAdmins(entity.getSalesNo(), entity.getCustomerName(),
+                loginUser.getRealName(), id);
     }
 
     @Transactional(rollbackFor = Exception.class)

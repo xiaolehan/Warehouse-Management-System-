@@ -40,6 +40,11 @@ class MessageServiceTest {
                 new org.apache.ibatis.builder.MapperBuilderAssistant(
                         new org.apache.ibatis.session.Configuration(), "test"),
                 SysMessage.class);
+        // D127：getSqlSegment() 断言需 SysDept 列缓存
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                SysDept.class);
     }
 
     @Mock private SysMessageMapper sysMessageMapper;
@@ -190,5 +195,38 @@ class MessageServiceTest {
                 "白名单应含两个齐套类标题, 实际: " + wrapper.getParamNameValuePairs());
         assertFalse(wrapper.getParamNameValuePairs().containsValue("关联销售单已取消"),
                 "D73 销售取消通知不得进入撤销白名单, 实际: " + wrapper.getParamNameValuePairs());
+    }
+
+    // ---------- D127：出库完成 → 销售管理员提醒 ----------
+
+    @Test
+    void sendSalesShipped_writesBizFieldsAndTargetRoute() {
+        SysDept dept = new SysDept();
+        dept.setId(2L);
+        when(sysDeptMapper.selectOne(any())).thenReturn(dept);
+        SysUser admin = new SysUser();
+        admin.setId(21L);
+        when(sysUserMapper.selectList(any())).thenReturn(List.of(admin));
+
+        service.sendSalesShippedToSalesAdmins("XS-1", "华东一店", "王仓储", 55L);
+
+        // D127：收件部门按销售部门编码解析（eq 惰性求值——先取 getSqlSegment() 触发参数物化再查参数值）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<SysDept>> deptCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        verify(sysDeptMapper).selectOne(deptCaptor.capture());
+        deptCaptor.getValue().getSqlSegment(); // 仅触发行参物化
+        assertTrue(deptCaptor.getValue().getParamNameValuePairs().containsValue(AuthzService.DEPT_SALES),
+                "应按 sales 部门编码解析, 实际: " + deptCaptor.getValue().getParamNameValuePairs());
+
+        ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
+        verify(sysMessageMapper).insert(captor.capture());
+        SysMessage msg = captor.getValue();
+        assertEquals("销售单已出库", msg.getTitle());
+        assertTrue(msg.getContent().contains("XS-1"), "内容应含销售单号, 实际: " + msg.getContent());
+        assertTrue(msg.getContent().contains("确认出库完成"), "内容应含出库完成文案, 实际: " + msg.getContent());
+        assertEquals("sales", msg.getBizType());
+        assertEquals(55L, msg.getBizId());
+        assertEquals("/business/sales", msg.getTargetRoute());
     }
 }
