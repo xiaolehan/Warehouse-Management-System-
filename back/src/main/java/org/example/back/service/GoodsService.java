@@ -146,6 +146,7 @@ public class GoodsService {
         Map<Long, BaseSupplier> supplierMap = buildSupplierMap(page.getRecords().stream().map(BaseGoods::getSupplierId).collect(Collectors.toSet()));
         List<GoodsVO> records = page.getRecords().stream().map(item -> toVO(item, supplierMap.get(item.getSupplierId()))).toList();
         fillLatestSuppliers(records); // D123：物料「最新供应商」
+        desensitizeSalePrice(records); // D126：成品售价脱敏（非销售部门+非超管）
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -173,9 +174,12 @@ public class GoodsService {
         Set<Long> bomGoodsIds = optionIds.isEmpty() ? Set.of() : bizBomMapper.selectList(
                         new LambdaQueryWrapper<BizBom>().in(BizBom::getGoodsId, optionIds)).stream()
                 .map(BizBom::getGoodsId).collect(Collectors.toSet());
+        boolean hideSale = hideSalePrice(); // D126：调用方粒度一次判定，不在逐行 map 内重复求值
         return goods.stream()
                 .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(),
-                        item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getPurchasePrice(),
+                        item.getSpec(), item.getMaterial(),
+                        maskedSalePrice(hideSale, item.getType(), item.getSalePrice()), // D126：成品售价脱敏
+                        item.getPurchasePrice(),
                         item.getType(),
                         "product".equals(item.getType()) ? bomGoodsIds.contains(item.getId()) : null))
                 .toList();
@@ -187,7 +191,34 @@ public class GoodsService {
         BaseSupplier supplier = baseSupplierMapper.selectById(goods.getSupplierId());
         GoodsVO vo = toVO(goods, supplier);
         fillLatestSuppliers(List.of(vo)); // D123：物料「最新供应商」
+        desensitizeSalePrice(List.of(vo)); // D126：成品售价脱敏（非销售部门+非超管）
         return vo;
+    }
+
+    // ============================== D126：成品售价可见性 ==============================
+
+    /** D126：当前调用方是否应隐藏成品售价（非销售部门成员且非超管 → true；销售部门成员或超管 → false） */
+    private boolean hideSalePrice() {
+        return !authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES);
+    }
+
+    /** D126：售价脱敏唯一规则（options 与 VO 列表共用）——隐藏时成品售价抹为 null，物料不受影响 */
+    private BigDecimal maskedSalePrice(boolean hide, String type, BigDecimal salePrice) {
+        return hide && GOODS_TYPE_PRODUCT.equals(type) ? null : salePrice;
+    }
+
+    /**
+     * D126：成品售价脱敏——非销售部门成员且非超管不返回售价（VO 序列化前抹除）。
+     * 物料进价口径不变；D121 快速建品端点仅销售+超管可达，不经此读链路不受影响。
+     */
+    private void desensitizeSalePrice(List<GoodsVO> records) {
+        boolean hideSale = hideSalePrice();
+        if (!hideSale) {
+            return;
+        }
+        for (GoodsVO vo : records) {
+            vo.setSalePrice(maskedSalePrice(hideSale, vo.getType(), vo.getSalePrice()));
+        }
     }
 
     /**

@@ -66,8 +66,8 @@
           <el-tag v-else :type="scope.row.stock <= (scope.row.warningStock ?? 10) ? 'danger' : 'success'">{{ scope.row.stock }}</el-tag>
         </template>
       </el-table-column>
-      <!-- 售价(销售管)：成品页所有部门可见，销售部门可编辑；物料无售价概念 -->
-      <el-table-column v-if="isProduct" prop="salePrice" label="标准售价" width="110">
+      <!-- D126 售价(销售管)：仅销售部门成员+超管可见（后端同步脱敏）；物料无售价概念 -->
+      <el-table-column v-if="isProduct && showSalePrice" prop="salePrice" label="标准售价" width="110">
         <template #default="scope">{{ scope.row.salePrice ?? '—' }}</template>
       </el-table-column>
       <el-table-column v-if="isWarehouse && !isProduct" prop="warningStock" label="预警阈值" width="100" />
@@ -153,8 +153,8 @@
         <el-form-item v-if="showPrice && !isWarehouse && !isProduct" label="进价" required>
           <el-input-number v-model="form.purchasePrice" :min="0.01" :precision="2" :step="0.1" style="width: 100%;" />
         </el-form-item>
-        <!-- 售价(销售管)：销售编辑成品可改（D68）；查看态对所有人只读展示 -->
-        <el-form-item v-if="isProduct && ((isSales && !isAddMode) || isView)" label="标准售价" :required="isSales && !isView">
+        <!-- D126 售价(销售管)：销售编辑成品可改（D68）；仅销售部门成员+超管可见（查看态同样裁剪） -->
+        <el-form-item v-if="isProduct && showSalePrice && ((isSales && !isAddMode) || isView)" label="标准售价" :required="isSales && !isView">
           <el-input-number v-model="form.salePrice" :min="0.01" :precision="2" :step="1" style="width: 100%;" :disabled="isView" />
         </el-form-item>
         <!-- 初始库存(仓储建) -->
@@ -226,6 +226,8 @@ const isPurchase = userDept === 'purchase' && (userRole === 'admin' || userRole 
 // D68：销售部门（admin/员工）可编辑成品售价，镜像采购进价范式
 const isSales = userDept === 'sales' && (userRole === 'admin' || userRole === 'employee')
 const showPrice = isPurchase || isSuperAdmin(userRole)
+// D126：成品售价仅销售部门成员+超管可见（后端 page/options/getById 已同步脱敏，前端只做展示裁剪）
+const showSalePrice = isSales || isSuperAdmin(userRole)
 // 销售编辑成品=售价编辑态：名称/规格/备注/库存等字段只读，仅售价可改
 const isSalesPriceMode = computed(() => isSales && isProduct.value && !isView.value && !isAddMode.value && !!form.id)
 

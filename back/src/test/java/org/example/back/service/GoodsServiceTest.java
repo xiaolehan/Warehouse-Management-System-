@@ -8,6 +8,7 @@ import org.example.back.dto.QuickProductDTO;
 import org.example.back.vo.QuickProductVO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsVO;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
@@ -772,5 +773,73 @@ class GoodsServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.quickCreateProduct(dto));
         assertTrue(ex.getMessage().contains("售价"), "实际: " + ex.getMessage());
         verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    // ---------- D126：成品售价可见性（非销售部门且非超管脱敏，page/options/getById 读链路） ----------
+
+    @Test
+    void page_nonSalesMember_productSalePriceNulled_materialUntouched() {
+        BaseGoods machine = product(40L, "整机", 1);
+        BaseGoods steel = materialWithSupplier(29L, "钢板", 5L);
+        steel.setPurchasePrice(new BigDecimal("52.00"));
+        steel.setSalePrice(new BigDecimal("9.90"));
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(pageOf(java.util.List.of(machine, steel)));
+        when(bizPurchaseMapper.latestValidSuppliers(any())).thenReturn(java.util.List.of()); // D123 链路：无最新供应商记录
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false); // 仓储/采购视角
+
+        java.util.List<GoodsVO> records = service.page(new GoodsQueryDTO()).getRecords();
+
+        assertNull(records.get(0).getSalePrice(), "成品售价应抹除");
+        assertEquals(new BigDecimal("9.90"), records.get(1).getSalePrice(), "物料无售价脱敏概念，原值保留");
+        assertEquals(new BigDecimal("52.00"), records.get(1).getPurchasePrice(), "物料进价口径不变");
+    }
+
+    @Test
+    void page_salesMember_seesProductSalePrice() {
+        BaseGoods machine = product(40L, "整机", 1);
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(pageOf(java.util.List.of(machine)));
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+
+        GoodsVO vo = service.page(new GoodsQueryDTO()).getRecords().get(0);
+
+        assertEquals(new BigDecimal("1888"), vo.getSalePrice());
+    }
+
+    @Test
+    void getById_nonSalesMember_productSalePriceNulled() {
+        when(baseGoodsMapper.selectById(40L)).thenReturn(product(40L, "整机", 1));
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
+
+        assertNull(service.getById(40L).getSalePrice());
+    }
+
+    @Test
+    void getById_salesMember_seesProductSalePrice() {
+        when(baseGoodsMapper.selectById(40L)).thenReturn(product(40L, "整机", 1));
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+
+        assertEquals(new BigDecimal("1888"), service.getById(40L).getSalePrice());
+    }
+
+    @Test
+    void options_nonSalesMember_productOptionSalePriceNulled() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of(product(40L, "整机", 1)));
+        when(bizBomMapper.selectList(any())).thenReturn(java.util.List.of());
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
+
+        GoodsOptionVO vo = service.options("product", null).get(0);
+
+        assertNull(vo.getSalePrice(), "选项接口成品售价应抹除");
+    }
+
+    @Test
+    void options_salesMember_seesProductOptionSalePrice() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of(product(40L, "整机", 1)));
+        when(bizBomMapper.selectList(any())).thenReturn(java.util.List.of());
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+
+        GoodsOptionVO vo = service.options("product", null).get(0);
+
+        assertEquals(new BigDecimal("1888"), vo.getSalePrice());
     }
 }
