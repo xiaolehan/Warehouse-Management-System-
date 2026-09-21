@@ -7,8 +7,10 @@ import org.example.back.dto.LoginResponse;
 import org.example.back.dto.QcDisposeDTO;
 import org.example.back.dto.QcSaveDTO;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.entity.BizProductionOrderStep;
 import org.example.back.entity.BizProductionQc;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.mapper.BizProductionOrderStepMapper;
 import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,10 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -35,7 +39,16 @@ public class QcService {
     private BizProductionQcMapper qcMapper;
 
     @Autowired
+    private BizProductionOrderStepMapper stepMapper;
+
+    @Autowired
     private BizProductionOrderMapper orderMapper;
+
+    /** D125 门禁：首测解锁工序（1-5 全部打卡后可录首测） */
+    private static final List<Integer> FIRST_GATE_STEPS = List.of(1, 2, 3, 4, 5);
+
+    /** D125 门禁：成品测解锁工序（打卡完成后可录成品测） */
+    private static final int FINAL_GATE_STEP = 7;
 
     @Autowired
     private AuthzService authzService;
@@ -68,6 +81,8 @@ public class QcService {
         BizProductionOrder order = requireOrder(dto.getOrderId());
         ensureTestable(order);
         String point = normalizePoint(dto.getTestPoint());
+        // D125 工序-质检顺序门禁：首测需工序 1-5 全打卡，成品测需工序 7 打卡（质检页提交同样被拦）
+        validatePointGate(order.getId(), point);
         String result = normalizeResult(dto.getResult());
         if (BizProductionQc.RESULT_NG.equals(result) && !hasText(dto.getReason())) {
             throw BusinessException.validateFail("NG 时必须填写不合格原因");
@@ -151,31 +166,36 @@ public class QcService {
     // ============================== 状态推导 ==============================
 
     public QcStateVO buildState(BizProductionOrder order) {
-        return buildStateFor(order, listByOrder(order.getId()));
+        return buildStateFor(order, listByOrder(order.getId()), doneStepNos(order.getId()));
     }
 
     /**
      * 批量构建多张任务单的质检状态（D64 质检进度列表修复）：
      * 一次 in 查询取回全部记录按单分组推导，避免列表页逐行 N 次查询。
+     * D125：门禁解锁标记同样一次 in 查询全部订单的已打卡工序，不逐行查。
      */
     public Map<Long, QcStateVO> buildStateBatch(List<BizProductionOrder> orders) {
         if (orders == null || orders.isEmpty()) {
             return Map.of();
         }
+        List<Long> orderIds = orders.stream().map(BizProductionOrder::getId).toList();
         LambdaQueryWrapper<BizProductionQc> wrapper = new LambdaQueryWrapper<>();
-        wrapper.in(BizProductionQc::getOrderId, orders.stream().map(BizProductionOrder::getId).toList())
+        wrapper.in(BizProductionQc::getOrderId, orderIds)
                 .orderByAsc(BizProductionQc::getId);
         List<BizProductionQc> all = qcMapper.selectList(wrapper);
         Map<Long, List<BizProductionQc>> byOrder = all.stream()
                 .collect(Collectors.groupingBy(BizProductionQc::getOrderId));
+        Map<Long, Set<Integer>> doneStepsByOrder = doneStepNosBatch(orderIds);
         Map<Long, QcStateVO> result = new HashMap<>();
         for (BizProductionOrder order : orders) {
-            result.put(order.getId(), buildStateFor(order, byOrder.getOrDefault(order.getId(), List.of())));
+            result.put(order.getId(), buildStateFor(order,
+                    byOrder.getOrDefault(order.getId(), List.of()),
+                    doneStepsByOrder.getOrDefault(order.getId(), Set.of())));
         }
         return result;
     }
 
-    private QcStateVO buildStateFor(BizProductionOrder order, List<BizProductionQc> records) {
+    private QcStateVO buildStateFor(BizProductionOrder order, List<BizProductionQc> records, Set<Integer> doneStepNos) {
         PointState first = latestOfPoint(records, BizProductionQc.POINT_FIRST);
         PointState last = latestOfPoint(records, BizProductionQc.POINT_FINAL);
 
@@ -192,6 +212,9 @@ public class QcService {
         vo.setFinalStatus(last.status);
         vo.setFinalStatusText(last.statusText);
         vo.setFinalPassed(last.isPassed());
+        // D125：门禁解锁标记（前端禁选未解锁测点；后端 record() 仍强校验）
+        vo.setFirstUnlocked(doneStepNos.containsAll(FIRST_GATE_STEPS));
+        vo.setFinalUnlocked(doneStepNos.contains(FINAL_GATE_STEP));
 
         List<QcStateVO.QcRecordVO> vos = new ArrayList<>(records.size());
         for (BizProductionQc r : records) {
@@ -260,6 +283,46 @@ public class QcService {
         wrapper.eq(BizProductionQc::getOrderId, orderId)
                 .orderByAsc(BizProductionQc::getId);
         return qcMapper.selectList(wrapper);
+    }
+
+    // ============================== D125 工序-质检顺序门禁 ==============================
+
+    /**
+     * 录入测点前置门禁：首测需工序 1-5 全部打卡；成品测需工序 7 打卡。
+     * 「最新一次合格」口径由 buildState 的最新记录推导承担（NG→返工→重测合格即持续解锁）。
+     */
+    private void validatePointGate(Long orderId, String point) {
+        Set<Integer> doneNos = doneStepNos(orderId);
+        if (BizProductionQc.POINT_FIRST.equals(point)) {
+            List<Integer> missing = FIRST_GATE_STEPS.stream().filter(n -> !doneNos.contains(n)).toList();
+            if (!missing.isEmpty()) {
+                throw BusinessException.validateFail("首次测试需先完成工序 1-5 打卡，尚未完成：" + missing);
+            }
+        } else if (BizProductionQc.POINT_FINAL.equals(point) && !doneNos.contains(FINAL_GATE_STEP)) {
+            // PROCESS_STEPS 下标 = 工序序号 - 1（工序名唯一权威来源在 ProductionStepService）
+            throw BusinessException.validateFail(
+                    "成品测试需先完成工序 7「" + ProductionStepService.PROCESS_STEPS[FINAL_GATE_STEP - 1] + "」打卡");
+        }
+    }
+
+    /** 订单已打卡完成的人工工序序号集合 */
+    private Set<Integer> doneStepNos(Long orderId) {
+        LambdaQueryWrapper<BizProductionOrderStep> w = new LambdaQueryWrapper<>();
+        w.eq(BizProductionOrderStep::getOrderId, orderId)
+                .eq(BizProductionOrderStep::getStatus, BizProductionOrderStep.STATUS_DONE);
+        return stepMapper.selectList(w).stream()
+                .map(BizProductionOrderStep::getStepNo)
+                .collect(Collectors.toSet());
+    }
+
+    /** 多张订单的已打卡工序集合（一次 in 查询，列表页防 N+1） */
+    private Map<Long, Set<Integer>> doneStepNosBatch(Collection<Long> orderIds) {
+        LambdaQueryWrapper<BizProductionOrderStep> w = new LambdaQueryWrapper<>();
+        w.in(BizProductionOrderStep::getOrderId, orderIds)
+                .eq(BizProductionOrderStep::getStatus, BizProductionOrderStep.STATUS_DONE);
+        return stepMapper.selectList(w).stream()
+                .collect(Collectors.groupingBy(BizProductionOrderStep::getOrderId,
+                        Collectors.mapping(BizProductionOrderStep::getStepNo, Collectors.toSet())));
     }
 
     /**

@@ -6,8 +6,10 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizProductionOrderStep;
+import org.example.back.entity.BizProductionQc;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizProductionOrderStepMapper;
+import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.vo.ProductionStepVO;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,8 +25,9 @@ import java.util.stream.Collectors;
 
 /**
  * 生产工序打卡（D64）：7 道人工装配工序的完成留痕。
- * 打卡不是流程闸口（质检仍是唯一质量闸口）；第 6/8/10 道由质检/入库实时推导，不落库。
- * 撤销限打卡本人或生产管理员；仅生产中/待入库状态可打卡与撤销。
+ * D125 起打卡带工序-质检顺序门禁（工序 7←首测最新合格、工序 9←成品测最新合格）；
+ * 第 6/8/10 道由质检/入库实时推导，不落库。
+ * 撤销限打卡本人或生产管理员；仅生产中/待入库状态可打卡与撤销，且撤销不得使已发生的质检门禁失效。
  */
 @Service
 public class ProductionStepService {
@@ -51,6 +54,9 @@ public class ProductionStepService {
 
     @Autowired
     private BizProductionOrderMapper orderMapper;
+
+    @Autowired
+    private BizProductionQcMapper qcMapper;
 
     @Autowired
     private QcService qcService;
@@ -96,6 +102,8 @@ public class ProductionStepService {
         if (step.getStatus() != null && step.getStatus() == BizProductionOrderStep.STATUS_DONE) {
             throw BusinessException.validateFail("该工序已完成打卡，无需重复操作");
         }
+        // D125 工序-质检顺序门禁：工序 7 需首测最新一次合格，工序 9 需成品测最新一次合格
+        validateStepGate(order, stepNo);
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         step.setStatus(BizProductionOrderStep.STATUS_DONE);
         step.setOperatorId(user.getId());
@@ -123,6 +131,8 @@ public class ProductionStepService {
                     "仅打卡本人或生产研发部管理员可撤销打卡"
             );
         }
+        // D125 撤销保护：撤销不得使已发生的质检门禁失效（守卫在任何写库动作之前）
+        validateRevokeProtection(order, stepNo);
         LambdaUpdateWrapper<BizProductionOrderStep> uw = new LambdaUpdateWrapper<>();
         uw.eq(BizProductionOrderStep::getId, step.getId())
                 .set(BizProductionOrderStep::getStatus, BizProductionOrderStep.STATUS_UNDONE)
@@ -160,6 +170,11 @@ public class ProductionStepService {
             vo.setStepName(PROCESS_STEPS[i]);
             if (MANUAL_STEP_NOS.contains(stepNo)) {
                 applyManualLine(vo, byNo.get(stepNo), operableStatus);
+                // D125：门禁锁定——未解锁工序 operable=false + lockReason（前端灰置+提示；complete() 仍强校验）
+                if (!Boolean.TRUE.equals(vo.getDone()) && stepGateLocked(qc, stepNo)) {
+                    vo.setOperable(false);
+                    vo.setLockReason(stepGateMessage(stepNo));
+                }
             } else if (stepNo == 6) {
                 applyQcLine(vo, qc.getFirstStatus());
             } else if (stepNo == 8) {
@@ -245,6 +260,64 @@ public class ProductionStepService {
     }
 
     // ============================== 私有：校验与工具 ==============================
+
+    /**
+     * D125 打卡门禁：工序 7 需首测最新一次合格，工序 9 需成品测最新一次合格；
+     * 其余人工工序（1-5）不设前置。「最新一次」口径=质检记录追加式最新一条（NG→返工→重测合格即解锁）。
+     */
+    private void validateStepGate(BizProductionOrder order, int stepNo) {
+        if (stepNo != 7 && stepNo != 9) {
+            return;
+        }
+        QcStateVO qc = qcService.buildState(order);
+        if (stepGateLocked(qc, stepNo)) {
+            throw BusinessException.validateFail(stepGateMessage(stepNo));
+        }
+    }
+
+    /** D125：工序是否被质检门禁锁定（complete() 强校验与 listSteps 前端锁定共用口径） */
+    private boolean stepGateLocked(QcStateVO qc, int stepNo) {
+        if (stepNo == 7) {
+            return !"ok".equals(qc.getFirstStatus());
+        }
+        if (stepNo == 9) {
+            return !"ok".equals(qc.getFinalStatus());
+        }
+        return false;
+    }
+
+    /** D125：门禁拦截文案（complete() 拒绝与 listSteps 锁定提示共用，口径一致） */
+    private String stepGateMessage(int stepNo) {
+        if (stepNo == 7) {
+            return "首次测试尚未通过，无法打卡「" + PROCESS_STEPS[6] + "」";
+        }
+        if (stepNo == 9) {
+            return "成品测试尚未通过，无法打卡「" + PROCESS_STEPS[8] + "」";
+        }
+        return null;
+    }
+
+    /**
+     * D125 撤销保护：撤销不得使已发生的质检门禁失效——
+     * 已有首测记录禁撤工序 1-5；已有成品测记录禁撤工序 7；
+     * 工序 9 在订单离开「生产中」（待入库=质检全通过）后禁撤。
+     */
+    private void validateRevokeProtection(BizProductionOrder order, int stepNo) {
+        if (stepNo <= 5 && qcMapper.selectCount(new LambdaQueryWrapper<BizProductionQc>()
+                .eq(BizProductionQc::getOrderId, order.getId())
+                .eq(BizProductionQc::getTestPoint, BizProductionQc.POINT_FIRST)) > 0) {
+            throw BusinessException.validateFail("已存在首次测试记录，撤销工序 1-5 将使质检门禁失效，禁止撤销");
+        }
+        if (stepNo == 7 && qcMapper.selectCount(new LambdaQueryWrapper<BizProductionQc>()
+                .eq(BizProductionQc::getOrderId, order.getId())
+                .eq(BizProductionQc::getTestPoint, BizProductionQc.POINT_FINAL)) > 0) {
+            throw BusinessException.validateFail("已存在成品测试记录，无法撤销「" + PROCESS_STEPS[6] + "」打卡");
+        }
+        if (stepNo == 9 && order.getStatus() != null
+                && order.getStatus() != BizProductionOrder.STATUS_IN_PROGRESS) {
+            throw BusinessException.validateFail("订单已进入待入库（质检全部合格），无法撤销「" + PROCESS_STEPS[8] + "」打卡");
+        }
+    }
 
     private BizProductionOrder requireOrder(Long id) {
         BizProductionOrder order = orderMapper.selectById(id);

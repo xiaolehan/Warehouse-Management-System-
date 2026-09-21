@@ -69,6 +69,10 @@
             <div class="point-card">
               <div class="point-title">首测</div>
               <el-tag :type="pointTagType(qcState?.firstStatus)">{{ qcState?.firstStatusText || '未测' }}</el-tag>
+              <!-- D125：门禁未解锁提示（解锁状态由后端 qcState 透出，前端零自行推断） -->
+              <div v-if="qcState?.firstUnlocked === false" style="margin-top: 8px; color: #909399; font-size: 12px">
+                {{ LOCK_HINT_FIRST }}
+              </div>
               <div v-if="qcState?.firstStatus === 'ng'" style="margin-top: 8px">
                 <el-button size="small" type="warning" @click="doDispose('first', 'REWORK')">返工重测</el-button>
                 <el-button size="small" type="danger" @click="doDispose('first', 'SCRAP')">报废</el-button>
@@ -79,6 +83,9 @@
             <div class="point-card">
               <div class="point-title">成品测</div>
               <el-tag :type="pointTagType(qcState?.finalStatus)">{{ qcState?.finalStatusText || '未测' }}</el-tag>
+              <div v-if="qcState?.finalUnlocked === false" style="margin-top: 8px; color: #909399; font-size: 12px">
+                {{ LOCK_HINT_FINAL }}
+              </div>
               <div v-if="qcState?.finalStatus === 'ng'" style="margin-top: 8px">
                 <el-button size="small" type="warning" @click="doDispose('final', 'REWORK')">返工重测</el-button>
                 <el-button size="small" type="danger" @click="doDispose('final', 'SCRAP')">报废</el-button>
@@ -91,8 +98,8 @@
         <el-form :inline="true" :model="recordForm">
           <el-form-item label="测点">
             <el-select v-model="recordForm.testPoint" placeholder="选择测点" style="width: 120px">
-              <el-option label="首测" value="first" />
-              <el-option label="成品测" value="final" />
+              <el-option label="首测" value="first" :disabled="qcState?.firstUnlocked === false" />
+              <el-option label="成品测" value="final" :disabled="qcState?.finalUnlocked === false" />
             </el-select>
           </el-form-item>
           <el-form-item label="结果">
@@ -108,6 +115,10 @@
             <el-button type="primary" :icon="Check" @click="doRecord">提交</el-button>
           </el-form-item>
         </el-form>
+        <!-- D125：未解锁测点的原因提示（下拉项已禁用，此处解释为何禁用） -->
+        <div v-if="pointLockHint" style="color: #e6a23c; font-size: 12px; margin-top: -8px">
+          {{ pointLockHint }}
+        </div>
 
         <el-divider content-position="left">测试记录</el-divider>
         <el-table :data="qcState?.records || []" border size="small" max-height="220">
@@ -128,7 +139,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, computed } from 'vue'
 import { Search, Refresh, Check } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getProductionOrderPageAPI, getProductionOrderDetailAPI } from '@/api/business'
@@ -154,6 +165,19 @@ const qcState = ref(null)
 const recordForm = reactive({ testPoint: 'first', result: 'OK', reason: '' })
 
 const dispText = (d) => (d === 'REWORK' ? '返工' : d === 'SCRAP' ? '报废' : '')
+
+// D125：门禁锁定原因文案（测点卡片与录入区共用，口径与后端 complete() 拦截文案一致）
+const LOCK_HINT_FIRST = '需先完成工序 1-5 打卡'
+const LOCK_HINT_FINAL = '需先完成工序 7「屏蔽壳安装」打卡'
+
+// D125：门禁未解锁测点的原因提示（解锁状态由后端透出，前端只做展示，不做自行推断）
+const pointLockHint = computed(() => {
+  if (!qcState.value) return ''
+  const hints = []
+  if (qcState.value.firstUnlocked === false) hints.push('首测' + LOCK_HINT_FIRST)
+  if (qcState.value.finalUnlocked === false) hints.push('成品测' + LOCK_HINT_FINAL)
+  return hints.join('；')
+})
 
 const loadList = async () => {
   loading.value = true
@@ -188,7 +212,10 @@ const openQc = async (row) => {
     qcState.value = detail.value.qcState || null
     // 记录里的处置显示为中文
     ;(qcState.value?.records || []).forEach((r) => { r.dispositionText = dispText(r.disposition) })
-    recordForm.testPoint = 'first'
+    // D125：默认测点选已解锁的（首测优先；首测锁定而成品测解锁时落到成品测）
+    const firstLocked = qcState.value?.firstUnlocked === false
+    const finalUnlocked = qcState.value?.finalUnlocked !== false
+    recordForm.testPoint = firstLocked && finalUnlocked ? 'final' : 'first'
     recordForm.result = 'OK'
     recordForm.reason = ''
     qcVisible.value = true

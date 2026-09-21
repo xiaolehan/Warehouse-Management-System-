@@ -4,10 +4,13 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizProductionOrderStep;
+import org.example.back.entity.BizProductionQc;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizProductionOrderStepMapper;
+import org.example.back.mapper.BizProductionQcMapper;
 import org.example.back.vo.ProductionStepVO;
 import org.example.back.vo.QcStateVO;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -42,11 +45,25 @@ class ProductionStepServiceTest {
 
     @Mock private BizProductionOrderStepMapper stepMapper;
     @Mock private BizProductionOrderMapper orderMapper;
+    @Mock private BizProductionQcMapper qcMapper;
     @Mock private QcService qcService;
     @Mock private AuthzService authzService;
     @Mock private AuthService authService;
 
     @InjectMocks private ProductionStepService service;
+
+    @BeforeAll
+    static void initMybatisPlusLambdaCache() {
+        // LambdaUpdateWrapper.set() 解析列名需实体元数据缓存（LambdaQueryWrapper.eq 是惰性求值不受影响）
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizProductionOrderStep.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizProductionQc.class);
+    }
 
     private BizProductionOrder order(int status) {
         BizProductionOrder o = new BizProductionOrder();
@@ -174,6 +191,7 @@ class ProductionStepServiceTest {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_DONE, 9L));
         when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(0L); // D125：无首测记录，放行
 
         service.revoke(7L, 3);
 
@@ -186,6 +204,7 @@ class ProductionStepServiceTest {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_DONE, 8L));
         when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(0L); // D125：无首测记录，放行
 
         service.revoke(7L, 3);
 
@@ -313,5 +332,167 @@ class ProductionStepServiceTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 1));
         assertTrue(ex.getMessage().contains("已终止"));
+    }
+
+    // ---------- D125：工序-质检顺序门禁 ----------
+
+    @Test
+    void complete_step7_beforeFirstPass_rejected() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(7, BizProductionOrderStep.STATUS_UNDONE, null));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("untested");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.complete(7L, 7));
+        assertTrue(ex.getMessage().contains("首次测试尚未通过"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).updateById(any(BizProductionOrderStep.class));
+    }
+
+    @Test
+    void complete_step9_beforeFinalPass_rejected() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_UNDONE, null));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok");
+        qc.setFinalStatus("untested");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.complete(7L, 9));
+        assertTrue(ex.getMessage().contains("成品测试尚未通过"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).updateById(any(BizProductionOrderStep.class));
+    }
+
+    @Test
+    void complete_step7_afterFirstOk_passes() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(7, BizProductionOrderStep.STATUS_UNDONE, null));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok"); // NG→返工→重测合格也走此口径（buildState 取最新一条）
+        when(qcService.buildState(any())).thenReturn(qc);
+        when(authService.getUserInfo()).thenReturn(user(9L));
+
+        service.complete(7L, 7);
+
+        ArgumentCaptor<BizProductionOrderStep> cap = ArgumentCaptor.forClass(BizProductionOrderStep.class);
+        verify(stepMapper).updateById(cap.capture());
+        assertEquals(BizProductionOrderStep.STATUS_DONE, cap.getValue().getStatus());
+    }
+
+    @Test
+    void complete_step9_afterFinalOk_passes() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_UNDONE, null));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok");
+        qc.setFinalStatus("ok");
+        when(qcService.buildState(any())).thenReturn(qc);
+        when(authService.getUserInfo()).thenReturn(user(9L));
+
+        service.complete(7L, 9);
+
+        verify(stepMapper).updateById(any(BizProductionOrderStep.class));
+    }
+
+    @Test
+    void complete_step1_noGate_notEvenWhenQcUntested() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(1, BizProductionOrderStep.STATUS_UNDONE, null));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+
+        service.complete(7L, 1);
+
+        // 工序 1-5 不设质检前置，无需查质检状态
+        verify(qcService, never()).buildState(any());
+        verify(stepMapper).updateById(any(BizProductionOrderStep.class));
+    }
+
+    // ---------- D125：撤销保护（撤销不得使已发生的质检门禁失效） ----------
+
+    @Test
+    void revoke_firstTestExists_blocksSteps15Revoke() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(5, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(1L);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 5));
+        assertTrue(ex.getMessage().contains("已存在首次测试记录"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void revoke_finalTestExists_blocksStep7Revoke() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(7, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(1L);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 7));
+        assertTrue(ex.getMessage().contains("已存在成品测试记录"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void revoke_step9_blockedAfterLeavingProduction() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_AWAIT_QC));
+        when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 9));
+        assertTrue(ex.getMessage().contains("待入库"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void revoke_step9_allowedWhileInProgress() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+
+        service.revoke(7L, 9);
+
+        // 生产中且无成品测门禁问题 → 正常撤销（工序 9 保护只看订单状态，不查质检表）
+        verify(qcMapper, never()).selectCount(any());
+        verify(stepMapper).update(isNull(), any());
+    }
+
+    // ---------- D125：列表门禁锁定标记 ----------
+
+    @Test
+    void listSteps_lockedStep7and9_getLockReasonAndNotOperable() {
+        BizProductionOrderStep done5 = step(5, BizProductionOrderStep.STATUS_DONE, 9L);
+        when(stepMapper.selectList(any())).thenReturn(List.of(done5));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("untested");
+        qc.setFinalStatus("untested");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
+
+        // 工序 1-5 已打卡/可打卡不受门禁影响；7/9 未解锁灰置并带锁定原因
+        assertTrue(steps.get(0).getOperable());
+        assertNull(steps.get(0).getLockReason());
+        assertFalse(steps.get(6).getOperable());
+        assertTrue(steps.get(6).getLockReason().contains("首次测试尚未通过"), steps.get(6).getLockReason());
+        assertFalse(steps.get(8).getOperable());
+        assertTrue(steps.get(8).getLockReason().contains("成品测试尚未通过"), steps.get(8).getLockReason());
+    }
+
+    @Test
+    void listSteps_unlockedAfterQcPass_gateReleased() {
+        BizProductionOrderStep done5 = step(5, BizProductionOrderStep.STATUS_DONE, 9L);
+        when(stepMapper.selectList(any())).thenReturn(List.of(done5));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok"); // 首测合格 → 工序 7 解锁
+        qc.setFinalStatus("ok"); // 成品测合格 → 工序 9 解锁
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
+
+        assertTrue(steps.get(6).getOperable());
+        assertNull(steps.get(6).getLockReason());
+        assertTrue(steps.get(8).getOperable());
+        assertNull(steps.get(8).getLockReason());
     }
 }

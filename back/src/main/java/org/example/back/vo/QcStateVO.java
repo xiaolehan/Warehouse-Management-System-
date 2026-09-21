@@ -34,6 +34,12 @@ public class QcStateVO {
 
     private Boolean finalPassed;
 
+    /** D125：首测解锁——工序 1-5 全部打卡（false 时质检页禁选首测） */
+    private Boolean firstUnlocked;
+
+    /** D125：成品测解锁——工序 7 已打卡（false 时质检页禁选成品测） */
+    private Boolean finalUnlocked;
+
     /** 质检记录历史 */
     private List<QcRecordVO> records;
 

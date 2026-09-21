@@ -37,4 +37,7 @@ public class ProductionStepVO {
 
     /** 是否可撤销（manual 已完成 且 订单生产中/待入库；本人/管理员校验在接口层） */
     private Boolean revocable;
+
+    /** D125：门禁锁定原因（非 null 时前端灰置打卡按钮并提示；后端 complete() 仍强校验） */
+    private String lockReason;
 }

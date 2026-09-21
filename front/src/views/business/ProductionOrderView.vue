@@ -340,8 +340,14 @@
             </el-table-column>
             <el-table-column label="操作" width="130" align="center">
               <template #default="s">
+                <!-- D125：门禁锁定工序灰置打卡并提示原因（operable 已由后端置 false；tooltip 用 span 包裹兼容 disabled 按钮，不自定义间距——ADR-0007） -->
+                <el-tooltip v-if="s.row.lockReason" :content="s.row.lockReason" placement="top">
+                  <span style="cursor: not-allowed">
+                    <el-button link type="info" size="small" disabled>打卡</el-button>
+                  </span>
+                </el-tooltip>
                 <el-button
-                  v-if="s.row.operable" link type="primary" size="small"
+                  v-if="!s.row.lockReason && s.row.operable" link type="primary" size="small"
                   v-permission="{ deptCodes: ['production'] }"
                   @click="doStepComplete(s.row)"
                 >打卡</el-button>
@@ -350,12 +356,13 @@
                   v-permission="{ deptCodes: ['production'] }"
                   @click="doStepRevoke(s.row)"
                 >撤销</el-button>
-                <span v-if="!s.row.operable && !s.row.revocable">—</span>
+                <span v-if="!s.row.lockReason && !s.row.operable && !s.row.revocable">—</span>
               </template>
             </el-table-column>
           </el-table>
           <div style="color: #909399; font-size: 12px; margin-top: 6px">
-            首次测试/成品测在「质检记录」页面录入后自动更新；成品入库在仓储「确认入库」后自动更新；其余 7 道由生产研发部成员打卡，打卡本人或生产管理员可撤销。
+            <!-- D125：门禁规则提示（票号仅注释，不上屏） -->
+            首次测试/成品测在「质检记录」页面录入后自动更新；成品入库在仓储「确认入库」后自动更新；其余 7 道由生产研发部成员打卡，打卡本人或生产管理员可撤销。工序 7 需首测合格后才能打卡，工序 9 需成品测合格后才能打卡。
           </div>
         </template>
         <ol v-else style="margin: 0; padding-left: 20px">
