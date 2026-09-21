@@ -10,14 +10,16 @@ public interface BizPurchaseReturnMapper extends BaseMapper<BizPurchaseReturn> {
 
     // ============================== 年度经营统计（ADR-0008） ==============================
 
-    /** 已退货单按退货完成时间归年冲减（complete_time 缺失的历史行回退 operation_time） */
+    /** D111：已退货按明细行金额合计，按退货完成时间归年冲减（complete_time 缺失回退 operation_time） */
     @Select("""
-            SELECT YEAR(COALESCE(complete_time, operation_time)) AS stat_year, SUM(total_price) AS amount
-            FROM biz_purchase_return
-            WHERE is_deleted = 0
-              AND biz_status = 1
-              AND confirm_status = 3
-            GROUP BY YEAR(COALESCE(complete_time, operation_time))
+            SELECT YEAR(COALESCE(p.complete_time, p.operation_time)) AS stat_year, SUM(d.total_price) AS amount
+            FROM biz_purchase_return_detail d
+            JOIN biz_purchase_return p ON p.id = d.return_id
+            WHERE d.is_deleted = 0
+              AND p.is_deleted = 0
+              AND p.biz_status = 1
+              AND p.confirm_status = 3
+            GROUP BY YEAR(COALESCE(p.complete_time, p.operation_time))
             """)
     List<BizSalesMapper.YearAmountAgg> yearlyValidPurchaseReturnAmount();
 }

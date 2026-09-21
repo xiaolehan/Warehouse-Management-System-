@@ -4,7 +4,11 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * 进货退货单 VO（D111 头行结构）：头汇总 + 明细行列表。
+ */
 @Data
 public class PurchaseReturnVO {
 
@@ -16,23 +20,14 @@ public class PurchaseReturnVO {
 
     private String sourcePurchaseNo;
 
-    private String orderNo;
+    private Integer totalQuantity;
 
-    private Long goodsId;
+    private BigDecimal totalAmount;
 
-    private String goodsName;
+    /** 商品汇总描述：单行 "SMC105"，多行 "SMC105 等 3 种" */
+    private String goodsSummary;
 
-    private String supplierName;
-
-    private Integer quantity;
-
-    private Integer returnQuantity;
-
-    private BigDecimal unitPrice;
-
-    private BigDecimal totalPrice;
-
-    private BigDecimal returnAmount;
+    private List<PurchaseReturnDetailVO> details;
 
     private LocalDateTime operationTime;
 
@@ -43,8 +38,6 @@ public class PurchaseReturnVO {
     private String operator;
 
     private String remark;
-
-    private String reason;
 
     private Integer bizStatus;
 

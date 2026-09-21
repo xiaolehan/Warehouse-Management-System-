@@ -7,9 +7,9 @@ import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProduction;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizProductionQc;
-import org.example.back.entity.BizPurchase;
+import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.entity.BizPurchaseRequestDetail;
-import org.example.back.entity.BizPurchaseReturn;
+import org.example.back.entity.BizPurchaseReturnDetail;
 import org.example.back.entity.BizSalesDetail;
 import org.example.back.entity.BizSalesReturnDetail;
 import org.example.back.mapper.BizBomDetailMapper;
@@ -18,9 +18,9 @@ import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizProductionMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizProductionQcMapper;
-import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
-import org.example.back.mapper.BizPurchaseReturnMapper;
+import org.example.back.mapper.BizPurchaseReturnDetailMapper;
 import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesReturnDetailMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,9 +44,9 @@ public class GoodsReferenceService {
     @Autowired
     private BizSalesReturnDetailMapper bizSalesReturnDetailMapper;
     @Autowired
-    private BizPurchaseMapper bizPurchaseMapper;
+    private BizPurchaseDetailMapper bizPurchaseDetailMapper;
     @Autowired
-    private BizPurchaseReturnMapper bizPurchaseReturnMapper;
+    private BizPurchaseReturnDetailMapper bizPurchaseReturnDetailMapper;
     @Autowired
     private BizPurchaseRequestDetailMapper bizPurchaseRequestDetailMapper;
     @Autowired
@@ -76,8 +76,8 @@ public class GoodsReferenceService {
                 || bizProductionMapper.selectCount(Wrappers.<BizProduction>lambdaQuery().eq(BizProduction::getGoodsId, goodsId)) > 0
                 || bizSalesDetailMapper.selectCount(Wrappers.<BizSalesDetail>lambdaQuery().eq(BizSalesDetail::getGoodsId, goodsId)) > 0
                 || bizSalesReturnDetailMapper.selectCount(Wrappers.<BizSalesReturnDetail>lambdaQuery().eq(BizSalesReturnDetail::getGoodsId, goodsId)) > 0
-                || bizPurchaseMapper.selectCount(Wrappers.<BizPurchase>lambdaQuery().eq(BizPurchase::getGoodsId, goodsId)) > 0
-                || bizPurchaseReturnMapper.selectCount(Wrappers.<BizPurchaseReturn>lambdaQuery().eq(BizPurchaseReturn::getGoodsId, goodsId)) > 0
+                || bizPurchaseDetailMapper.selectCount(Wrappers.<BizPurchaseDetail>lambdaQuery().eq(BizPurchaseDetail::getGoodsId, goodsId)) > 0
+                || bizPurchaseReturnDetailMapper.selectCount(Wrappers.<BizPurchaseReturnDetail>lambdaQuery().eq(BizPurchaseReturnDetail::getGoodsId, goodsId)) > 0
                 || bizPurchaseRequestDetailMapper.selectCount(Wrappers.<BizPurchaseRequestDetail>lambdaQuery().eq(BizPurchaseRequestDetail::getGoodsId, goodsId)) > 0
                 || bizPickListDetailMapper.selectCount(Wrappers.<BizPickListDetail>lambdaQuery().eq(BizPickListDetail::getGoodsId, goodsId)) > 0
                 || bizProductionQcMapper.selectCount(Wrappers.<BizProductionQc>lambdaQuery().eq(BizProductionQc::getGoodsId, goodsId)) > 0

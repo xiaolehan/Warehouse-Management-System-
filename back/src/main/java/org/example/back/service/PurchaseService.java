@@ -14,15 +14,16 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizPurchase;
-import org.example.back.entity.BizPurchaseReturn;
+import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
+import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
-import org.example.back.mapper.BizPurchaseReturnMapper;
+import org.example.back.vo.PurchaseDetailVO;
+import org.example.back.vo.PurchaseSourceOptionLineVO;
 import org.example.back.vo.PurchaseSourceOptionVO;
 import org.example.back.vo.PurchaseVO;
-import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,12 +32,13 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -50,13 +52,16 @@ public class PurchaseService {
     private BizPurchaseMapper bizPurchaseMapper;
 
     @Autowired
+    private BizPurchaseDetailMapper bizPurchaseDetailMapper;
+
+    @Autowired
     private BaseGoodsMapper baseGoodsMapper;
 
     @Autowired
     private BaseSupplierMapper baseSupplierMapper;
 
     @Autowired
-    private BizPurchaseReturnMapper bizPurchaseReturnMapper;
+    private PurchaseReturnService purchaseReturnService;
 
     @Autowired
     private BizApprovalOrderMapper bizApprovalOrderMapper;
@@ -96,38 +101,33 @@ public class PurchaseService {
         LocalDateTime endTime = queryDTO.getEndDate() == null ? null : queryDTO.getEndDate().plusDays(1).atStartOfDay();
 
         LambdaQueryWrapper<BizPurchase> wrapper = new LambdaQueryWrapper<>();
-        wrapper.like(StringUtils.hasText(queryDTO.getPurchaseNo()), BizPurchase::getPurchaseNo, queryDTO.getPurchaseNo())
-                .like(StringUtils.hasText(queryDTO.getGoodsName()), BizPurchase::getGoodsName, queryDTO.getGoodsName())
-                .eq(queryDTO.getGoodsId() != null, BizPurchase::getGoodsId, queryDTO.getGoodsId());
+        wrapper.like(StringUtils.hasText(queryDTO.getPurchaseNo()), BizPurchase::getPurchaseNo, queryDTO.getPurchaseNo());
 
-        // D36：按供应商名称模糊筛选。供应商不在 biz_purchase 上，需经 goods.supplier_id -> base_supplier 桥接出 goodsId 集合再过滤。
-        if (StringUtils.hasText(queryDTO.getSupplierName())) {
-            List<Long> supplierGoodsIds = resolveGoodsIdsBySupplierName(queryDTO.getSupplierName());
-            if (supplierGoodsIds.isEmpty()) {
-                return new PageResult<>(List.of(), 0L, queryDTO.getPageNum(), queryDTO.getPageSize(), 0L);
-            }
-            wrapper.in(BizPurchase::getGoodsId, supplierGoodsIds);
-        }
+        // D111：物料名/物料id/供应商过滤全部下沉明细行（头表已无商品字段），EXISTS 参数化防注入
+        wrapper.apply(StringUtils.hasText(queryDTO.getGoodsName()),
+                        "EXISTS (SELECT 1 FROM biz_purchase_detail d WHERE d.purchase_id = biz_purchase.id AND d.is_deleted = 0"
+                                + " AND d.goods_name LIKE CONCAT('%', {0}, '%'))", queryDTO.getGoodsName());
+        wrapper.apply(queryDTO.getGoodsId() != null,
+                        "EXISTS (SELECT 1 FROM biz_purchase_detail d WHERE d.purchase_id = biz_purchase.id AND d.is_deleted = 0"
+                                + " AND d.goods_id = {0})", queryDTO.getGoodsId());
+        wrapper.apply(StringUtils.hasText(queryDTO.getSupplierName()),
+                        "EXISTS (SELECT 1 FROM biz_purchase_detail d"
+                                + " JOIN base_goods g ON g.id = d.goods_id"
+                                + " JOIN base_supplier s ON s.id = g.supplier_id"
+                                + " WHERE d.purchase_id = biz_purchase.id AND d.is_deleted = 0"
+                                + " AND s.supplier_name LIKE CONCAT('%', {0}, '%'))", queryDTO.getSupplierName());
 
         wrapper.ge(startTime != null, BizPurchase::getOperationTime, startTime)
             .lt(endTime != null, BizPurchase::getOperationTime, endTime)
                 .orderByDesc(BizPurchase::getId);
 
         Page<BizPurchase> page = bizPurchaseMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
-        Map<Long, BaseGoods> goodsMap = buildGoodsMap(page.getRecords().stream().map(BizPurchase::getGoodsId).collect(Collectors.toSet()));
-        Map<Long, BaseSupplier> supplierMap = buildSupplierMap(goodsMap.values().stream()
-                .map(BaseGoods::getSupplierId)
-                .filter(id -> id != null)
-                .collect(Collectors.toSet()));
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizPurchase::getId).toList());
 
         List<PurchaseVO> records = page.getRecords().stream()
-                .map(item -> {
-                    BaseGoods goods = goodsMap.get(item.getGoodsId());
-                    BaseSupplier supplier = goods == null ? null : supplierMap.get(goods.getSupplierId());
-                return toVO(item, supplier, approvalMap.get(item.getId()));
-                })
+                .map(item -> toVO(item, approvalMap.get(item.getId())))
                 .toList();
+        fillDetails(records); // D111：明细行 + 商品/供应商汇总
 
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
@@ -135,17 +135,20 @@ public class PurchaseService {
     public PurchaseVO getById(Long id) {
         requirePurchaseReadAccess();
         BizPurchase purchase = requirePurchase(id);
-        BaseGoods goods = baseGoodsMapper.selectById(purchase.getGoodsId());
-        BaseSupplier supplier = goods == null ? null : baseSupplierMapper.selectById(goods.getSupplierId());
-        return toVO(purchase, supplier, resolveLatestApproval(purchase.getId()));
+        PurchaseVO vo = toVO(purchase, resolveLatestApproval(purchase.getId()));
+        fillDetails(List.of(vo));
+        return vo;
     }
 
+    /**
+     * D111：可退货来源进货单（正常+已入库），按单分组，明细行带行级可退量
+     * （行入库量 − 该行被有效退货累计）。goodsId 给定时仅保留含该物料的单。
+     */
     public List<PurchaseSourceOptionVO> returnableOptions(Long goodsId) {
         requirePurchaseModuleAccess();
         LambdaQueryWrapper<BizPurchase> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizPurchase::getBizStatus, 1)
                 .eq(BizPurchase::getConfirmStatus, CONFIRM_RECEIVED)
-                .eq(goodsId != null, BizPurchase::getGoodsId, goodsId)
                 .orderByDesc(BizPurchase::getOperationTime)
                 .orderByDesc(BizPurchase::getId);
         List<BizPurchase> purchases = bizPurchaseMapper.selectList(wrapper);
@@ -154,60 +157,114 @@ public class PurchaseService {
         }
 
         List<Long> purchaseIds = purchases.stream().map(BizPurchase::getId).toList();
-        LambdaQueryWrapper<BizPurchaseReturn> returnWrapper = new LambdaQueryWrapper<>();
-        returnWrapper.in(BizPurchaseReturn::getSourcePurchaseId, purchaseIds)
-                .eq(BizPurchaseReturn::getBizStatus, 1);
-        List<BizPurchaseReturn> linkedReturns = bizPurchaseReturnMapper.selectList(returnWrapper);
-
-        Map<Long, Integer> returnedMap = new HashMap<>();
-        for (BizPurchaseReturn item : linkedReturns) {
-            returnedMap.merge(item.getSourcePurchaseId(), item.getQuantity(), Integer::sum);
+        List<BizPurchaseDetail> allLines = bizPurchaseDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseDetail>()
+                        .in(BizPurchaseDetail::getPurchaseId, purchaseIds)
+                        .orderByAsc(BizPurchaseDetail::getSortNo)
+                        .orderByAsc(BizPurchaseDetail::getId));
+        if (goodsId != null) {
+            allLines = allLines.stream().filter(l -> goodsId.equals(l.getGoodsId())).toList();
+        }
+        if (allLines.isEmpty()) {
+            return List.of();
         }
 
-        return purchases.stream()
-                .map(item -> {
-                    int returnedQty = returnedMap.getOrDefault(item.getId(), 0);
-                    int returnableQty = item.getQuantity() - returnedQty;
-                    if (returnableQty <= 0) {
-                        return null;
-                    }
-                    PurchaseSourceOptionVO vo = new PurchaseSourceOptionVO();
-                    vo.setId(item.getId());
-                    vo.setPurchaseNo(item.getPurchaseNo());
-                    vo.setGoodsId(item.getGoodsId());
-                    vo.setGoodsName(item.getGoodsName());
-                    vo.setQuantity(item.getQuantity());
-                    vo.setReturnedQuantity(returnedQty);
-                    vo.setReturnableQuantity(returnableQty);
-                    vo.setUnitPrice(item.getUnitPrice());
-                    vo.setOperationTime(item.getOperationTime());
-                    return vo;
-                })
-                .filter(item -> item != null)
-                .toList();
+        Map<Long, Integer> returnedMap = purchaseReturnService.returnedQtyBySourceDetail(
+                allLines.stream().map(BizPurchaseDetail::getId).toList());
+
+        Map<Long, List<BizPurchaseDetail>> linesByPurchase = allLines.stream()
+                .collect(Collectors.groupingBy(BizPurchaseDetail::getPurchaseId));
+        List<PurchaseSourceOptionVO> result = new ArrayList<>();
+        for (BizPurchase purchase : purchases) {
+            List<BizPurchaseDetail> lines = linesByPurchase.get(purchase.getId());
+            if (lines == null || lines.isEmpty()) {
+                continue;
+            }
+            List<PurchaseSourceOptionLineVO> optionLines = lines.stream().map(d -> {
+                int returnedQty = returnedMap.getOrDefault(d.getId(), 0);
+                int returnableQty = d.getQuantity() - returnedQty;
+                if (returnableQty <= 0) {
+                    return null;
+                }
+                PurchaseSourceOptionLineVO line = new PurchaseSourceOptionLineVO();
+                line.setPurchaseDetailId(d.getId());
+                line.setGoodsId(d.getGoodsId());
+                line.setGoodsName(d.getGoodsName());
+                line.setSpec(d.getSpec());
+                line.setQuantity(d.getQuantity());
+                line.setUnitPrice(d.getUnitPrice());
+                line.setReturnedQuantity(returnedQty);
+                line.setReturnableQuantity(returnableQty);
+                return line;
+            }).filter(Objects::nonNull).toList();
+            if (optionLines.isEmpty()) {
+                continue;
+            }
+            PurchaseSourceOptionVO vo = new PurchaseSourceOptionVO();
+            vo.setId(purchase.getId());
+            vo.setPurchaseNo(purchase.getPurchaseNo());
+            vo.setOperationTime(purchase.getOperationTime());
+            vo.setLines(optionLines);
+            result.add(vo);
+        }
+        return result;
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void create(PurchaseSaveDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseModuleAccess();
-        validateQuantity(dto.getQuantity());
+        List<PurchaseSaveDTO.LineDTO> lines = requireLines(dto.getLines());
 
-        BaseGoods goods = requireGoods(dto.getGoodsId());
-        ensureGoodsEnabled(goods);
-        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
-        BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getPurchasePrice(), "商品进价为空，请传入进货单价");
+        // D111 决策：同一物料一单只允许一行
+        Set<Long> goodsIds = new HashSet<>();
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            if (line.getGoodsId() == null || !goodsIds.add(line.getGoodsId())) {
+                throw BusinessException.validateFail("同一物料在一张进货单中只能有一行，请合并数量");
+            }
+        }
+
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
-
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+
+        // 先全量校验再落库，避免半张单
+        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        List<BizPurchaseDetail> detailEntities = new ArrayList<>();
+        int totalQuantity = 0;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        int sortNo = 0;
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            sortNo++;
+            BaseGoods goods = goodsMap.get(line.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("商品不存在");
+            }
+            ensureGoodsEnabled(goods);
+            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
+            BigDecimal unitPrice = resolveUnitPrice(line.getUnitPrice(), goods.getPurchasePrice(),
+                    "物料「" + goods.getGoodsName() + "」进价为空，请传入进货单价");
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(line.getQuantity()));
+
+            BizPurchaseDetail detail = new BizPurchaseDetail();
+            detail.setGoodsId(goods.getId());
+            detail.setGoodsName(goods.getGoodsName());
+            detail.setSpec(goods.getSpec());
+            detail.setMaterial(goods.getMaterial());
+            detail.setQuantity(line.getQuantity());
+            detail.setUnitPrice(unitPrice);
+            detail.setTotalPrice(lineTotal);
+            detail.setSortNo(sortNo);
+            detailEntities.add(detail);
+
+            totalQuantity += line.getQuantity();
+            totalAmount = totalAmount.add(lineTotal);
+        }
 
         BizPurchase purchase = new BizPurchase();
         purchase.setPurchaseNo(CodeGenerator.purchaseNo());
-        purchase.setGoodsId(goods.getId());
-        purchase.setGoodsName(goods.getGoodsName());
-        purchase.setQuantity(dto.getQuantity());
-        purchase.setUnitPrice(unitPrice);
-        purchase.setTotalPrice(unitPrice.multiply(BigDecimal.valueOf(dto.getQuantity())));
+        purchase.setTotalQuantity(totalQuantity);
+        purchase.setTotalAmount(totalAmount);
         purchase.setOperatorId(loginUser.getId());
         purchase.setOperatorName(loginUser.getRealName());
         purchase.setOperationTime(operationTime);
@@ -216,45 +273,84 @@ public class PurchaseService {
         purchase.setConfirmStatus(CONFIRM_PENDING);
 
         bizPurchaseMapper.insert(purchase);
+        for (BizPurchaseDetail detail : detailEntities) {
+            detail.setPurchaseId(purchase.getId());
+            bizPurchaseDetailMapper.insert(detail);
+        }
         // 不加库存，待采购到货确认 + 仓储确认入库
     }
 
     /**
      * 内部创建进货单（不校验权限，供采购申请仓储确认入库等内部流程复用）。
-     * operator 由调用方传入（如仓储确认入库人）。
+     * 一次调用生成一张多行已入库单；operator 由调用方传入（如仓储确认入库人）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void createInternal(PurchaseSaveDTO dto, Long operatorId, String operatorName) {
-        validateQuantity(dto.getQuantity());
+        List<PurchaseSaveDTO.LineDTO> lines = requireLines(dto.getLines());
+        Set<Long> goodsIds = new HashSet<>();
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            if (line.getGoodsId() == null || !goodsIds.add(line.getGoodsId())) {
+                throw BusinessException.validateFail("同一物料在一张进货单中只能有一行，请合并数量");
+            }
+        }
 
-        BaseGoods goods = requireGoods(dto.getGoodsId());
-        ensureGoodsEnabled(goods);
-        GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
-        BigDecimal unitPrice = resolveUnitPrice(dto.getUnitPrice(), goods.getPurchasePrice(), "商品进价为空，请传入进货单价");
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
+        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        List<BizPurchaseDetail> detailEntities = new ArrayList<>();
+        int totalQuantity = 0;
+        BigDecimal totalAmount = BigDecimal.ZERO;
+        int sortNo = 0;
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            sortNo++;
+            BaseGoods goods = goodsMap.get(line.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("商品不存在");
+            }
+            ensureGoodsEnabled(goods);
+            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
+            BigDecimal unitPrice = resolveUnitPrice(line.getUnitPrice(), goods.getPurchasePrice(),
+                    "物料「" + goods.getGoodsName() + "」进价为空，请传入进货单价");
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(line.getQuantity()));
+
+            BizPurchaseDetail detail = new BizPurchaseDetail();
+            detail.setGoodsId(goods.getId());
+            detail.setGoodsName(goods.getGoodsName());
+            detail.setSpec(goods.getSpec());
+            detail.setMaterial(goods.getMaterial());
+            detail.setQuantity(line.getQuantity());
+            detail.setUnitPrice(unitPrice);
+            detail.setTotalPrice(lineTotal);
+            detail.setSortNo(sortNo);
+            detailEntities.add(detail);
+
+            totalQuantity += line.getQuantity();
+            totalAmount = totalAmount.add(lineTotal);
+        }
 
         BizPurchase purchase = new BizPurchase();
         purchase.setPurchaseNo(CodeGenerator.purchaseNo());
-        purchase.setGoodsId(goods.getId());
-        purchase.setGoodsName(goods.getGoodsName());
-        purchase.setQuantity(dto.getQuantity());
-        purchase.setUnitPrice(unitPrice);
-        purchase.setTotalPrice(unitPrice.multiply(BigDecimal.valueOf(dto.getQuantity())));
+        purchase.setTotalQuantity(totalQuantity);
+        purchase.setTotalAmount(totalAmount);
         purchase.setOperatorId(operatorId);
         purchase.setOperatorName(operatorName);
         purchase.setOperationTime(operationTime);
         purchase.setRemark(dto.getRemark());
         purchase.setBizStatus(1);
         purchase.setConfirmStatus(CONFIRM_RECEIVED);
+        purchase.setArriveTime(operationTime);
+        purchase.setConfirmerId(operatorId);
+        purchase.setConfirmerName(operatorName);
+        purchase.setConfirmTime(operationTime);
 
         bizPurchaseMapper.insert(purchase);
-        increaseStock(goods.getId(), dto.getQuantity());
-
-        // 采购申请链路确认入库时，把本次采购单价回写为商品最新进价（仅更新 purchase_price 一列，
-        // 避免用 updateById 整行覆盖——increaseStock 已用 SQL 自增 stock，内存 goods 里有旧库存值）
-        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
-        priceUpdate.eq(BaseGoods::getId, goods.getId()).set(BaseGoods::getPurchasePrice, unitPrice);
-        baseGoodsMapper.update(null, priceUpdate);
+        for (BizPurchaseDetail detail : detailEntities) {
+            detail.setPurchaseId(purchase.getId());
+            bizPurchaseDetailMapper.insert(detail);
+            increaseStock(detail.getGoodsId(), detail.getQuantity());
+            // 采购单价回写为物料最新进价（仅更新 purchase_price 一列；increaseStock 已用 SQL 自增 stock）
+            updatePurchasePrice(detail.getGoodsId(), detail.getUnitPrice());
+        }
     }
 
     // ============================== 采购到货确认（推仓储） ==============================
@@ -294,7 +390,11 @@ public class PurchaseService {
         }
         ensureNormalStatus(entity.getBizStatus(), "进货单");
         ensureNoPendingVoidApproval(id, "进货单");
-        increaseStock(entity.getGoodsId(), entity.getQuantity());
+
+        List<BizPurchaseDetail> details = requireDetails(entity.getId());
+        for (BizPurchaseDetail detail : details) {
+            increaseStock(detail.getGoodsId(), detail.getQuantity());
+        }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LocalDateTime now = LocalDateTime.now();
@@ -307,13 +407,13 @@ public class PurchaseService {
                 .set(BizPurchase::getConfirmTime, now);
         int rows = bizPurchaseMapper.update(null, updateWrapper);
         if (rows != 1) {
+            // 库存已逐行加但状态更新失败时由事务回滚保护
             throw BusinessException.validateFail("进货单状态已变更，请刷新后重试");
         }
-        // D101：直接进货链路确认入库同样回写最新进价（与采购申请链路 createInternal 口径统一——「最近一批进价」）；
-        // 仅更新 purchase_price 一列，避免 updateById 整行覆盖（increaseStock 已用 SQL 自增 stock）
-        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
-        priceUpdate.eq(BaseGoods::getId, entity.getGoodsId()).set(BaseGoods::getPurchasePrice, entity.getUnitPrice());
-        baseGoodsMapper.update(null, priceUpdate);
+        // D101/D111：逐行回写最新进价（「最近一批进价」）；仅更新 purchase_price 一列
+        for (BizPurchaseDetail detail : details) {
+            updatePurchasePrice(detail.getGoodsId(), detail.getUnitPrice());
+        }
         messageService.revokeUnreadByBiz("purchase", id);
     }
 
@@ -330,6 +430,9 @@ public class PurchaseService {
         }
         messageService.revokeUnreadByBiz("purchase", id);
         bizPurchaseMapper.deleteById(id);
+        // D111：级联软删明细行（对齐销售删除的级联口径，引用统计按明细行）
+        bizPurchaseDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseDetail>()
+                .eq(BizPurchaseDetail::getPurchaseId, id));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -342,6 +445,9 @@ public class PurchaseService {
         if (dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
             throw BusinessException.validateFail("「作废并冲抵」已停用，请使用普通作废");
         }
+        // D111/review：存在未终结退货单时禁止整单作废——否则整行回冲会与已出库退货的库存扣减冲突；
+        // 须先删除（当天待出库）/作废退货单（退货作废会把库存退回），再作废进货单
+        purchaseReturnService.ensureNoActiveReturn(purchase.getId());
 
         String reason = normalizeReason(dto == null ? null : dto.getReason());
         LocalDateTime now = LocalDateTime.now();
@@ -356,47 +462,32 @@ public class PurchaseService {
             throw BusinessException.validateFail("进货单已被处理，禁止重复作废");
         }
 
-        // 仅已入库(confirm_status=3)作废需回冲库存；未入库不触碰库存
+        // 仅已入库(confirm_status=3)作废需逐行回冲库存 + 逐商品重算最近进价；未入库不触碰库存
         boolean received = purchase.getConfirmStatus() != null && purchase.getConfirmStatus() == CONFIRM_RECEIVED;
         if (received) {
-            decreaseStock(purchase.getGoodsId(), purchase.getQuantity(), "当前库存不足，无法作废该进货单");
-            // D101：作废已入库单后重算进价——被作废单若是当前进价来源，回退为最近一批有效已入库单价（无更早批次保持原值）
-            refreshPurchasePriceAfterVoid(purchase);
+            List<BizPurchaseDetail> details = requireDetails(purchase.getId());
+            for (BizPurchaseDetail detail : details) {
+                decreaseStock(detail.getGoodsId(), detail.getQuantity(),
+                        "当前库存不足，无法作废该进货单（" + detail.getGoodsName() + " 需扣回 " + detail.getQuantity() + "）");
+            }
+            // D101：作废后逐商品重算进价——被作废单若是当前进价来源，回退为该物料最近一批有效已入库行单价
+            for (BizPurchaseDetail detail : details) {
+                refreshPurchasePriceAfterVoid(detail.getGoodsId());
+            }
         }
         messageService.revokeUnreadByBiz("purchase", id);
-
-        if (received && dto != null && Boolean.TRUE.equals(dto.getCreateRedFlush())) {
-            LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-            BizPurchase redFlushDoc = new BizPurchase();
-            redFlushDoc.setPurchaseNo(CodeGenerator.purchaseNo());
-            redFlushDoc.setGoodsId(purchase.getGoodsId());
-            redFlushDoc.setGoodsName(purchase.getGoodsName());
-            redFlushDoc.setQuantity(-purchase.getQuantity());
-            redFlushDoc.setUnitPrice(purchase.getUnitPrice());
-            redFlushDoc.setTotalPrice(purchase.getTotalPrice().negate());
-            redFlushDoc.setOperatorId(loginUser.getId());
-            redFlushDoc.setOperatorName(loginUser.getRealName());
-            redFlushDoc.setOperationTime(now);
-            redFlushDoc.setRemark("红冲来源:" + purchase.getPurchaseNo());
-            redFlushDoc.setBizStatus(3);
-            redFlushDoc.setSourceId(purchase.getId());
-            redFlushDoc.setVoidReason(reason);
-            bizPurchaseMapper.insert(redFlushDoc);
-        }
     }
 
-    /** D101：作废已入库进货单后，把商品进价重算为最近一批有效已入库单价；无有效批次时保持原值不动 */
-    private void refreshPurchasePriceAfterVoid(BizPurchase purchase) {
-        if (purchase.getGoodsId() == null) {
+    /** D101/D111：作废后把物料进价重算为最近一批有效已入库明细行单价；无有效批次时保持原值不动 */
+    private void refreshPurchasePriceAfterVoid(Long goodsId) {
+        if (goodsId == null) {
             return;
         }
-        BigDecimal latest = bizPurchaseMapper.latestValidUnitPrice(purchase.getGoodsId(), LocalDateTime.now());
+        BigDecimal latest = bizPurchaseMapper.latestValidUnitPrice(goodsId, LocalDateTime.now());
         if (latest == null) {
             return;
         }
-        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
-        priceUpdate.eq(BaseGoods::getId, purchase.getGoodsId()).set(BaseGoods::getPurchasePrice, latest);
-        baseGoodsMapper.update(null, priceUpdate);
+        updatePurchasePrice(goodsId, latest);
     }
 
     private void requirePurchaseVoidExecutionAccess() {
@@ -431,12 +522,23 @@ public class PurchaseService {
         return purchase;
     }
 
-    private BaseGoods requireGoods(Long goodsId) {
-        BaseGoods goods = baseGoodsMapper.selectById(goodsId);
-        if (goods == null) {
-            throw BusinessException.validateFail("商品不存在");
+    private List<BizPurchaseDetail> requireDetails(Long purchaseId) {
+        List<BizPurchaseDetail> details = bizPurchaseDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseDetail>()
+                        .eq(BizPurchaseDetail::getPurchaseId, purchaseId)
+                        .orderByAsc(BizPurchaseDetail::getSortNo)
+                        .orderByAsc(BizPurchaseDetail::getId));
+        if (details.isEmpty()) {
+            throw BusinessException.validateFail("进货单明细缺失");
         }
-        return goods;
+        return details;
+    }
+
+    private List<PurchaseSaveDTO.LineDTO> requireLines(List<PurchaseSaveDTO.LineDTO> lines) {
+        if (lines == null || lines.isEmpty()) {
+            throw BusinessException.validateFail("进货明细不能为空");
+        }
+        return lines;
     }
 
     private void ensureGoodsEnabled(BaseGoods goods) {
@@ -483,12 +585,6 @@ public class PurchaseService {
         return reason.trim();
     }
 
-    private void validateQuantity(Integer quantity) {
-        if (quantity == null || quantity <= 0) {
-            throw BusinessException.validateFail("数量必须大于0");
-        }
-    }
-
     private BigDecimal resolveUnitPrice(BigDecimal inputPrice, BigDecimal fallbackPrice, String emptyPriceMsg) {
         BigDecimal finalPrice = inputPrice == null ? fallbackPrice : inputPrice;
         if (finalPrice == null) {
@@ -521,35 +617,10 @@ public class PurchaseService {
         }
     }
 
-    private Map<Long, BaseGoods> buildGoodsMap(Set<Long> goodsIds) {
-        if (goodsIds.isEmpty()) {
-            return Map.of();
-        }
-        LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
-        wrapper.in(BaseGoods::getId, goodsIds);
-        return baseGoodsMapper.selectList(wrapper).stream().collect(Collectors.toMap(BaseGoods::getId, Function.identity()));
-    }
-
-    private Map<Long, BaseSupplier> buildSupplierMap(Set<Long> supplierIds) {
-        if (supplierIds.isEmpty()) {
-            return Map.of();
-        }
-        LambdaQueryWrapper<BaseSupplier> wrapper = new LambdaQueryWrapper<>();
-        wrapper.in(BaseSupplier::getId, supplierIds);
-        return baseSupplierMapper.selectList(wrapper).stream().collect(Collectors.toMap(BaseSupplier::getId, Function.identity()));
-    }
-
-    // D36：供应商名 → 匹配供应商 → 其供货的 goodsId 集合。用于 biz_purchase 上无供应商列时的供应商维筛选。
-    private List<Long> resolveGoodsIdsBySupplierName(String supplierName) {
-        List<BaseSupplier> suppliers = baseSupplierMapper.selectList(
-                new LambdaQueryWrapper<BaseSupplier>().like(BaseSupplier::getSupplierName, supplierName));
-        if (suppliers.isEmpty()) {
-            return List.of();
-        }
-        List<Long> supplierIds = suppliers.stream().map(BaseSupplier::getId).toList();
-        return baseGoodsMapper.selectList(new LambdaQueryWrapper<BaseGoods>()
-                        .in(BaseGoods::getSupplierId, supplierIds))
-                .stream().map(BaseGoods::getId).toList();
+    private void updatePurchasePrice(Long goodsId, BigDecimal unitPrice) {
+        LambdaUpdateWrapper<BaseGoods> priceUpdate = new LambdaUpdateWrapper<>();
+        priceUpdate.eq(BaseGoods::getId, goodsId).set(BaseGoods::getPurchasePrice, unitPrice);
+        baseGoodsMapper.update(null, priceUpdate);
     }
 
     private Map<Long, BizApprovalOrder> buildLatestApprovalMap(List<Long> bizIds) {
@@ -571,17 +642,119 @@ public class PurchaseService {
         return buildLatestApprovalMap(List.of(bizId)).get(bizId);
     }
 
-    private PurchaseVO toVO(BizPurchase purchase, BaseSupplier supplier, BizApprovalOrder approvalOrder) {
+    /**
+     * D111：批量填充明细行（一次 in 查询）+ 商品/供应商汇总 + 单价（全同价时）。
+     */
+    private void fillDetails(List<PurchaseVO> records) {
+        if (records.isEmpty()) {
+            return;
+        }
+        List<Long> purchaseIds = records.stream().map(PurchaseVO::getId).toList();
+        List<BizPurchaseDetail> details = bizPurchaseDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseDetail>()
+                        .in(BizPurchaseDetail::getPurchaseId, purchaseIds)
+                        .orderByAsc(BizPurchaseDetail::getSortNo)
+                        .orderByAsc(BizPurchaseDetail::getId));
+        List<Long> goodsIds = details.stream().map(BizPurchaseDetail::getGoodsId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, BaseGoods> goodsMap = goodsIds.isEmpty() ? Map.of() : baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        Map<Long, BaseSupplier> supplierMap = buildSupplierMap(goodsMap.values().stream()
+                .map(BaseGoods::getSupplierId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        Map<Long, List<BizPurchaseDetail>> byPurchase = details.stream()
+                .collect(Collectors.groupingBy(BizPurchaseDetail::getPurchaseId));
+
+        for (PurchaseVO vo : records) {
+            List<PurchaseDetailVO> lineVOs = byPurchase.getOrDefault(vo.getId(), List.of()).stream()
+                    .map(this::toDetailVO).toList();
+            vo.setDetails(lineVOs);
+            vo.setGoodsSummary(buildGoodsSummary(lineVOs));
+            vo.setSupplierSummary(buildSupplierSummary(lineVOs, goodsMap, supplierMap));
+            vo.setAvgPrice(commonUnitPrice(lineVOs));
+        }
+    }
+
+    private PurchaseDetailVO toDetailVO(BizPurchaseDetail d) {
+        PurchaseDetailVO line = new PurchaseDetailVO();
+        line.setId(d.getId());
+        line.setPurchaseId(d.getPurchaseId());
+        line.setGoodsId(d.getGoodsId());
+        line.setGoodsName(d.getGoodsName());
+        line.setSpec(d.getSpec());
+        line.setMaterial(d.getMaterial());
+        line.setQuantity(d.getQuantity());
+        line.setUnitPrice(d.getUnitPrice());
+        line.setTotalPrice(d.getTotalPrice());
+        line.setSortNo(d.getSortNo());
+        return line;
+    }
+
+    /** 商品汇总描述：单行显示品名，多行显示「首品名 等 N 种」 */
+    private String buildGoodsSummary(List<PurchaseDetailVO> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "-";
+        }
+        String firstName = lines.get(0).getGoodsName();
+        if (lines.size() == 1) {
+            return firstName;
+        }
+        return firstName + "等" + lines.size() + "种";
+    }
+
+    /** 供应商汇总：全部行同一供应商为其名称，跨供应商为「多个供应商」 */
+    private String buildSupplierSummary(List<PurchaseDetailVO> lines,
+                                        Map<Long, BaseGoods> goodsMap,
+                                        Map<Long, BaseSupplier> supplierMap) {
+        Set<String> names = new HashSet<>();
+        for (PurchaseDetailVO line : lines) {
+            BaseGoods goods = goodsMap.get(line.getGoodsId());
+            if (goods == null || goods.getSupplierId() == null) {
+                continue;
+            }
+            BaseSupplier supplier = supplierMap.get(goods.getSupplierId());
+            if (supplier != null) {
+                names.add(supplier.getSupplierName());
+            }
+        }
+        if (names.isEmpty()) {
+            return "-";
+        }
+        if (names.size() == 1) {
+            return names.iterator().next();
+        }
+        return "多个供应商";
+    }
+
+    /** 全部行同价返回该单价，否则 null（列表单价列多价时显示「—」） */
+    private BigDecimal commonUnitPrice(List<PurchaseDetailVO> lines) {
+        Set<BigDecimal> prices = lines.stream()
+                .map(PurchaseDetailVO::getUnitPrice)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return prices.size() == 1 ? prices.iterator().next() : null;
+    }
+
+    private Map<Long, BaseSupplier> buildSupplierMap(Set<Long> supplierIds) {
+        if (supplierIds.isEmpty()) {
+            return Map.of();
+        }
+        return baseSupplierMapper.selectBatchIds(supplierIds).stream()
+                .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
+    }
+
+    private PurchaseVO toVO(BizPurchase purchase, BizApprovalOrder approvalOrder) {
         PurchaseVO vo = new PurchaseVO();
-        BeanUtils.copyProperties(purchase, vo);
-        LocalDateTime bizTime = purchase.getOperationTime() == null ? purchase.getCreateTime() : purchase.getOperationTime();
+        vo.setId(purchase.getId());
+        vo.setPurchaseNo(purchase.getPurchaseNo());
         vo.setOrderNo(purchase.getPurchaseNo());
-        vo.setSupplierName(supplier == null ? null : supplier.getSupplierName());
-        vo.setPrice(purchase.getUnitPrice());
-        vo.setTotalAmount(purchase.getTotalPrice());
+        vo.setTotalQuantity(purchase.getTotalQuantity());
+        vo.setTotalAmount(purchase.getTotalAmount());
+        LocalDateTime bizTime = purchase.getOperationTime() == null ? purchase.getCreateTime() : purchase.getOperationTime();
         vo.setOperationTime(bizTime);
         vo.setPurchaseDate(bizTime);
+        vo.setOperatorName(purchase.getOperatorName());
         vo.setOperator(purchase.getOperatorName());
+        vo.setRemark(purchase.getRemark());
         vo.setBizStatus(purchase.getBizStatus());
         vo.setConfirmStatus(purchase.getConfirmStatus());
         vo.setConfirmStatusText(confirmStatusText(purchase.getConfirmStatus()));
@@ -591,6 +764,7 @@ public class PurchaseService {
         vo.setSourceId(purchase.getSourceId());
         vo.setVoidTime(purchase.getVoidTime());
         vo.setVoidReason(purchase.getVoidReason());
+        vo.setCreateTime(purchase.getCreateTime());
         vo.setApprovalStatus(approvalOrder == null ? null : approvalOrder.getStatus());
         vo.setApprovalRequestAction(approvalOrder == null ? null : approvalOrder.getRequestAction());
         return vo;

@@ -18,15 +18,15 @@ public class BizPurchase {
 
     private String purchaseNo;
 
-    private Long goodsId;
+    /**
+     * 进货总数量(按明细行合计)
+     */
+    private Integer totalQuantity;
 
-    private String goodsName;
-
-    private Integer quantity;
-
-    private BigDecimal unitPrice;
-
-    private BigDecimal totalPrice;
+    /**
+     * 进货总金额(按明细行合计)
+     */
+    private BigDecimal totalAmount;
 
     private Long operatorId;
 

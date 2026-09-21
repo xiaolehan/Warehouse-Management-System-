@@ -41,8 +41,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -138,11 +140,18 @@ public class ProductionOrderService {
         Map<Long, QcStateVO> qcStates = qcService.buildStateBatch(page.getRecords());
         // D105：批量判定领料单是否已全额出库，列表齐套口径与详情统一
         Map<Long, Boolean> pickIssuedMap = pickIssuedMap(page.getRecords());
+        // D116：未开工且未全额发料的订单批量实时重算齐套（补料入库后列表立即反映）
+        List<BizProductionOrder> pendingForRealtime = page.getRecords().stream()
+                .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_PENDING).equals(o.getStatus())
+                        && !pickIssuedMap.getOrDefault(o.getId(), false))
+                .toList();
+        Map<Long, KuaiTaoResult> realtimeKitMap = computeKitBatchForPendingOrders(pendingForRealtime);
         List<ProductionOrderVO> records = new ArrayList<>(page.getRecords().size());
         for (BizProductionOrder order : page.getRecords()) {
             ProductionOrderVO vo = toVO(order);
             vo.setQcState(qcStates.get(order.getId()));
-            applyKitDisplay(vo, order, pickIssuedMap.getOrDefault(order.getId(), false));
+            applyKitDisplay(vo, order, pickIssuedMap.getOrDefault(order.getId(), false),
+                    realtimeKitMap.get(order.getId()));
             records.add(vo);
         }
         // D107：列表批量回填待确认入库申请 id（行内「撤销申请」入口据此显隐，与详情同口径）
@@ -474,64 +483,47 @@ public class ProductionOrderService {
     /** 展开成品 BOM×数量：算每项物料的 需求 vs 库存 与匹配等级 */
     private KuaiTaoResult computeKit(Long goodsId, int quantity) {
         BizBom bom = requireBomOfProduct(goodsId);
-        KuaiTaoResult result = new KuaiTaoResult();
+        List<BizBomDetail> details = loadRealBomDetails(bom.getId());
+        return assembleKit(details, quantity, loadGoodsForDetails(details));
+    }
 
-        // D4X（方案先行）：BOM 明细只要真需求(非参考行、有组件名)就计入齐套；未关联物料的明细行按"缺料待采购"处理(库存0)——不再丢弃。
-        // 生产研发先定 BOM 方案，物料可后补建档并回挂 goodsId；回挂并入库存后该行即正常参与齐套。
+    // D4X（方案先行）：BOM 明细只要真需求(非参考行、有组件名)就计入齐套；未关联物料的明细行按"缺料待采购"处理(库存0)——不再丢弃。
+    // 生产研发先定 BOM 方案，物料可后补建档并回挂 goodsId；回挂并入库存后该行即正常参与齐套。
+    /** 取 BOM 真实需求明细（非参考行、有组件名），按 sortNo 排序。 */
+    private List<BizBomDetail> loadRealBomDetails(Long bomId) {
         LambdaQueryWrapper<BizBomDetail> dw = new LambdaQueryWrapper<>();
-        dw.eq(BizBomDetail::getBomId, bom.getId())
+        dw.eq(BizBomDetail::getBomId, bomId)
                 .eq(BizBomDetail::getIsReference, 0)
                 .orderByAsc(BizBomDetail::getSortNo);
-        List<BizBomDetail> details = bomDetailMapper.selectList(dw).stream()
+        return bomDetailMapper.selectList(dw).stream()
                 .filter(d -> d.getComponentName() != null && !d.getComponentName().trim().isEmpty())
                 .toList();
+    }
+
+    /** 批量预取明细涉及的物料（一次 selectBatchIds，替代逐行 selectById）。 */
+    private Map<Long, BaseGoods> loadGoodsForDetails(List<BizBomDetail> details) {
+        List<Long> goodsIds = details.stream()
+                .map(BizBomDetail::getGoodsId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (goodsIds.isEmpty()) {
+            return Map.of();
+        }
+        return baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+    }
+
+    /** 逐行构建齐套行 + 汇总等级（block > partial > ok）。 */
+    private KuaiTaoResult assembleKit(List<BizBomDetail> details, int quantity, Map<Long, BaseGoods> goodsMap) {
+        KuaiTaoResult result = new KuaiTaoResult();
         if (details.isEmpty()) {
             result.kitStatus = BizProductionOrder.KIT_OK;
             return result;
         }
-
         for (BizBomDetail d : details) {
-            String name = d.getComponentName();
-            // goodsId 空 = 物料未在仓库建档（方案先行待采购），按库存 0 的严重缺料处理
-            BaseGoods g = d.getGoodsId() == null ? null : baseGoodsMapper.selectById(d.getGoodsId());
-            BigDecimal usage = d.getQuantity() == null ? BigDecimal.ONE : d.getQuantity();
-            BigDecimal required = usage.multiply(BigDecimal.valueOf(quantity)).setScale(4, RoundingMode.HALF_UP);
-            int stock = (g == null || g.getStock() == null) ? 0 : g.getStock();
-
-            KitShortageVO line = new KitShortageVO();
-            line.setBomDetailId(d.getId());
-            line.setSpec(d.getSpec());
-            line.setMaterial(d.getMaterial());
-            line.setRemark(d.getRemark());
-            if (g != null) {
-                line.setGoodsId(g.getId());
-                line.setGoodsName(g.getGoodsName());
-                line.setUnit(g.getUnit());
-            } else {
-                line.setGoodsId(null);
-                line.setGoodsName(name);
-                line.setUnit(null);
-            }
-            line.setUnitUsage(usage);
-            line.setRequired(required);
-            line.setStock(stock);
-            line.setDeficit(required.subtract(BigDecimal.valueOf(stock)).setScale(4, RoundingMode.HALF_UP));
-
-            if (g == null) {
-                // D60：未绑定物料=未知物料（首次出现，不应从已有物料下拉就近选）
-                line.setLineStatus("unknown");
-                line.setLineStatusText("未知物料");
-                result.hasShortage = true;
-            } else if (stock >= required.intValue()) {
-                line.setLineStatus("ok");
-                line.setLineStatusText("齐套");
-            } else if (stock > 0) {
-                line.setLineStatus("partial");
-                line.setLineStatusText("部分缺料");
-                result.hasShortage = true;
-            } else {
-                line.setLineStatus("block");
-                line.setLineStatusText("严重缺料");
+            KitShortageVO line = buildKitLine(d, quantity, goodsMap);
+            if (!"ok".equals(line.getLineStatus())) {
                 result.hasShortage = true;
             }
             result.lines.add(line);
@@ -543,6 +535,99 @@ public class ProductionOrderService {
             result.kitStatus = BizProductionOrder.KIT_BLOCK;
         } else if (result.hasShortage) {
             result.kitStatus = BizProductionOrder.KIT_PARTIAL;
+        }
+        return result;
+    }
+
+    /** 构建单行：需求=单台用量×生产数量；goodsId 空=未知物料，按库存 0 处理。 */
+    private KitShortageVO buildKitLine(BizBomDetail d, int quantity, Map<Long, BaseGoods> goodsMap) {
+        String name = d.getComponentName();
+        // goodsId 空 = 物料未在仓库建档（方案先行待采购），按库存 0 的严重缺料处理
+        BaseGoods g = d.getGoodsId() == null ? null : goodsMap.get(d.getGoodsId());
+        BigDecimal usage = d.getQuantity() == null ? BigDecimal.ONE : d.getQuantity();
+        BigDecimal required = usage.multiply(BigDecimal.valueOf(quantity)).setScale(4, RoundingMode.HALF_UP);
+        int stock = (g == null || g.getStock() == null) ? 0 : g.getStock();
+
+        KitShortageVO line = new KitShortageVO();
+        line.setBomDetailId(d.getId());
+        line.setSpec(d.getSpec());
+        line.setMaterial(d.getMaterial());
+        line.setRemark(d.getRemark());
+        if (g != null) {
+            line.setGoodsId(g.getId());
+            line.setGoodsName(g.getGoodsName());
+            line.setUnit(g.getUnit());
+        } else {
+            line.setGoodsId(null);
+            line.setGoodsName(name);
+            line.setUnit(null);
+        }
+        line.setUnitUsage(usage);
+        line.setRequired(required);
+        line.setStock(stock);
+        line.setDeficit(required.subtract(BigDecimal.valueOf(stock)).setScale(4, RoundingMode.HALF_UP));
+
+        if (g == null) {
+            // D60：未绑定物料=未知物料（首次出现，不应从已有物料下拉就近选）
+            line.setLineStatus("unknown");
+            line.setLineStatusText("未知物料");
+        } else if (stock >= required.intValue()) {
+            line.setLineStatus("ok");
+            line.setLineStatusText("齐套");
+        } else if (stock > 0) {
+            line.setLineStatus("partial");
+            line.setLineStatusText("部分缺料");
+        } else {
+            line.setLineStatus("block");
+            line.setLineStatusText("严重缺料");
+        }
+        return line;
+    }
+
+    /**
+     * D116：状态 1（未开工）订单的列表批量实时齐套——BOM/明细/库存全部批量预取，
+     * 避免逐单 computeKit 的 N+1。返回 orderId→实时结果；成品 BOM 已不存在
+     * （如事后删除）的订单不在返回中，调用方回退建单快照。
+     */
+    private Map<Long, KuaiTaoResult> computeKitBatchForPendingOrders(List<BizProductionOrder> orders) {
+        if (orders.isEmpty()) {
+            return Map.of();
+        }
+        // 成品 → BOM（与 requireBomOfProduct 同口径：@TableLogic 过滤已删；异常多 BOM 取一）
+        List<Long> productIds = orders.stream().map(BizProductionOrder::getGoodsId).distinct().toList();
+        LambdaQueryWrapper<BizBom> bw = new LambdaQueryWrapper<>();
+        bw.in(BizBom::getGoodsId, productIds);
+        Map<Long, BizBom> bomByGoods = new HashMap<>();
+        for (BizBom b : bomMapper.selectList(bw)) {
+            bomByGoods.putIfAbsent(b.getGoodsId(), b);
+        }
+        if (bomByGoods.isEmpty()) {
+            return Map.of();
+        }
+        // BOM → 真实需求明细，按 bomId 分组
+        List<Long> bomIds = bomByGoods.values().stream().map(BizBom::getId).toList();
+        LambdaQueryWrapper<BizBomDetail> dw = new LambdaQueryWrapper<>();
+        dw.in(BizBomDetail::getBomId, bomIds)
+                .eq(BizBomDetail::getIsReference, 0)
+                .orderByAsc(BizBomDetail::getSortNo);
+        Map<Long, List<BizBomDetail>> detailsByBom = bomDetailMapper.selectList(dw).stream()
+                .filter(d -> d.getComponentName() != null && !d.getComponentName().trim().isEmpty())
+                .collect(Collectors.groupingBy(BizBomDetail::getBomId));
+        // 明细涉及物料一次批量查
+        List<Long> gIds = detailsByBom.values().stream().flatMap(List::stream)
+                .map(BizBomDetail::getGoodsId).filter(Objects::nonNull).distinct().toList();
+        Map<Long, BaseGoods> goodsMap = gIds.isEmpty() ? Map.of()
+                : baseGoodsMapper.selectBatchIds(gIds).stream()
+                        .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        // 逐单装配；BOM 缺失的单跳过
+        Map<Long, KuaiTaoResult> result = new HashMap<>();
+        for (BizProductionOrder o : orders) {
+            BizBom bom = bomByGoods.get(o.getGoodsId());
+            if (bom == null) {
+                continue;
+            }
+            List<BizBomDetail> dList = detailsByBom.getOrDefault(bom.getId(), List.of());
+            result.put(o.getId(), assembleKit(dList, o.getQuantity(), goodsMap));
         }
         return result;
     }
@@ -750,10 +835,12 @@ public class ProductionOrderService {
     }
 
     /**
-     * D105：统一齐套展示口径——领料已全额出库→「齐套领料」（kitLines 置空，缺口已无意义）；
-     * 已完成/作废/报废/终止→不再显示标签；未领料的列表行保持建单快照（详情才实时重算，避免逐行展开 BOM）。
+     * D105/D116：列表齐套展示口径——领料已全额出库→「齐套领料」（kitLines 置空）；
+     * 未开工（状态 1）且未发料 → 用实时结果覆盖建单快照（D116）；
+     * 状态 2/3 或实时结果缺失（BOM 已删等）→ 保持快照；≥4 终态隐藏标签。
      */
-    private void applyKitDisplay(ProductionOrderVO vo, BizProductionOrder order, boolean pickIssued) {
+    private void applyKitDisplay(ProductionOrderVO vo, BizProductionOrder order, boolean pickIssued,
+                                 KuaiTaoResult realtimeKit) {
         Integer status = order.getStatus();
         if (status != null && (status == BizProductionOrder.STATUS_PENDING
                 || status == BizProductionOrder.STATUS_IN_PROGRESS
@@ -762,6 +849,10 @@ public class ProductionOrderService {
                 vo.setKitStatus(BizProductionOrder.KIT_ISSUED);
                 vo.setKitStatusText(kitText(BizProductionOrder.KIT_ISSUED));
                 vo.setKitLines(List.of());
+            } else if (status == BizProductionOrder.STATUS_PENDING && realtimeKit != null) {
+                vo.setKitStatus(realtimeKit.kitStatus);
+                vo.setKitStatusText(kitText(realtimeKit.kitStatus));
+                vo.setKitLines(realtimeKit.lines);
             }
         } else {
             vo.setKitStatus(null);

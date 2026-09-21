@@ -11,10 +11,12 @@ import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizPurchase;
+import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
@@ -29,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.util.Comparator;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
@@ -54,6 +57,10 @@ public class GoodsService {
     // D102：进价历史查询复用进货单 mapper
     @Autowired
     private BizPurchaseMapper bizPurchaseMapper;
+
+    // D111：进价最小记录粒度下沉明细行
+    @Autowired
+    private BizPurchaseDetailMapper bizPurchaseDetailMapper;
 
     // D109：未知物料供应商匹配——从采购申请明细到货备注取供应商名字
     @Autowired
@@ -152,7 +159,7 @@ public class GoodsService {
             wrapper.inSql(BaseGoods::getId, "SELECT goods_id FROM biz_bom WHERE is_deleted = 0");
         }
         return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getType()))
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getPurchasePrice(), item.getType()))
                 .toList();
     }
 
@@ -163,27 +170,42 @@ public class GoodsService {
         return toVO(goods, supplier);
     }
 
-    // D102：进价历史——该物料全部有效已入库采购记录（最近在上，LIMIT 100）；仅采购部门成员/超管可见（进价可见口径的服务端把关）
+    // D102/D111：进价历史——该物料全部有效已入库明细行（最近在上，LIMIT 100）；仅采购部门成员/超管可见。
+    // 单据状态在头表，故先取该物料明细行、再按头表过滤+按头操作时间排序。
     public List<GoodsPurchaseHistoryVO> purchasePriceHistory(Long goodsId) {
         authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_PURCHASE, "进价历史仅采购部门可查看");
         requireGoods(goodsId);
-        LambdaQueryWrapper<BizPurchase> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizPurchase::getGoodsId, goodsId)
-                .eq(BizPurchase::getBizStatus, 1)
-                .eq(BizPurchase::getConfirmStatus, 3)
-                .orderByDesc(BizPurchase::getOperationTime)
-                .orderByDesc(BizPurchase::getId)
-                .last("LIMIT 100");
-        return bizPurchaseMapper.selectList(wrapper).stream().map(p -> {
-            GoodsPurchaseHistoryVO vo = new GoodsPurchaseHistoryVO();
-            vo.setPurchaseNo(p.getPurchaseNo());
-            vo.setUnitPrice(p.getUnitPrice());
-            vo.setQuantity(p.getQuantity());
-            vo.setTotalPrice(p.getTotalPrice());
-            vo.setOperationTime(p.getOperationTime());
-            vo.setConfirmTime(p.getConfirmTime());
-            return vo;
-        }).toList();
+        List<BizPurchaseDetail> lines = bizPurchaseDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseDetail>()
+                        .eq(BizPurchaseDetail::getGoodsId, goodsId)
+                        .orderByDesc(BizPurchaseDetail::getId));
+        if (lines.isEmpty()) {
+            return List.of();
+        }
+        List<Long> purchaseIds = lines.stream().map(BizPurchaseDetail::getPurchaseId).distinct().toList();
+        Map<Long, BizPurchase> headMap = bizPurchaseMapper.selectBatchIds(purchaseIds).stream()
+                .collect(Collectors.toMap(BizPurchase::getId, p -> p));
+        return lines.stream()
+                .filter(d -> {
+                    BizPurchase p = headMap.get(d.getPurchaseId());
+                    return p != null && Integer.valueOf(1).equals(p.getBizStatus())
+                            && Integer.valueOf(3).equals(p.getConfirmStatus());
+                })
+                .sorted(Comparator.comparing((BizPurchaseDetail d) -> headMap.get(d.getPurchaseId()).getOperationTime())
+                        .reversed()
+                        .thenComparing(BizPurchaseDetail::getId, Comparator.reverseOrder()))
+                .limit(100)
+                .map(d -> {
+                    BizPurchase p = headMap.get(d.getPurchaseId());
+                    GoodsPurchaseHistoryVO vo = new GoodsPurchaseHistoryVO();
+                    vo.setPurchaseNo(p.getPurchaseNo());
+                    vo.setUnitPrice(d.getUnitPrice());
+                    vo.setQuantity(d.getQuantity());
+                    vo.setTotalPrice(d.getTotalPrice());
+                    vo.setOperationTime(p.getOperationTime());
+                    vo.setConfirmTime(p.getConfirmTime());
+                    return vo;
+                }).toList();
     }
 
     // 建物料/成品仅仓储 admin；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）

@@ -285,6 +285,13 @@
           >申请领料</el-button>
           <el-tag v-if="pickListStatus != null" :type="pickListTagType" size="medium">领料{{ pickListTagText }}</el-tag>
           <el-button
+            v-if="canConfirmReceive"
+            type="success"
+            size="small"
+            :loading="pickReceiving"
+            @click="doConfirmReceive"
+          >确认收货</el-button>
+          <el-button
             v-if="detail.status === 2"
             type="warning"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
@@ -531,7 +538,8 @@ import {
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
-import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI } from '@/api/pickList'
+import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI, confirmPickListAPI } from '@/api/pickList'
+import { useUserStore } from '@/stores/user'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -567,6 +575,12 @@ const detailVisible = ref(false)
 const detail = ref(null)
 
 const pickListStatus = ref(null)
+const pickListRow = ref(null) // D117：保存整行用于确认收货按钮（申请人判定）
+const userStore = useUserStore()
+const pickReceiving = ref(false)
+// D117/review：申请人身份按 id 判定（不用显示名，避免重名/改名误判）
+const canConfirmReceive = computed(() =>
+  pickListRow.value?.status === 2 && pickListRow.value.applicantId === userStore.userId)
 const pickSubmitting = ref(false)
 const pickListTagText = computed(() => {
   const s = pickListStatus.value
@@ -684,11 +698,14 @@ const openDetail = async (row) => {
     if (pickRes.data?.length) {
       const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
       pickListStatus.value = pickRow.status
+      pickListRow.value = pickRow
     } else {
       pickListStatus.value = null
+      pickListRow.value = null
     }
   } catch {
     pickListStatus.value = null
+    pickListRow.value = null
   }
   detailVisible.value = true
 }
@@ -753,12 +770,34 @@ const doApplyPick = async () => {
     if (pickRes.data?.length) {
       const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
       pickListStatus.value = pickRow.status
+      pickListRow.value = pickRow
     }
     await loadList()
   } catch {
     // 业务错误已由拦截器统一提示
   } finally {
     pickSubmitting.value = false
+  }
+}
+
+// D117：确认收货（与 PickListView 同接口，状态机不变），成功后刷新领料状态
+const doConfirmReceive = async () => {
+  if (!pickListRow.value) return
+  pickReceiving.value = true
+  try {
+    await confirmPickListAPI(pickListRow.value.id)
+    ElMessage.success('已确认收货')
+    const pickRes = await getProductionPickListAPI(detail.value.id)
+    if (pickRes.data?.length) {
+      const pickRow = pickRes.data.find((p) => p.pickType === 'PICK') || pickRes.data[0]
+      pickListStatus.value = pickRow.status
+      pickListRow.value = pickRow
+    }
+    await loadList()
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    pickReceiving.value = false
   }
 }
 

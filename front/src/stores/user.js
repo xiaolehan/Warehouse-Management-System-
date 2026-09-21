@@ -8,6 +8,7 @@ import {
   getDeptName,
   getRole,
   getToken,
+  getUserId,
   setToken as persistToken,
   setUserInfo as persistUserInfo
 } from "@/utils/auth"
@@ -21,6 +22,7 @@ export const useUserStore = defineStore("user", () => {
   const deptName = ref(getDeptName())
   const username = ref(initialContext.username)
   const realName = ref(initialContext.realName)
+  const userId = ref(getUserId())
 
   const setToken = (newToken) => {
     token.value = newToken
@@ -35,6 +37,7 @@ export const useUserStore = defineStore("user", () => {
     deptName.value = getDeptName()
     username.value = userInfo.username || ""
     realName.value = userInfo.realName || ""
+    userId.value = getUserId()
   }
 
   const clearToken = () => {
@@ -45,8 +48,9 @@ export const useUserStore = defineStore("user", () => {
     deptName.value = ""
     username.value = ""
     realName.value = ""
+    userId.value = null
     clearAuth()
   }
 
-  return { token, role, deptId, deptCode, deptName, username, realName, setToken, setUserInfo, clearToken }
+  return { token, role, deptId, deptCode, deptName, username, realName, userId, setToken, setUserInfo, clearToken }
 })

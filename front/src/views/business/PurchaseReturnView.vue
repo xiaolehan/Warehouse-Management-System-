@@ -40,11 +40,10 @@
       <el-table :data="tableData" border style="width: 100%" v-loading="loading">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="returnNo" label="退货单号" width="150" />
-        <el-table-column prop="orderNo" label="原进货单" width="150" />
-        <el-table-column prop="goodsName" label="退货物料" />
-        <el-table-column prop="supplierName" label="退货至供应商" />
-        <el-table-column prop="returnQuantity" label="退货数量" width="100" />
-        <el-table-column v-if="showPrice" prop="returnAmount" label="退货金额(元)" width="120" />
+        <el-table-column prop="sourcePurchaseNo" label="原进货单" width="150" />
+        <el-table-column prop="goodsSummary" label="退货物料" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="totalQuantity" label="退货总数量" width="100" />
+        <el-table-column v-if="showPrice" prop="totalAmount" label="退货金额(元)" width="120" />
         <el-table-column prop="returnDate" label="退货日期" width="180" />
         <el-table-column label="退货状态" width="110">
           <template #default="{ row }">
@@ -58,7 +57,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column prop="reason" label="退货原因" show-overflow-tooltip />
+        <el-table-column prop="remark" label="退货原因" show-overflow-tooltip />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <div class="action-group">
@@ -115,7 +114,7 @@
         </el-table-column>
       </el-table>
 
-      <div class="pagination-box" style="margin-top: 20px; display: flex; justify-content: flex-end;">
+      <div class="pagination-box" style="margin: 20px 0 0; display: flex; justify-content: flex-end;">
         <el-pagination
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
@@ -128,9 +127,31 @@
       </div>
     </el-card>
 
-    <el-dialog :title="dialogType === 'view' ? '查看退货信息' : '发起退货'" v-model="dialogVisible" width="500px">
-      <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
-        <el-form-item label="来源进货单" prop="sourcePurchaseId">
+    <el-dialog :title="dialogType === 'view' ? '查看退货信息' : '发起退货'" v-model="dialogVisible" width="760px">
+      <!-- D119/D111：查看态——来源进货单号纯文本展示 + 本退货单明细行（各端看到的数据一致，不再各查各的来源单） -->
+      <el-form v-if="dialogType === 'view'" label-width="100px">
+        <el-row :gutter="16">
+          <el-col :span="12"><el-form-item label="退货单号"><el-input :value="viewForm.returnNo" disabled /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="来源进货单"><el-input :value="viewForm.sourcePurchaseNo || '-'" disabled /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="退货日期"><el-input :value="viewForm.returnDate" disabled /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" disabled /></el-form-item></el-col>
+        </el-row>
+        <el-form-item label="退货明细">
+          <el-table :data="viewForm.details" size="small" border style="width: 100%">
+            <el-table-column type="index" label="#" width="50" align="center" />
+            <el-table-column prop="goodsName" label="物料" min-width="140" />
+            <el-table-column prop="spec" label="规格" min-width="100" />
+            <el-table-column prop="quantity" label="退货数量" width="90" align="center" />
+            <el-table-column v-if="showPrice" prop="unitPrice" label="退货单价(元)" width="110" />
+            <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />
+          </el-table>
+        </el-form-item>
+        <el-form-item label="备注"><el-input :value="viewForm.remark" type="textarea" :rows="2" disabled /></el-form-item>
+      </el-form>
+
+      <!-- D111：发起态——选一张来源进货单，勾选其明细行，逐行填退货数量（行级可退量封顶） -->
+      <el-form v-if="dialogType !== 'view'" label-width="100px">
+        <el-form-item label="来源进货单" required>
           <el-select
             v-model="dialogForm.sourcePurchaseId"
             placeholder="请选择来源进货单"
@@ -141,24 +162,52 @@
             <el-option
               v-for="item in sourcePurchaseOptions"
               :key="item.id"
-              :label="`${item.purchaseNo} | ${item.goodsName} | 可退:${item.returnableQuantity}`"
+              :label="`${item.purchaseNo} | ${normalizeDateTime(item.operationTime)}`"
               :value="item.id"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="退货物料">
-          <el-input :value="selectedSourcePurchase?.goodsName || '-'" disabled />
+        <el-form-item label="退货明细" required>
+          <el-table :data="sourceLineRows" size="small" border style="width: 100%" v-if="dialogForm.sourcePurchaseId">
+            <el-table-column width="50" align="center">
+              <template #default="scope">
+                <el-checkbox v-model="scope.row.selected" />
+              </template>
+            </el-table-column>
+            <el-table-column label="物料" min-width="130">
+              <template #default="scope">
+                {{ scope.row.goodsName }}
+                <span class="line-spec">{{ scope.row.spec ? '（' + scope.row.spec + '）' : '' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="quantity" label="原进货" width="80" align="center" />
+            <el-table-column prop="returnedQuantity" label="已退" width="70" align="center" />
+            <el-table-column prop="returnableQuantity" label="可退" width="70" align="center" />
+            <el-table-column label="本次退货" width="150">
+              <template #default="scope">
+                <el-input-number
+                  v-model="scope.row.returnQuantity"
+                  :min="1"
+                  :max="scope.row.returnableQuantity"
+                  :precision="0"
+                  :disabled="!scope.row.selected"
+                  style="width: 100%"
+                  @update:model-value="clampReturnQty(scope.row)"
+                />
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-else description="请先选择来源进货单" :image-size="60" />
         </el-form-item>
-        <el-form-item label="可退数量">
-          <el-input :value="String(selectedSourcePurchase?.returnableQuantity ?? '-')" disabled />
+        <el-form-item label="退货总数量">
+          <el-input :value="totalQuantityText" disabled />
         </el-form-item>
-        <el-form-item label="退货数量" prop="returnQuantity">
-          <el-input-number v-model="dialogForm.returnQuantity" :min="1" style="width: 100%" />
+        <el-form-item v-if="showPrice" label="退货总额">
+          <el-input :value="totalAmountText" disabled>
+            <template #append>元</template>
+          </el-input>
         </el-form-item>
-        <el-form-item v-if="showPrice" label="退货单价" prop="price">
-          <el-input-number v-model="dialogForm.price" :min="0.01" :precision="2" :step="0.1" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="退货日期" prop="returnDate">
+        <el-form-item label="退货日期">
           <el-date-picker
             v-model="dialogForm.returnDate"
             type="datetime"
@@ -167,8 +216,8 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="退货原因" prop="reason">
-          <el-input v-model="dialogForm.reason" type="textarea" placeholder="请输入备注说明"></el-input>
+        <el-form-item label="退货原因">
+          <el-input v-model="dialogForm.remark" type="textarea" placeholder="请输入退货原因"></el-input>
         </el-form-item>
       </el-form>
       <!-- D104：查看态展示单据流程时间线（谁在哪一步做了什么） -->
@@ -199,7 +248,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { QuestionFilled, Search, Refresh, Plus, Delete, DocumentRemove, DocumentDelete, Close, Check } from '@element-plus/icons-vue'
+import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
@@ -229,9 +278,9 @@ const isPurchaseAdmin = userRole === 'admin' && userDept === 'purchase'
 const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
 const voidStockEffect = computed(() => {
   const row = voidTarget.value
-  // 已确认出库（>=2）的购退单，作废审批通过后须把退出去的货补回来
+  // 已确认出库（>=2）的退货单，作废后须把退出去的货补回来（多行汇总展示）
   if (!row || Number(row.confirmStatus) < 2) return null
-  return { goodsName: row.goodsName, quantity: row.quantity, mode: 'return' }
+  return { goodsName: row.goodsSummary, quantity: row.totalQuantity, mode: 'return' }
 })
 // D36：退货金额列仅采购部门可见（进价）；仓储看库存不看价格；超管全见
 const showPrice = userDept === 'purchase' || isSuperAdmin(userRole)
@@ -240,21 +289,16 @@ const pageSize = ref(10)
 const total = ref(0)
 const loading = ref(false)
 const sourcePurchaseOptions = ref([])
-const selectedSourcePurchase = ref(null)
+// 当前选中来源单的可退行（勾选+逐行退货数量）
+const sourceLineRows = ref([])
 
 const tableData = ref([])
 
 const dialogVisible = ref(false)
 const dialogType = ref('add')
-const dialogFormRef = ref(null)
-const dialogForm = reactive({ sourcePurchaseId: null, returnQuantity: 1, price: 0, returnDate: '', reason: '' })
+const dialogForm = reactive({ sourcePurchaseId: null, returnDate: '', remark: '' })
 
-const dialogRules = {
-  sourcePurchaseId: [{ required: true, message: '请选择来源进货单', trigger: 'change' }],
-  returnQuantity: [{ required: true, message: '请输入数量', trigger: 'blur' }],
-  price: [{ required: true, message: '请输入退货单价', trigger: 'blur' }],
-  returnDate: [{ required: true, message: '请选择退货日期', trigger: 'change' }]
-}
+const viewForm = reactive({ returnNo: '', sourcePurchaseNo: '', returnDate: '', operator: '', remark: '', details: [] })
 
 const normalizeDateTime = (val) => {
   if (!val) return ''
@@ -274,11 +318,9 @@ const localToday = () => {
   return `${y}-${m}-${d}`
 }
 
-const resolveBizDate = (row) => {
-  return row?.returnDate || row?.operationTime || row?.createTime || ''
-}
-// 允许删除
-// D95：删除=当天未生效错单（无痕）；作废=已生效或历史错单（留痕+仓储审批）——与后端守卫同口径，杜绝「删不掉又无作废入口」死锁
+const resolveBizDate = (row) => row?.returnDate || row?.operationTime || row?.createTime || ''
+
+// D95：删除=当天未生效错单（无痕）；作废=已生效或历史错单（留痕+仓储审批）——与后端守卫同口径
 const isPendingTodayDoc = (row) => Number(row?.confirmStatus) === 1 && toDateOnly(resolveBizDate(row)) === localToday()
 
 const canDelete = (row) => {
@@ -307,7 +349,7 @@ const stateTextClass = (row) => {
 const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete(row)
 
 const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
-// 构建后端所需的操作时间格式
+
 const buildOperationTime = (selectedDate) => {
   if (!selectedDate) return undefined
   return String(selectedDate).replace(' ', 'T')
@@ -319,11 +361,38 @@ const loadSourcePurchaseOptions = async () => {
 }
 
 const handleSourcePurchaseChange = (sourcePurchaseId) => {
-  selectedSourcePurchase.value = sourcePurchaseOptions.value.find((item) => item.id === sourcePurchaseId) || null
-  if (dialogType.value === 'add' && selectedSourcePurchase.value) {
-    dialogForm.price = Number(selectedSourcePurchase.value.unitPrice || 0)
+  const source = sourcePurchaseOptions.value.find((item) => item.id === sourcePurchaseId)
+  // 每次换来源单：按其明细行重建勾选行（行级可退量已由后端算好）
+  sourceLineRows.value = (source?.lines || []).map((line) => ({
+    purchaseDetailId: line.purchaseDetailId,
+    goodsId: line.goodsId,
+    goodsName: line.goodsName,
+    spec: line.spec,
+    quantity: line.quantity,
+    unitPrice: line.unitPrice,
+    returnedQuantity: line.returnedQuantity,
+    returnableQuantity: line.returnableQuantity,
+    selected: false,
+    returnQuantity: 1
+  }))
+}
+
+// el-input-number 的 max 之外再兜底（输入框手输），防止超可退
+const clampReturnQty = (row) => {
+  if (row.returnQuantity > row.returnableQuantity) {
+    row.returnQuantity = row.returnableQuantity
+  }
+  if (row.returnQuantity < 1) {
+    row.returnQuantity = 1
   }
 }
+
+const selectedRows = computed(() => sourceLineRows.value.filter((row) => row.selected))
+const totalQuantityText = computed(() =>
+  selectedRows.value.reduce((sum, row) => sum + Number(row.returnQuantity || 0), 0))
+const totalAmountText = computed(() =>
+  selectedRows.value.reduce(
+    (sum, row) => sum + Number(row.returnQuantity || 0) * Number(row.unitPrice || 0), 0).toFixed(2))
 
 const loadList = async () => {
   loading.value = true
@@ -365,12 +434,12 @@ const loadVoidPendingIds = async () => {
     // 业务错误已由拦截器统一提示
   }
 }
-// 搜索
+
 const handleSearch = () => {
   currentPage.value = 1
   loadList()
 }
-// 重置搜索
+
 const resetSearch = () => {
   searchForm.keywords = ''
   searchForm.supplierName = ''
@@ -378,17 +447,18 @@ const resetSearch = () => {
   currentPage.value = 1
   loadList()
 }
-// 分页大小改变
+
 const handleSizeChange = (val) => {
   pageSize.value = val
   currentPage.value = 1
   loadList()
 }
-// 当前页改变
+
 const handleCurrentChange = (val) => {
   currentPage.value = val
   loadList()
 }
+
 const confirmStatusTagType = (status) => ({
   1: 'warning', 2: 'warning', 3: 'success'
 }[status] || 'info')
@@ -411,16 +481,13 @@ const handleComplete = (row) => {
     }).catch(() => {}) // 取消或业务错误已统一提示
 }
 
-// 新增退货单
 const handleAdd = () => {
   dialogType.value = 'add'
-  dialogFormRef.value?.clearValidate()
-  selectedSourcePurchase.value = null
-  // 重置表单数据
-  Object.assign(dialogForm, { sourcePurchaseId: null, returnQuantity: 1, price: 0, returnDate: '', reason: '' })
+  sourceLineRows.value = []
+  Object.assign(dialogForm, { sourcePurchaseId: null, returnDate: '', remark: '' })
   dialogVisible.value = true
 }
-// 查看退货单详情
+
 // D104：查看态加载单据流程时间线
 const timelineNodes = ref([])
 const loadTimeline = async (id) => {
@@ -439,18 +506,13 @@ const handleView = async (row) => {
     const detail = res.data || {}
     dialogType.value = 'view'
     loadTimeline(row.id)
-    selectedSourcePurchase.value = {
-      id: detail.sourcePurchaseId,
-      purchaseNo: detail.sourcePurchaseNo,
-      goodsName: detail.goodsName,
-      returnableQuantity: detail.returnQuantity
-    }
-    Object.assign(dialogForm, {
-      sourcePurchaseId: detail.sourcePurchaseId ?? null,
-      returnQuantity: detail.returnQuantity ?? detail.quantity ?? 1,
-      price: detail.unitPrice ?? (detail.returnAmount && detail.quantity ? Number(detail.returnAmount) / Number(detail.quantity) : 0),
+    Object.assign(viewForm, {
+      returnNo: detail.returnNo ?? '',
+      sourcePurchaseNo: detail.sourcePurchaseNo ?? '',
       returnDate: normalizeDateTime(detail.returnDate || detail.operationTime || detail.createTime),
-      reason: detail.reason || detail.remark || ''
+      operator: detail.operator ?? '',
+      remark: detail.remark || '',
+      details: detail.details || []
     })
     dialogVisible.value = true
   } catch {
@@ -459,13 +521,14 @@ const handleView = async (row) => {
 }
 
 const handleDelete = (row) => {
-  ElMessageBox.confirm('撤销此退货单，相应库存将会扣回，继续吗？', '确认', { type: 'warning' }).then(async () => {
-    await deletePurchaseReturnAPI(row.id)
-    ElMessage.success('删除成功')
-    row.__uiDeleted = true
-    row.isDeleted = 1
-  }).catch(() => {}) // 取消或业务错误已统一提示
+  ElMessageBox.confirm('确定删除该退货单吗？仅当天待出库单据可删除，不影响库存。', '确认', { type: 'warning' })
+    .then(async () => {
+      await deletePurchaseReturnAPI(row.id)
+      ElMessage.success('删除成功')
+      loadList()
+    }).catch(() => {}) // 取消或业务错误已统一提示
 }
+
 // D94：先弹说明弹窗（后果/审批链路/留痕），确认后再提交
 const handleVoid = (row) => {
   voidTarget.value = row
@@ -493,22 +556,28 @@ const submitVoid = async (reason) => {
 }
 
 const submitForm = () => {
-  dialogFormRef.value.validate(async (valid) => {
-    if (!valid) {
-      return
-    }
-    // 本地校验前置（非 API 错误，不入 try）：退货数量超可退
-    if (selectedSourcePurchase.value && dialogForm.returnQuantity > selectedSourcePurchase.value.returnableQuantity) {
-      ElMessage.warning(`退货数量超出可退数量，最多可退 ${selectedSourcePurchase.value.returnableQuantity}`)
-      return
-    }
+  if (!dialogForm.sourcePurchaseId) {
+    ElMessage.warning('请选择来源进货单')
+    return
+  }
+  const lines = selectedRows.value
+  if (!lines.length) {
+    ElMessage.warning('请至少勾选一行退货明细')
+    return
+  }
+  if (lines.some((row) => !Number(row.returnQuantity) || Number(row.returnQuantity) < 1)) {
+    ElMessage.warning('请为每个勾选行填写退货数量')
+    return
+  }
+  ;(async () => {
     try {
       const payload = {
-        sourcePurchaseId: dialogForm.sourcePurchaseId,
-        quantity: dialogForm.returnQuantity,
-        unitPrice: Number(dialogForm.price),
+        lines: lines.map((row) => ({
+          sourceDetailId: row.purchaseDetailId,
+          quantity: Number(row.returnQuantity)
+        })),
         operationTime: buildOperationTime(dialogForm.returnDate),
-        remark: dialogForm.reason || ''
+        remark: dialogForm.remark || ''
       }
       await createPurchaseReturnAPI(payload)
       ElMessage.success('退货开单成功')
@@ -518,7 +587,7 @@ const submitForm = () => {
     } catch {
       // 业务错误已由拦截器统一提示
     }
-  })
+  })()
 }
 
 onMounted(async () => {
@@ -586,5 +655,10 @@ onMounted(async () => {
   color: #909399;
   font-size: 15px;
   cursor: pointer;
+}
+
+.line-spec {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

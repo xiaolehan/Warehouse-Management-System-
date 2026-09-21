@@ -36,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -107,8 +108,8 @@ class ProductionOrderServiceTest {
 
         BaseGoods g50 = new BaseGoods(); g50.setId(50L); g50.setGoodsName("螺丝"); g50.setStock(10);
         BaseGoods g51 = new BaseGoods(); g51.setId(51L); g51.setGoodsName("板1"); g51.setStock(1);
-        when(baseGoodsMapper.selectById(50L)).thenReturn(g50);
-        when(baseGoodsMapper.selectById(51L)).thenReturn(g51);
+        // D116：物料改批量预取
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(g50, g51));
 
         List<KitShortageVO> shortage = service.computeShortageForOrder(7L);
 
@@ -192,7 +193,7 @@ class ProductionOrderServiceTest {
         g51.setId(51L);
         g51.setGoodsName("板1");
         g51.setStock(0);
-        when(baseGoodsMapper.selectById(51L)).thenReturn(g51);
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(g51));
 
         List<KitShortageVO> shortage = service.computeShortageForOrder(7L);
 
@@ -242,7 +243,7 @@ class ProductionOrderServiceTest {
         g51.setId(51L);
         g51.setGoodsName("板1");
         g51.setStock(0);
-        when(baseGoodsMapper.selectById(51L)).thenReturn(g51);
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(g51));
 
         // insert 回填 id，供随后 selectById 取回保存单
         BizProductionOrder[] holder = new BizProductionOrder[1];

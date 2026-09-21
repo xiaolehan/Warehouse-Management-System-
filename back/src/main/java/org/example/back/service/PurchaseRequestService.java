@@ -35,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -456,7 +457,8 @@ public class PurchaseRequestService {
         }
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        // 逐条转 biz_purchase 加库存（用明细到货数量+采购单价）
+        // D111：整张申请一次生成「一张」多行进货单（用明细到货数量+采购单价），不再一行一单
+        List<PurchaseSaveDTO.LineDTO> receiptLines = new ArrayList<>();
         for (BizPurchaseRequestDetail detail : details) {
             Integer qty = detail.getArriveQuantity() != null ? detail.getArriveQuantity() : detail.getQuantity();
             if (qty == null || qty <= 0) {
@@ -465,13 +467,16 @@ public class PurchaseRequestService {
             if (detail.getUnitPrice() == null) {
                 throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少采购单价");
             }
-            PurchaseSaveDTO purchaseDto = new PurchaseSaveDTO();
-            purchaseDto.setGoodsId(detail.getGoodsId());
-            purchaseDto.setQuantity(qty);
-            purchaseDto.setUnitPrice(detail.getUnitPrice());
-            purchaseDto.setRemark("采购申请单 " + entity.getRequestNo() + " 入库");
-            purchaseService.createInternal(purchaseDto, loginUser.getId(), loginUser.getRealName());
+            PurchaseSaveDTO.LineDTO line = new PurchaseSaveDTO.LineDTO();
+            line.setGoodsId(detail.getGoodsId());
+            line.setQuantity(qty);
+            line.setUnitPrice(detail.getUnitPrice());
+            receiptLines.add(line);
         }
+        PurchaseSaveDTO receipt = new PurchaseSaveDTO();
+        receipt.setLines(receiptLines);
+        receipt.setRemark("采购申请单 " + entity.getRequestNo() + " 入库");
+        purchaseService.createInternal(receipt, loginUser.getId(), loginUser.getRealName());
 
         LocalDateTime now = LocalDateTime.now();
         LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();

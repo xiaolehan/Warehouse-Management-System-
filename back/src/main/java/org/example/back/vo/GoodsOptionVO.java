@@ -31,6 +31,9 @@ public class GoodsOptionVO {
 
     private BigDecimal salePrice;
 
+    /** D111：物料最近进价参考（进货多行编辑器选物料时带出/预填） */
+    private BigDecimal purchasePrice;
+
     /** D41 货品类型: material/product */
     private String type;
 }

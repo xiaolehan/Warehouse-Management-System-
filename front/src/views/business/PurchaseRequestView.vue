@@ -292,6 +292,11 @@
         <el-date-picker v-model="applyAllDate" type="date" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="选择日期" style="width: 170px" />
         <el-button @click="applyDateToAll">应用到全部行</el-button>
       </div>
+      <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px">
+        <span style="visibility: hidden">统一填充：</span>
+        <el-input v-model="applyAllRemark" placeholder="统一填充到货备注" style="width: 170px" />
+        <el-button @click="applyRemarkToAll">应用到全部行</el-button>
+      </div>
       <el-table :data="processForm.items" border size="small">
         <el-table-column label="商品" min-width="150">
           <template #default="{ row }">{{ row.goodsName }}</template>
@@ -397,6 +402,7 @@ const rejectForm = reactive({ id: null, reason: '' })
 const processVisible = ref(false)
 const processForm = reactive({ id: null, mode: 'process', items: [] })
 const applyAllDate = ref(null)
+const applyAllRemark = ref('')
 
 // D61：行级到货计划——认领与修改共用；mode: process=认领(待采购), update=修改(采购中)
 const openArrivalPlanDialog = async (row, mode) => {
@@ -412,6 +418,7 @@ const openArrivalPlanDialog = async (row, mode) => {
       arrivalRemark: d.arrivalRemark || ''
     }))
     applyAllDate.value = null
+    applyAllRemark.value = ''
     processVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
@@ -423,6 +430,11 @@ const handleUpdatePlan = (row) => openArrivalPlanDialog(row, 'update')
 const applyDateToAll = () => {
   if (!applyAllDate.value) return ElMessage.warning('请先选择统一填充的日期')
   processForm.items.forEach(i => { i.expectedArrivalTime = applyAllDate.value })
+}
+// D115：到货备注同款统一填充，覆盖全部行
+const applyRemarkToAll = () => {
+  if (!applyAllRemark.value) return ElMessage.warning('请先填写统一填充的到货备注')
+  processForm.items.forEach(i => { i.arrivalRemark = applyAllRemark.value })
 }
 
 // D61：列表「预计到货」聚合——各行相同显示单日期，不同显示最早~最晚

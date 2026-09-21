@@ -46,9 +46,10 @@
           <template #default="scope">{{ scope.row.reviewTime ? fmtTime(scope.row.reviewTime) : '—' }}</template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="90" fixed="right" align="center">
+        <el-table-column label="操作" width="130" fixed="right" align="center">
           <template #default="scope">
             <el-button link type="primary" @click="openDetail(scope.row)">详情</el-button>
+            <el-button link type="primary" :icon="Download" :loading="exportingId === scope.row.id" @click="handleListExport(scope.row)">导出</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -579,6 +580,20 @@ const handleCancel = async () => {
 }
 
 // ---------- 导出 / 导入 ----------
+
+// D118：列表行直接导出明盘表（含账面数）；盲盘/导入仍在详情弹窗
+const exportingId = ref(null)
+const handleListExport = async (row) => {
+  exportingId.value = row.id
+  try {
+    const blob = await exportStocktakeAPI(row.id, false)
+    await saveBlobAs(blob, `盘点表-${row.stocktakeNo}-${localDateString()}.xlsx`)
+  } catch (e) {
+    if (!e?.isAxiosError) ElMessage.error(e.message || '导出失败')
+  } finally {
+    exportingId.value = null
+  }
+}
 
 const handleExport = async () => {
   exporting.value = true

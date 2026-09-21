@@ -359,7 +359,7 @@ public class ApprovalService {
                 LocalDateTime bizTime = purchase.getOperationTime() == null ? purchase.getCreateTime() : purchase.getOperationTime();
                 return new BizDocumentMeta(purchase.getPurchaseNo(), purchase.getBizStatus(),
                         bizTime, purchase.getConfirmStatus(), buildSnapshot("purchase", purchase.getId(), purchase.getPurchaseNo(), purchase.getBizStatus(),
-                        bizTime, purchase.getVoidTime(), purchase.getVoidReason(), purchase.getQuantity(), purchase.getTotalPrice(), purchase.getSourceId()));
+                        bizTime, purchase.getVoidTime(), purchase.getVoidReason(), purchase.getTotalQuantity(), purchase.getTotalAmount(), purchase.getSourceId()));
             }
             case "purchase_return" -> {
                 BizPurchaseReturn purchaseReturn = bizPurchaseReturnMapper.selectById(bizId);
@@ -369,7 +369,7 @@ public class ApprovalService {
                 LocalDateTime bizTime = purchaseReturn.getOperationTime() == null ? purchaseReturn.getCreateTime() : purchaseReturn.getOperationTime();
                 return new BizDocumentMeta(purchaseReturn.getReturnNo(), purchaseReturn.getBizStatus(),
                         bizTime, purchaseReturn.getConfirmStatus(), buildSnapshot("purchase_return", purchaseReturn.getId(), purchaseReturn.getReturnNo(), purchaseReturn.getBizStatus(),
-                        bizTime, purchaseReturn.getVoidTime(), purchaseReturn.getVoidReason(), purchaseReturn.getQuantity(), purchaseReturn.getTotalPrice(), purchaseReturn.getSourceId()));
+                        bizTime, purchaseReturn.getVoidTime(), purchaseReturn.getVoidReason(), purchaseReturn.getTotalQuantity(), purchaseReturn.getTotalAmount(), purchaseReturn.getSourceId()));
             }
             case "sales" -> {
                 BizSales sales = bizSalesMapper.selectById(bizId);

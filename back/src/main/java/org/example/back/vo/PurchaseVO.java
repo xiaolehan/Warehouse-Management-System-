@@ -4,7 +4,11 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * 进货单 VO（D111 头行结构）：头汇总 + 明细行列表。
+ */
 @Data
 public class PurchaseVO {
 
@@ -14,21 +18,20 @@ public class PurchaseVO {
 
     private String orderNo;
 
-    private Long goodsId;
-
-    private String goodsName;
-
-    private String supplierName;
-
-    private Integer quantity;
-
-    private BigDecimal unitPrice;
-
-    private BigDecimal price;
-
-    private BigDecimal totalPrice;
+    private Integer totalQuantity;
 
     private BigDecimal totalAmount;
+
+    /** 全部行同价时为该单价，多价时为 null（列表展示用） */
+    private BigDecimal avgPrice;
+
+    /** 商品汇总描述：单行 "SMC105"，多行 "SMC105 等 3 种" */
+    private String goodsSummary;
+
+    /** 供应商汇总：全部行同一供应商为其名称，跨供应商为 "多个供应商" */
+    private String supplierSummary;
+
+    private List<PurchaseDetailVO> details;
 
     private LocalDateTime operationTime;
 

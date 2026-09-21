@@ -64,7 +64,7 @@ public class DocumentTimelineService {
         nodes.add(node("arrived", "采购到货", statusOf(voided, cs, 2, 1),
                 p.getArriveTime(), "采购部确认到货，待仓储入库"));
         nodes.add(node("received", "仓储入库确认", statusOf(voided, cs, 3, 2),
-                p.getConfirmTime(), confirmedDesc(p.getConfirmerName(), "确认入库，库存 +" + p.getQuantity())));
+                p.getConfirmTime(), confirmedDesc(p.getConfirmerName(), "确认入库，库存共 +" + p.getTotalQuantity())));
         appendVoidNodes(nodes, "purchase", id, voided, p.getVoidTime(), p.getVoidReason());
         return vo(p.getPurchaseNo(), nodes);
     }
@@ -125,7 +125,7 @@ public class DocumentTimelineService {
                 "采购管理员 " + r.getOperatorName() + " 创建退货单 " + r.getReturnNo()
                         + "（来源进货单 " + r.getSourcePurchaseNo() + "）"));
         nodes.add(node("confirmedOut", "仓储出库确认", statusOf(voided, cs, 2, 1),
-                r.getConfirmTime(), confirmedDesc(r.getConfirmerName(), "确认出库，库存 -" + r.getQuantity())));
+                r.getConfirmTime(), confirmedDesc(r.getConfirmerName(), "确认出库，库存共 -" + r.getTotalQuantity())));
         nodes.add(node("completed", "退货完成确认", statusOf(voided, cs, 3, 2),
                 r.getCompleteTime(),
                 r.getCompleterName() == null ? "采购管理员确认退货完成"
