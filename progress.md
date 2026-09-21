@@ -5,6 +5,19 @@
 
 ---
 
+## 会话 48 — 2026-09-21
+
+### 票 03/D113 按销售单批量下达生产任务单落地——334 单测全绿 + E2E 28/28
+
+- **后端：** `POST /business/production-order/batch-release`（@Transactional + 防重复提交 + @AuditLog）——入参 sales_order_id + 勾选明细行（sales_detail_id+quantity）；逐行预校验：行归属→在途单（UNFINISHED_STATUSES）→已生产满足（DONE 单合计≥行量）→本次重复→requireProduct/computeKit（无 BOM/停用行 BusinessException 捕获为跳过原因）；**校验全在该行写库前，通过行复用单条建单主体 insertOrder**（单号/salesOrderId+salesDetailId 锚点/工序初始化/齐套预警逐单触发）——单事务，insertOrder 后段失败整批回滚，杜绝「结果标跳过却留半成品单」（review 修复：try/catch 收窄到预校验段）；`GET batch-release/sales-options`（正常且待出库近 50 张）与 `GET batch-release/preview`（全明细行标注：库存/BOM 有无/在途单号/已生产量，anchoredOrdersByDetail 批量查询防 N+1）；列表按 salesNo 筛选；ProductionOrderVO 透出 salesDetailId（BeanUtils 同名自动拷贝）。
+- **前端：** ProductionOrderView「按销售单下达」按钮 → 选销售单 → 预览行勾选表（无 BOM/在途行禁选、数量预填订单行可改、默认全选可下达行）→ 结果汇总弹窗（已生成 PRO…（齐套文案）；X 个成品无 BOM 已跳过，请先在 BOM 管理建档后单独下达）；列表加「关联销售单」列+筛选框；business.js 三个新 API。
+- **单测：** ProductionOrderServiceTest 新增 7 例（options 列表/双行建单锚定/无 BOM 跳过其他行建成/在途行跳过带单号/已满足跳过/外来行与重复行/齐套 block 行逐单预警）；**全量 334 全绿**；npm build clean。
+- **E2E（/tmp/d113_e2e.py）28/28：** 三行销售单（PTO153+SMC105+API 新建无 BOM 成品）→ 预览标注（hasBom/库存/无在途）→ 批量下达 2 成功 1 跳过（BOM 原因）→ 详情锚点 salesDetailId 断言 → salesNo 筛选恰 2 单 → 重下达在途拦截+外来行拦截 → 作废清理（消息 164/165 齐套预警、工序行、销售单、无 BOM 成品全部清理，无残留）。首跑崩溃残留两处脚本顺序问题（商品创建重复/商品先于销售单删除被引用拦截），均人工复核清理，非功能缺陷。
+- **/code-review 两轴（standards 无硬违规 + spec 基本符合）：** 修 3 处——①releasePreview/batchRelease 在途过滤与已产合计重复 → inFlightOrderNos/doneQuantity 提取；②anchoredOrdersByDetail 内联枚举状态 → UNFINISHED_STATUSES+STATUS_DONE 复用；③try/catch 收窄（上）。**评审不修（judgement calls 在案）：** requireReleaseableSales 与 requireLinkableSalesOrder 校验级联相似但语义分支不同（单条路径含行归属解析），不强行合并；批量候选查询留 ProductionOrderService（该 Service 直读 bizSalesMapper 已是本文件惯例）；前端 skipReason 按文案含「BOM」分桶（结构化 code 超出 spec，结果弹窗已按 spec 文案）；kitText 前端映射（结果 VO 只有状态码，与 spec 文案一致）；doneQuantity 口径=DONE 单计划量（本系统生产入库无部分量，等价于实收）。
+- **下一步：** 票 04/D112 新成品销售/生产/仓储联动（零库存标识+BOM 提示+深链）→ 票 05/D114 生产单生命周期时间线；全部完成后终审+提交，交用户统一手测（D113 复测项已记 pending-retest.md）。
+
+---
+
 ## 会话 47 — 2026-09-21
 
 ### 票 02/D120 采购申请按行分批到货落地（ADR-0016）——327 单测全绿 + E2E 46/46

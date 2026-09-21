@@ -332,14 +332,8 @@ public class ProductionOrderService {
                     .eq(BizBom::getGoodsId, line.getGoodsId())) != null;
             pl.setHasBom(hasBom);
             List<BizProductionOrder> orders = anchored.getOrDefault(line.getId(), List.of());
-            pl.setInFlightOrderNo(orders.stream()
-                    .filter(o -> BizProductionOrder.UNFINISHED_STATUSES.contains(o.getStatus()))
-                    .map(BizProductionOrder::getOrderNo)
-                    .collect(Collectors.joining("、")));
-            pl.setDoneQuantity(orders.stream()
-                    .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_DONE).equals(o.getStatus()))
-                    .mapToInt(BizProductionOrder::getQuantity)
-                    .sum());
+            pl.setInFlightOrderNo(inFlightOrderNos(orders));
+            pl.setDoneQuantity(doneQuantity(orders));
             previewLines.add(pl);
         }
         vo.setLines(previewLines);
@@ -379,20 +373,14 @@ public class ProductionOrderService {
             }
             result.setGoodsName(line.getGoodsName());
             List<BizProductionOrder> lineOrders = anchored.getOrDefault(line.getId(), List.of());
-            String inFlightNos = lineOrders.stream()
-                    .filter(o -> BizProductionOrder.UNFINISHED_STATUSES.contains(o.getStatus()))
-                    .map(BizProductionOrder::getOrderNo)
-                    .collect(Collectors.joining("、"));
+            String inFlightNos = inFlightOrderNos(lineOrders);
             if (!inFlightNos.isEmpty()) {
                 result.setSuccess(false);
                 result.setSkipReason("已有在途任务单（" + inFlightNos + "）");
                 results.add(result);
                 continue;
             }
-            int doneQty = lineOrders.stream()
-                    .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_DONE).equals(o.getStatus()))
-                    .mapToInt(BizProductionOrder::getQuantity)
-                    .sum();
+            int doneQty = doneQuantity(lineOrders);
             if (doneQty >= line.getQuantity()) {
                 result.setSuccess(false);
                 result.setSkipReason("该行已生产入库数量已满足订单需求（已完成 " + doneQty + "）");
@@ -405,19 +393,24 @@ public class ProductionOrderService {
                 results.add(result);
                 continue;
             }
+            BaseGoods product;
+            KuaiTaoResult kit;
             try {
-                BaseGoods product = requireProduct(line.getGoodsId());
-                KuaiTaoResult kit = computeKit(line.getGoodsId(), item.getQuantity());
-                BizProductionOrder saved = insertOrder(product, item.getQuantity(), kit, line, null);
-                result.setSuccess(true);
-                result.setOrderId(saved.getId());
-                result.setOrderNo(saved.getOrderNo());
-                result.setKitStatus(kit.kitStatus);
+                product = requireProduct(line.getGoodsId());
+                kit = computeKit(line.getGoodsId(), item.getQuantity());
             } catch (BusinessException ex) {
-                // 无 BOM/成品停用等行：跳过并说明，不阻断其他行（该行尚未写库，不影响事务）
+                // 无 BOM/成品停用等行：预校验失败即跳过并说明，不阻断其他行（该行尚未写库）
                 result.setSuccess(false);
                 result.setSkipReason(ex.getMessage());
+                results.add(result);
+                continue;
             }
+            // 校验通过才落单；insertOrder 内若再抛异常即整批回滚——绝不出现「结果标跳过却留下半成品单」
+            BizProductionOrder saved = insertOrder(product, item.getQuantity(), kit, line, null);
+            result.setSuccess(true);
+            result.setOrderId(saved.getId());
+            result.setOrderNo(saved.getOrderNo());
+            result.setKitStatus(kit.kitStatus);
             results.add(result);
         }
         return results;
@@ -438,16 +431,32 @@ public class ProductionOrderService {
         return sales;
     }
 
+    /** 行的在途任务单单号串（按 UNFINISHED_STATUSES 过滤，无则在途为空串） */
+    private String inFlightOrderNos(List<BizProductionOrder> orders) {
+        return orders.stream()
+                .filter(o -> BizProductionOrder.UNFINISHED_STATUSES.contains(o.getStatus()))
+                .map(BizProductionOrder::getOrderNo)
+                .collect(Collectors.joining("、"));
+    }
+
+    /** 行已完成生产任务单的数量合计（D113 已生产满足口径：DONE 单计划量，本系统入库不可部分量） */
+    private int doneQuantity(List<BizProductionOrder> orders) {
+        return orders.stream()
+                .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_DONE).equals(o.getStatus()))
+                .mapToInt(BizProductionOrder::getQuantity)
+                .sum();
+    }
+
     /** 一次查出全部锚定行任务单（在途+已完成），按 sales_detail_id 分组（批量下达/预览共用，防 N+1） */
     private Map<Long, List<BizProductionOrder>> anchoredOrdersByDetail(List<Long> salesDetailIds) {
         if (salesDetailIds == null || salesDetailIds.isEmpty()) {
             return Map.of();
         }
+        List<Integer> trackedStatuses = new ArrayList<>(BizProductionOrder.UNFINISHED_STATUSES);
+        trackedStatuses.add(BizProductionOrder.STATUS_DONE);
         List<BizProductionOrder> orders = orderMapper.selectList(new LambdaQueryWrapper<BizProductionOrder>()
                 .in(BizProductionOrder::getSalesDetailId, salesDetailIds)
-                .in(BizProductionOrder::getStatus,
-                        BizProductionOrder.STATUS_PENDING, BizProductionOrder.STATUS_IN_PROGRESS,
-                        BizProductionOrder.STATUS_AWAIT_QC, BizProductionOrder.STATUS_DONE));
+                .in(BizProductionOrder::getStatus, trackedStatuses));
         return orders.stream().collect(Collectors.groupingBy(BizProductionOrder::getSalesDetailId));
     }
 
