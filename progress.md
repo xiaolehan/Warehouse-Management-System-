@@ -5,6 +5,25 @@
 
 ---
 
+## 会话 51 — 2026-09-21
+
+### 第二轮手测 7 项问题定案并全部落地——D121-D127 七票完成，387 单测全绿
+
+- **定案落票（797afe7）：** /grill-with-docs 逐项拍板 7 个新问题（新成品销售联动、盘点导出失效、供应商显示、采购单价预填、工序-质检顺序锁、售价泄漏、销售成功提醒）+ 勾销/标注 pending-retest.md；落 7 张票 `.scratch/manual-test-2026-09-21/issues/`、ADR-0017（快速建品）、CONTEXT.md 词汇更新。
+- **D121（bb5ec19）销售端「+新品」快速建品：** POST /base/goods/quick-product（仅销售+超管）——名称唯一校验+售价必填，建品→立即开销售单弹窗联动；SalesView「+新品」入口（ADR-0017 按钮规范）。
+- **D122（ecfab62）盘点导出无反应：** 根因=陈旧 dev server 提供旧 bundle（非代码缺陷），修复=会话失效兜底提示+重启 dev server；导出链路本身无改动。
+- **D123（1460adb）进货单头级供应商必填 + 物料「最新供应商」：** 进货单创建头级供应商必填；GoodsService.fillLatestSuppliers 窗口函数一次查询最近有效进货供应商（回退绑定供应商标「默认」），page/getById 批量填充防 N+1。
+- **D124（836ed58）到货提交采购单价预填：** 采购申请→到货提交时按「该物料最近一次已入库进价→标准进价→留空」顺序预填，可改。
+- **D125（ee1e6e1）工序-质检顺序门禁：** 门禁表=工序1-5全打卡→解锁首测；首测最新合格→解锁工序7；工序7打卡→解锁成品测；成品测最新合格→解锁工序9。complete() 按门禁表强校验；QcService.record 反向校验（首测需1-5全打卡/成品测需工序7）；**撤销保护**（已有首测记录禁撤1-5、已有成品测记录禁撤7、工序9在离开生产中后禁撤）；列表 VO 透出门禁状态（firstUnlocked/finalUnlocked/lockReason），前端锁定灰置+tooltip，质检页未解锁测点禁选+原因；revoke 测试需 @BeforeAll initTableInfo（LambdaUpdateWrapper.set 即时解析列名陷阱）。E2E 23/23 含 5 越序负测+返工重测解锁。
+- **D126（1ebd05f）成品售价可见性收紧：** GoodsService 读链路（page/options/getById）按调用方脱敏——hideSalePrice()=非销售部门成员且非超管，maskedSalePrice 唯一规则入口（options 与 VO 列表共用，调用方粒度一次判定）；物料含进价不受影响；D121 快速建品端点仅销售可达不经读链路。前端 GoodsView 售价列+详情弹窗 showSalePrice 门控（isView 同样生效）。E2E 12 项含目标角色读路径。
+- **D127（a619da3）出库确认→销售管理员提醒：** SalesService.confirm() 成功路径 sendSalesShippedToSalesAdmins（sendToDeptAdminsWithBiz，biz_type=sales+biz_id+ROUTE_SALES，D21 范式）；**先撤后发**——confirm 先 revokeUnreadByBiz 再发提醒（同 biz 绑定，顺序颠倒提醒会被本次撤销误撤，InOrder 测试钉死）；MessageCenter 按 targetRoute 跳既有销售单页零改动。E2E 19 项含送达/未误撤/重复确认不发/作废清理。
+- **两轴 /code-review 每票执行：** D125 修 5 处（门禁文案去票号前缀上屏、去内联 margin-right 违 ADR-0007、锁提示常量化、去 emoji、off-by-one 注释）；D126 修 4 处（hideSalePrice javadoc 反义、maskedSalePrice 提取去重复、map 外一次判定、测试补物料售价保留断言+显式 stub）；D127 修 2 处（entity.getId()→id 一致性、dept 编码断言——**eq 惰性求值需先 getSqlSegment() 触发参数物化再查 paramNameValuePairs**，普通测试 Configuration 列名解析为驼峰不断言列名）。评审不修在案：biz_type 字面量（全仓无 BIZ_* 常量，非本票工作）。
+- **会话终验证：** 全量 387 单测全绿（BUILD SUCCESS）+ npm build clean；两票 E2E 均清理验证无残留。
+- **⚠️ 数据事件（透明报告）：** D125 E2E 备料时 `UPDATE base_goods SET stock=10 WHERE id BETWEEN 38 AND 59 AND type='material'` 命中 22 行——含非 BOM 的 58/59（PTO153 顶盖/锁定盖料）；清查后 38-59 全部恢复 0，但 58/59 原值未事先记录（旁证几乎必为 0：同族物料全 0），用户下轮手测若见该两料库存异常请反馈。
+- **下一步：** 用户第三轮统一手测（D121-D127 + pending-retest.md 复测项）。
+
+---
+
 ## 会话 50 — 2026-09-21
 
 ### 票 05/D114 生产任务单全动线时间线落地——342 单测全绿 + E2E 34/34
