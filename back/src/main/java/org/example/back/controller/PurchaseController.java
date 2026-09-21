@@ -17,7 +17,9 @@ import org.example.back.vo.PurchaseVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/business/purchases")
@@ -48,6 +50,12 @@ public class PurchaseController {
     @GetMapping("/options/returnable")
     public Result<List<PurchaseSourceOptionVO>> returnableOptions(@RequestParam(required = false) Long goodsId) {
         return Result.success(purchaseService.returnableOptions(goodsId));
+    }
+
+    /** D124：批量「最近成交价」（已入库+正常最新明细价→标准进价→null），供到货提交预填单价 */
+    @GetMapping("/latest-prices")
+    public Result<Map<Long, BigDecimal>> latestPrices(@RequestParam(required = false) List<Long> goodsIds) {
+        return Result.success(purchaseService.latestPrices(goodsIds));
     }
 
     @PostMapping

@@ -393,6 +393,7 @@ import {
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
 import { getPurchaseRequestTimelineAPI } from '@/api/purchaseRequest'
+import { getLatestPurchasePricesAPI } from '@/api/business' // D124：到货提交预填最近成交价
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsMaterialOptionsAPI } from '@/api/base'
 
@@ -695,6 +696,7 @@ const handleArrive = async (row) => {
       .filter(d => !d.receiveStatus || d.receiveStatus === 1)
       .map(d => ({
         detailId: d.id,
+        goodsId: d.goodsId,
         goodsName: d.goodsName,
         spec: d.spec,
         quantity: d.quantity,
@@ -706,9 +708,28 @@ const handleArrive = async (row) => {
       ElMessage.warning('该申请单没有待到货行（全部已入库或存在待确认批次）')
       return
     }
+    await prefillArrivalPrices()
     receiveVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
+  }
+}
+
+// D124：到货单价预填——最近成交价（后端已回退标准进价）；仅填空白行，
+// 弹窗打开后用户可手改，再次打开重新预填（已手改值不跨弹窗保留）
+const prefillArrivalPrices = async () => {
+  try {
+    const goodsIds = receiveForm.items.filter(r => r.unitPrice == null).map(r => r.goodsId)
+    if (!goodsIds.length) return
+    const res = await getLatestPurchasePricesAPI(goodsIds)
+    const priceMap = res.data || {}
+    receiveForm.items.forEach(r => {
+      if (r.unitPrice == null && priceMap[r.goodsId] != null) {
+        r.unitPrice = Number(priceMap[r.goodsId])
+      }
+    })
+  } catch {
+    // 预填失败（如仓储管理员无进价权限，已 silent 不弹错）静默降级为手填，不阻断到货提交
   }
 }
 

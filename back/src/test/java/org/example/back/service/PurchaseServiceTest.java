@@ -24,6 +24,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -215,6 +217,38 @@ class PurchaseServiceTest {
         ArgumentCaptor<BizPurchase> headCaptor = ArgumentCaptor.forClass(BizPurchase.class);
         verify(bizPurchaseMapper).insert(headCaptor.capture());
         assertEquals(11L, headCaptor.getValue().getSupplierId());
+    }
+
+    // ---------- D124：批量最近成交价（到货提交预填） ----------
+
+    @Test
+    void latestPrices_latestWinsAndFallsBackToStandardPrice() {
+        BizPurchaseMapper.LatestPurchasePrice latest = new BizPurchaseMapper.LatestPurchasePrice();
+        latest.setGoodsId(29L);
+        latest.setUnitPrice(new BigDecimal("52.00")); // 最近成交价
+        when(bizPurchaseMapper.latestValidUnitPrices(anyCollection(), any())).thenReturn(List.of(latest));
+        // 30 有标准进价回退，31 两种价都没有
+        BaseGoods standard = material(30L, "螺丝", 100, "0.50");
+        BaseGoods none = material(31L, "垫片", 100, null);
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(standard, none));
+
+        Map<Long, BigDecimal> result =
+                service.latestPrices(java.util.List.of(29L, 30L, 31L));
+
+        assertEquals(0, new BigDecimal("52.00").compareTo(result.get(29L)));
+        assertEquals(0, new BigDecimal("0.50").compareTo(result.get(30L)));
+        org.junit.jupiter.api.Assertions.assertFalse(result.containsKey(31L), "两种价都没有的物料不入 map（前端留空）");
+    }
+
+    @Test
+    void latestPrices_nonPurchaseMemberForbidden() {
+        doThrow(new BusinessException("最近采购价仅采购部门可查看"))
+                .when(authzService).requireDeptMemberOrSuperAdmin(anyString(), anyString());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.latestPrices(List.of(29L)));
+        assertTrue(ex.getMessage().contains("仅采购部门"), "实际: " + ex.getMessage());
+        verify(bizPurchaseMapper, never()).latestValidUnitPrices(anyCollection(), any());
     }
 
     // ---------- D111：内部创建=一张多行已入库单，逐行加库存 + 逐行回写进价 ----------

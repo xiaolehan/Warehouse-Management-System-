@@ -33,6 +33,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -650,6 +651,35 @@ public class PurchaseService {
             approvalMap.putIfAbsent(item.getBizId(), item);
         }
         return approvalMap;
+    }
+
+    /**
+     * D124：批量「最近成交价」——最近一张 已入库+正常 进货单的明细单价（口径同 latestValidUnitPrices）；
+     * 无历史价回退 base_goods.purchase_price 标准进价；都没有则不入 map（前端留空）。
+     * 进价口径仅采购可见（同 D102 进价历史守卫），供采购申请到货提交预填单价。
+     */
+    public Map<Long, BigDecimal> latestPrices(Collection<Long> goodsIds) {
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_PURCHASE, "最近采购价仅采购部门可查看");
+        if (goodsIds == null || goodsIds.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> distinctIds = goodsIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinctIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, BigDecimal> result = new LinkedHashMap<>();
+        bizPurchaseMapper.latestValidUnitPrices(distinctIds, LocalDateTime.now())
+                .forEach(row -> result.put(row.getGoodsId(), row.getUnitPrice()));
+        // 无成交记录的物料回退标准进价（仍无值则留空）
+        List<Long> missing = distinctIds.stream().filter(id -> !result.containsKey(id)).toList();
+        if (!missing.isEmpty()) {
+            baseGoodsMapper.selectBatchIds(missing).forEach(g -> {
+                if (g.getPurchasePrice() != null) {
+                    result.put(g.getId(), g.getPurchasePrice());
+                }
+            });
+        }
+        return result;
     }
 
     private BizApprovalOrder resolveLatestApproval(Long bizId) {
