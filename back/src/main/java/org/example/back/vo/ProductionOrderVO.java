@@ -38,6 +38,9 @@ public class ProductionOrderVO {
     /** D70：关联销售单号（展示用，列表/详情批量填充） */
     private String salesOrderNo;
 
+    /** D113：锚定的销售明细行 id（可空=通用备货） */
+    private Long salesDetailId;
+
     /** D71：生产手工修正的预计完工时间（可空，优先于系统推算） */
     private LocalDateTime expectedCompletionTime;
 

@@ -7,6 +7,9 @@
       <el-form-item label="成品名称">
         <el-input v-model="searchForm.goodsName" placeholder="请输入成品名称" clearable />
       </el-form-item>
+      <el-form-item label="关联销售单">
+        <el-input v-model="searchForm.salesNo" placeholder="按销售单号查任务单" clearable style="width: 150px" />
+      </el-form-item>
       <el-form-item label="状态">
         <el-select v-model="searchForm.status" placeholder="全部" clearable style="width: 130px">
           <el-option v-for="s in statusOptions" :key="s.value" :label="s.label" :value="s.value" />
@@ -19,6 +22,10 @@
           type="success" :icon="Plus" @click="handleAdd"
           v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
         >下达生产任务单</el-button>
+        <el-button
+          type="success" plain :icon="Plus" @click="openBatchRelease"
+          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+        >按销售单下达</el-button>
       </el-form-item>
     </el-form>
 
@@ -37,6 +44,12 @@
       <el-table-column label="状态" width="100" align="center">
         <template #default="scope">
           <el-tag :type="statusTagType(scope.row.status)" size="small">{{ scope.row.statusText }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="关联销售单" width="140">
+        <template #default="scope">
+          <span v-if="scope.row.salesOrderNo">{{ scope.row.salesOrderNo }}</span>
+          <span v-else style="color:#909399">—</span>
         </template>
       </el-table-column>
       <el-table-column prop="createTime" label="下达时间" width="170" />
@@ -157,6 +170,101 @@
       <template #footer>
         <el-button :icon="Close" @click="closeCreate">关闭</el-button>
         <el-button v-if="!createResult" type="primary" :icon="Check" @click="handleCreate">下达并预警</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- D113：按销售单批量下达——一张多成品销售单一次生成 ≤N 张任务单 -->
+    <el-dialog v-model="batchVisible" title="按销售单批量下达" width="980px" top="6vh" :close-on-click-modal="false">
+      <template v-if="!batchResult">
+        <el-form label-width="90px">
+          <el-form-item label="销售单" required>
+            <el-select
+              v-model="batchSalesId" filterable clearable placeholder="选择销售单（正常且待出库）"
+              style="width: 100%" :loading="batchOptionsLoading" @change="loadBatchPreview"
+            >
+              <el-option
+                v-for="opt in batchSalesOptions" :key="opt.id"
+                :label="`${opt.salesNo}（${opt.customerName || '未填客户'}）`" :value="opt.id"
+              />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <template v-if="batchPreview">
+          <el-table
+            ref="batchTableRef" :data="batchPreview.lines" border size="small"
+            @selection-change="onBatchSelectionChange"
+          >
+            <el-table-column type="selection" width="45" :selectable="batchSelectable" />
+            <el-table-column prop="goodsName" label="成品" min-width="150" />
+            <el-table-column label="订单行数量" width="100" align="center">
+              <template #default="s">{{ s.row.quantity }}</template>
+            </el-table-column>
+            <el-table-column label="当前库存" width="90" align="center">
+              <template #default="s">{{ s.row.stock ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="BOM" width="80" align="center">
+              <template #default="s">
+                <el-tag :type="s.row.hasBom ? 'success' : 'danger'" size="small">{{ s.row.hasBom ? '有' : '无' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="在途任务单" width="150">
+              <template #default="s">
+                <span v-if="s.row.inFlightOrderNo" style="color:#e6a23c">{{ s.row.inFlightOrderNo }}</span>
+                <span v-else style="color:#909399">无</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="已生产" width="80" align="center">
+              <template #default="s">{{ s.row.doneQuantity || 0 }}</template>
+            </el-table-column>
+            <el-table-column label="生产数量" width="155">
+              <template #default="s">
+                <el-input-number
+                  v-if="batchSelectable(s.row)" v-model="s.row.releaseQty"
+                  :min="1" size="small" controls-position="right" style="width: 120px"
+                />
+                <span v-else style="color:#c0c4cc">—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="color:#909399; font-size:12px; margin-top:6px">
+            无 BOM / 已有在途任务单的行禁选；生产数量预填订单行数量，可按需调整。
+          </div>
+        </template>
+      </template>
+
+      <template v-else>
+        <el-alert :title="batchSummary.text" :type="batchSummary.type" :closable="false" style="margin-bottom: 10px" />
+        <el-table :data="batchResult" border size="small">
+          <el-table-column prop="goodsName" label="成品" min-width="150" />
+          <el-table-column prop="quantity" label="生产数量" width="90" align="center" />
+          <el-table-column label="结果" width="90" align="center">
+            <template #default="s">
+              <el-tag :type="s.row.success ? 'success' : 'info'" size="small">{{ s.row.success ? '已生成' : '已跳过' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="任务单号" width="140">
+            <template #default="s">{{ s.row.orderNo || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="齐套状态" width="110" align="center">
+            <template #default="s">
+              <el-tag v-if="s.row.success" :type="kitTagType(s.row.kitStatus)" size="small">{{ kitText(s.row.kitStatus) }}</el-tag>
+              <span v-else style="color:#909399">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="跳过原因" min-width="190">
+            <template #default="s">{{ s.row.skipReason || '—' }}</template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <template #footer>
+        <template v-if="!batchResult">
+          <el-button :icon="Close" @click="batchVisible = false">取消</el-button>
+          <el-button type="primary" :icon="Check" :loading="batchSubmitting" @click="submitBatchRelease">下达</el-button>
+        </template>
+        <template v-else>
+          <el-button type="primary" :icon="Close" @click="closeBatchRelease">关闭</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -517,7 +625,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Refresh, Plus, Check, Close
@@ -528,6 +636,9 @@ import {
   createProductionOrderAPI,
   getLinkableSalesOptionsAPI,
   getProductionOrderDetailAPI,
+  getBatchReleasePreviewAPI,
+  getBatchReleaseSalesOptionsAPI,
+  batchReleaseProductionAPI,
   getProductionOrderPageAPI,
   receiptProductionOrderAPI,
   revokeProductionStepAPI,
@@ -551,7 +662,7 @@ const statusOptions = [
   { value: 7, label: '已终止' }
 ]
 
-const searchForm = reactive({ orderNo: '', goodsName: '', status: null })
+const searchForm = reactive({ orderNo: '', goodsName: '', status: null, salesNo: '' })
 const tableData = ref([])
 const loading = ref(false)
 const currentPage = ref(1)
@@ -606,7 +717,8 @@ const loadList = async () => {
       pageSize: pageSize.value,
       orderNo: searchForm.orderNo || undefined,
       goodsName: searchForm.goodsName || undefined,
-      status: searchForm.status || undefined
+      status: searchForm.status || undefined,
+      salesNo: searchForm.salesNo || undefined
     }
     const res = await getProductionOrderPageAPI(params)
     const pageData = res.data || {}
@@ -633,6 +745,7 @@ const resetSearch = () => {
   searchForm.orderNo = ''
   searchForm.goodsName = ''
   searchForm.status = null
+  searchForm.salesNo = ''
   currentPage.value = 1
   loadList()
 }
@@ -687,6 +800,105 @@ const handleCreate = () => {
 const closeCreate = () => {
   createVisible.value = false
   if (createResult.value) loadList()
+}
+
+// ============================== D113：按销售单批量下达 ==============================
+const batchVisible = ref(false)
+const batchSalesOptions = ref([])
+const batchOptionsLoading = ref(false)
+const batchSalesId = ref(null)
+const batchPreview = ref(null)
+const batchTableRef = ref(null)
+const batchSelection = ref([])
+const batchResult = ref(null)
+const batchSubmitting = ref(false)
+
+// D113：齐套快照文案（结果汇总用；与列表 kitStatusText 同口径）
+const kitText = (k) => ({ ok: '齐料', partial: '部分缺料', block: '严重缺料', issued: '已领料' }[k] || k)
+
+const openBatchRelease = async () => {
+  batchSalesId.value = null
+  batchPreview.value = null
+  batchResult.value = null
+  batchSubmitting.value = false
+  batchVisible.value = true
+  batchOptionsLoading.value = true
+  try {
+    const res = await getBatchReleaseSalesOptionsAPI()
+    batchSalesOptions.value = res.data || []
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    batchOptionsLoading.value = false
+  }
+}
+
+const loadBatchPreview = async (salesId) => {
+  batchPreview.value = null
+  batchSelection.value = []
+  if (!salesId) return
+  try {
+    const res = await getBatchReleasePreviewAPI(salesId)
+    const vo = res.data || {}
+    // 生产数量预填订单行数量（可改）
+    vo.lines = (vo.lines || []).map((l) => ({ ...l, releaseQty: l.quantity }))
+    batchPreview.value = vo
+    // 默认全选可下达行
+    nextTick(() => {
+      vo.lines.forEach((l) => {
+        if (batchSelectable(l)) batchTableRef.value?.toggleRowSelection(l, true)
+      })
+    })
+  } catch {
+    // 业务错误已由拦截器统一提示
+  }
+}
+
+const batchSelectable = (row) =>
+  !!row.hasBom && !row.inFlightOrderNo && (row.doneQuantity || 0) < row.quantity
+
+const onBatchSelectionChange = (rows) => { batchSelection.value = rows }
+
+const submitBatchRelease = async () => {
+  if (!batchSalesId.value) {
+    ElMessage.warning('请选择销售单')
+    return
+  }
+  if (!batchSelection.value.length) {
+    ElMessage.warning('请勾选要下达的明细行')
+    return
+  }
+  batchSubmitting.value = true
+  try {
+    const res = await batchReleaseProductionAPI({
+      salesOrderId: batchSalesId.value,
+      items: batchSelection.value.map((l) => ({ salesDetailId: l.salesDetailId, quantity: l.releaseQty }))
+    })
+    batchResult.value = res.data || []
+    ElMessage.success('批量下达完成')
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    batchSubmitting.value = false
+  }
+}
+
+const batchSummary = computed(() => {
+  const rs = batchResult.value || []
+  const ok = rs.filter((r) => r.success)
+  const noBom = rs.filter((r) => !r.success && (r.skipReason || '').includes('BOM'))
+  const other = rs.filter((r) => !r.success && !(r.skipReason || '').includes('BOM'))
+  const parts = []
+  if (ok.length) parts.push(`已生成 ${ok.map((r) => `${r.orderNo}（${kitText(r.kitStatus)}）`).join('、')}`)
+  if (noBom.length) parts.push(`${noBom.length} 个成品无 BOM 已跳过，请先在 BOM 管理建档后单独下达`)
+  if (other.length) parts.push(`${other.length} 行因其他原因跳过（见明细）`)
+  if (!parts.length) parts.push('没有可下达的明细行')
+  return { text: parts.join('；'), type: ok.length === rs.length ? 'success' : (ok.length ? 'warning' : 'error') }
+})
+
+const closeBatchRelease = () => {
+  batchVisible.value = false
+  if (batchResult.value) loadList()
 }
 
 const openDetail = async (row) => {

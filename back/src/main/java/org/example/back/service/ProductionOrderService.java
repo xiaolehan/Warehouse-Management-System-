@@ -7,6 +7,7 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
+import org.example.back.dto.ProductionBatchReleaseDTO;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.entity.BaseGoods;
@@ -29,6 +30,9 @@ import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionOrderVO;
 import org.example.back.vo.ProductionPickItemVO;
+import org.example.back.vo.ProductionReleasePreviewVO;
+import org.example.back.vo.ProductionReleaseResultVO;
+import org.example.back.vo.SalesSourceOptionVO;
 import org.example.back.vo.QcStateVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,9 +46,12 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -135,6 +142,16 @@ public class ProductionOrderService {
                 .like(StringUtils.hasText(queryDTO.getGoodsName()), BizProductionOrder::getGoodsName, queryDTO.getGoodsName())
                 .eq(queryDTO.getStatus() != null, BizProductionOrder::getStatus, queryDTO.getStatus())
                 .orderByDesc(BizProductionOrder::getId);
+        // D113：按关联销售单号筛选——看全「这张销售单的所有任务单」
+        if (StringUtils.hasText(queryDTO.getSalesNo())) {
+            List<Long> salesIds = bizSalesMapper.selectList(new LambdaQueryWrapper<BizSales>()
+                            .like(BizSales::getSalesNo, queryDTO.getSalesNo())).stream()
+                    .map(BizSales::getId).toList();
+            if (salesIds.isEmpty()) {
+                return new PageResult<>(List.of(), 0L, queryDTO.getPageNum(), queryDTO.getPageSize(), 0L);
+            }
+            wrapper.in(BizProductionOrder::getSalesOrderId, salesIds);
+        }
         Page<BizProductionOrder> page = orderMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         // D64 质检进度列表修复：列表行批量填充 qcState（一次 in 查询分组推导），QcView 列表不再恒显"未测"
         Map<Long, QcStateVO> qcStates = qcService.buildStateBatch(page.getRecords());
@@ -226,19 +243,29 @@ public class ProductionOrderService {
         // D70/D110：选填关联销售单（须同成品、正常且待出库，且单内有该成品明细行）；通用备货单留空
         BizSalesDetail linkedDetail = requireLinkableSalesOrder(dto.getSalesOrderId(), product.getId());
 
+        BizProductionOrder saved = insertOrder(product, dto.getQuantity(), kit, linkedDetail, dto.getRemark());
+
+        ProductionOrderVO vo = toVO(saved);
+        vo.setKitLines(kit.lines);
+        return vo;
+    }
+
+    /** D113：落单主体（建单号/写锚点/初始化工序/齐套预警）——单条建单与按销售单批量下达共用 */
+    private BizProductionOrder insertOrder(BaseGoods product, int quantity, KuaiTaoResult kit,
+                                           BizSalesDetail linkedDetail, String remark) {
         BizProductionOrder order = new BizProductionOrder();
         order.setOrderNo(CodeGenerator.productionNo());
         order.setGoodsId(product.getId());
         order.setGoodsName(product.getGoodsName());
         order.setUnit(product.getUnit());
-        order.setQuantity(dto.getQuantity());
+        order.setQuantity(quantity);
         order.setStatus(BizProductionOrder.STATUS_PENDING);
         order.setKitStatus(kit.kitStatus);
         order.setSource(BizProductionOrder.SOURCE_MANUAL);
         order.setSalesOrderId(linkedDetail == null ? null : linkedDetail.getSalesId());
         order.setSalesDetailId(linkedDetail == null ? null : linkedDetail.getId());
         order.setProcessSnapshot(String.join("\n", ProductionStepService.PROCESS_STEPS));
-        order.setRemark(dto.getRemark());
+        order.setRemark(remark);
         orderMapper.insert(order);
         BizProductionOrder saved = orderMapper.selectById(order.getId());
         // D64：初始化 7 道人工工序实例行
@@ -247,13 +274,183 @@ public class ProductionOrderService {
         // D60：建单即齐套预警——存在严重缺料/未知物料时通知采购管理员（作废时由 voidOrder 撤未读）
         if (BizProductionOrder.KIT_BLOCK.equals(kit.kitStatus)) {
             messageService.sendKitShortageToPurchaseAdmins(
-                    saved.getOrderNo(), product.getGoodsName(), kit.summary(dto.getQuantity()), saved.getId());
+                    saved.getOrderNo(), product.getGoodsName(), kit.summary(quantity), saved.getId());
         }
+        return saved;
+    }
 
-        ProductionOrderVO vo = toVO(saved);
-        vo.setKitLines(kit.lines);
+    // ============================== D113：按销售单批量下达 ==============================
+
+    /**
+     * 批量下达候选销售单：正常（未作废）且待出库，不限成品（多成品单场景）。
+     */
+    public List<SalesSourceOptionVO> batchReleaseSalesOptions() {
+        requireOrderReadAccess();
+        LambdaQueryWrapper<BizSales> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizSales::getBizStatus, 1)
+                .eq(BizSales::getConfirmStatus, SalesService.CONFIRM_PENDING)
+                .orderByDesc(BizSales::getOperationTime)
+                .orderByDesc(BizSales::getId)
+                .last("LIMIT 50");
+        List<BizSales> salesList = bizSalesMapper.selectList(wrapper);
+        return salesList.stream().map(s -> {
+            SalesSourceOptionVO vo = new SalesSourceOptionVO();
+            vo.setId(s.getId());
+            vo.setSalesNo(s.getSalesNo());
+            vo.setCustomerName(s.getCustomerName());
+            vo.setOperationTime(s.getOperationTime());
+            return vo;
+        }).toList();
+    }
+
+    /**
+     * 批量下达预览：列出销售单全部明细行，标注 BOM 有无、当前库存、在途任务单与已生产量。
+     */
+    public ProductionReleasePreviewVO releasePreview(Long salesOrderId) {
+        requireOrderReadAccess();
+        BizSales sales = requireReleaseableSales(salesOrderId);
+        ProductionReleasePreviewVO vo = new ProductionReleasePreviewVO();
+        vo.setSalesId(sales.getId());
+        vo.setSalesNo(sales.getSalesNo());
+        vo.setCustomerName(sales.getCustomerName());
+        List<BizSalesDetail> lines = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                .eq(BizSalesDetail::getSalesId, salesOrderId)
+                .orderByAsc(BizSalesDetail::getSortNo)
+                .orderByAsc(BizSalesDetail::getId));
+        Map<Long, List<BizProductionOrder>> anchored = anchoredOrdersByDetail(
+                lines.stream().map(BizSalesDetail::getId).toList());
+        List<ProductionReleasePreviewVO.PreviewLineVO> previewLines = new ArrayList<>();
+        for (BizSalesDetail line : lines) {
+            ProductionReleasePreviewVO.PreviewLineVO pl = new ProductionReleasePreviewVO.PreviewLineVO();
+            pl.setSalesDetailId(line.getId());
+            pl.setGoodsId(line.getGoodsId());
+            pl.setGoodsName(line.getGoodsName());
+            pl.setQuantity(line.getQuantity());
+            BaseGoods product = baseGoodsMapper.selectById(line.getGoodsId());
+            pl.setStock(product == null ? null : product.getStock());
+            boolean hasBom = bomMapper.selectOne(new LambdaQueryWrapper<BizBom>()
+                    .eq(BizBom::getGoodsId, line.getGoodsId())) != null;
+            pl.setHasBom(hasBom);
+            List<BizProductionOrder> orders = anchored.getOrDefault(line.getId(), List.of());
+            pl.setInFlightOrderNo(orders.stream()
+                    .filter(o -> BizProductionOrder.UNFINISHED_STATUSES.contains(o.getStatus()))
+                    .map(BizProductionOrder::getOrderNo)
+                    .collect(Collectors.joining("、")));
+            pl.setDoneQuantity(orders.stream()
+                    .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_DONE).equals(o.getStatus()))
+                    .mapToInt(BizProductionOrder::getQuantity)
+                    .sum());
+            previewLines.add(pl);
+        }
+        vo.setLines(previewLines);
         return vo;
     }
+
+    /**
+     * D113：按销售单批量下达——逐行独立校验、无 BOM/已有在途单等行跳过不阻断其他行。
+     * 校验全部发生在该行任何写库之前（失败行不产生半成品数据），通过行复用单条建单逻辑
+     * （insertOrder：齐套快照/工序初始化/缺料预警逐单正常触发）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public List<ProductionReleaseResultVO> batchRelease(ProductionBatchReleaseDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireOrderWriteAccess();
+        BizSales sales = requireReleaseableSales(dto.getSalesOrderId());
+
+        List<BizSalesDetail> salesLines = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
+                .eq(BizSalesDetail::getSalesId, dto.getSalesOrderId()));
+        Map<Long, BizSalesDetail> lineMap = salesLines.stream()
+                .collect(Collectors.toMap(BizSalesDetail::getId, Function.identity()));
+        Map<Long, List<BizProductionOrder>> anchored = anchoredOrdersByDetail(
+                dto.getItems().stream().map(ProductionBatchReleaseDTO.BatchItemDTO::getSalesDetailId).toList());
+
+        List<ProductionReleaseResultVO> results = new ArrayList<>();
+        Set<Long> seenDetailIds = new HashSet<>();
+        for (ProductionBatchReleaseDTO.BatchItemDTO item : dto.getItems()) {
+            ProductionReleaseResultVO result = new ProductionReleaseResultVO();
+            result.setSalesDetailId(item.getSalesDetailId());
+            result.setQuantity(item.getQuantity());
+            BizSalesDetail line = lineMap.get(item.getSalesDetailId());
+            if (line == null) {
+                result.setSuccess(false);
+                result.setSkipReason("明细行不归属该销售单");
+                results.add(result);
+                continue;
+            }
+            result.setGoodsName(line.getGoodsName());
+            List<BizProductionOrder> lineOrders = anchored.getOrDefault(line.getId(), List.of());
+            String inFlightNos = lineOrders.stream()
+                    .filter(o -> BizProductionOrder.UNFINISHED_STATUSES.contains(o.getStatus()))
+                    .map(BizProductionOrder::getOrderNo)
+                    .collect(Collectors.joining("、"));
+            if (!inFlightNos.isEmpty()) {
+                result.setSuccess(false);
+                result.setSkipReason("已有在途任务单（" + inFlightNos + "）");
+                results.add(result);
+                continue;
+            }
+            int doneQty = lineOrders.stream()
+                    .filter(o -> Integer.valueOf(BizProductionOrder.STATUS_DONE).equals(o.getStatus()))
+                    .mapToInt(BizProductionOrder::getQuantity)
+                    .sum();
+            if (doneQty >= line.getQuantity()) {
+                result.setSuccess(false);
+                result.setSkipReason("该行已生产入库数量已满足订单需求（已完成 " + doneQty + "）");
+                results.add(result);
+                continue;
+            }
+            if (!seenDetailIds.add(line.getId())) {
+                result.setSuccess(false);
+                result.setSkipReason("与本次提交的其他行重复");
+                results.add(result);
+                continue;
+            }
+            try {
+                BaseGoods product = requireProduct(line.getGoodsId());
+                KuaiTaoResult kit = computeKit(line.getGoodsId(), item.getQuantity());
+                BizProductionOrder saved = insertOrder(product, item.getQuantity(), kit, line, null);
+                result.setSuccess(true);
+                result.setOrderId(saved.getId());
+                result.setOrderNo(saved.getOrderNo());
+                result.setKitStatus(kit.kitStatus);
+            } catch (BusinessException ex) {
+                // 无 BOM/成品停用等行：跳过并说明，不阻断其他行（该行尚未写库，不影响事务）
+                result.setSuccess(false);
+                result.setSkipReason(ex.getMessage());
+            }
+            results.add(result);
+        }
+        return results;
+    }
+
+    /** 可下达的销售单：存在、正常（未作废）且待出库（与单条关联口径一致） */
+    private BizSales requireReleaseableSales(Long salesOrderId) {
+        BizSales sales = bizSalesMapper.selectById(salesOrderId);
+        if (sales == null) {
+            throw BusinessException.notFound("销售单不存在");
+        }
+        if (sales.getBizStatus() == null || sales.getBizStatus() != 1) {
+            throw BusinessException.validateFail("关联销售单已作废，无法下达");
+        }
+        if (sales.getConfirmStatus() == null || sales.getConfirmStatus() != SalesService.CONFIRM_PENDING) {
+            throw BusinessException.validateFail("关联销售单已确认出库，无需排产");
+        }
+        return sales;
+    }
+
+    /** 一次查出全部锚定行任务单（在途+已完成），按 sales_detail_id 分组（批量下达/预览共用，防 N+1） */
+    private Map<Long, List<BizProductionOrder>> anchoredOrdersByDetail(List<Long> salesDetailIds) {
+        if (salesDetailIds == null || salesDetailIds.isEmpty()) {
+            return Map.of();
+        }
+        List<BizProductionOrder> orders = orderMapper.selectList(new LambdaQueryWrapper<BizProductionOrder>()
+                .in(BizProductionOrder::getSalesDetailId, salesDetailIds)
+                .in(BizProductionOrder::getStatus,
+                        BizProductionOrder.STATUS_PENDING, BizProductionOrder.STATUS_IN_PROGRESS,
+                        BizProductionOrder.STATUS_AWAIT_QC, BizProductionOrder.STATUS_DONE));
+        return orders.stream().collect(Collectors.groupingBy(BizProductionOrder::getSalesDetailId));
+    }
+
 
     /**
      * 开工：校验该生产单领料单已全额出库后，进入生产中（D59）。

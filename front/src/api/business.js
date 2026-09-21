@@ -50,6 +50,11 @@ export const updateExpectedCompletionAPI = (id, data) => request.put(`/business/
 export const completeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/complete`)
 export const revokeProductionStepAPI = (id, stepNo) => request.post(`/business/production-order/${id}/steps/${stepNo}/revoke`)
 
+// D113：按销售单批量下达——候选销售单 / 预览明细行 / 提交下达
+export const getBatchReleaseSalesOptionsAPI = () => request.get('/business/production-order/batch-release/sales-options')
+export const getBatchReleasePreviewAPI = (salesOrderId) => request.get('/business/production-order/batch-release/preview', { params: { salesOrderId } })
+export const batchReleaseProductionAPI = (data) => request.post('/business/production-order/batch-release', data)
+
 // 生产质检
 export const getQcSnapshotAPI = (orderId) => request.get(`/business/qc/order/${orderId}`)
 export const recordQcAPI = (data) => request.post('/business/qc/record', data)

@@ -6,13 +6,19 @@ import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.ExpectedCompletionDTO;
+import org.example.back.dto.ProductionBatchReleaseDTO;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.service.ProductionOrderService;
 import org.example.back.service.ProductionStepService;
 import org.example.back.vo.ProductionOrderVO;
+import org.example.back.vo.ProductionReleasePreviewVO;
+import org.example.back.vo.ProductionReleaseResultVO;
+import org.example.back.vo.SalesSourceOptionVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/business/production-order")
@@ -38,6 +44,30 @@ public class ProductionOrderController {
     @PreventDuplicateSubmit(message = "请勿重复提交生产任务单")
     public Result<ProductionOrderVO> create(@Valid @RequestBody ProductionOrderSaveDTO dto) {
         return Result.success(productionOrderService.create(dto));
+    }
+
+    // ============================== 按销售单批量下达（D113） ==============================
+
+    /** 可下达的销售单选项（正常且待出库，近 50 张） */
+    @GetMapping("/batch-release/sales-options")
+    public Result<List<SalesSourceOptionVO>> batchReleaseSalesOptions() {
+        return Result.success(productionOrderService.batchReleaseSalesOptions());
+    }
+
+    /** 下达预览：销售单全部明细行的库存/BOM/在途单/已生产数量标注 */
+    @GetMapping("/batch-release/preview")
+    public Result<ProductionReleasePreviewVO> releasePreview(@RequestParam Long salesOrderId) {
+        return Result.success(productionOrderService.releasePreview(salesOrderId));
+    }
+
+    /** 批量下达：按行生成任务单，无 BOM/在途冲突等行跳过不阻断其他行 */
+    @PostMapping("/batch-release")
+    @PreventDuplicateSubmit(message = "请勿重复提交批量下达")
+    @AuditLog(module = "生产任务单", action = "按销售单批量下达", targetType = "生产任务单",
+            detail = "'按销售单批量下达：销售单 #' + #dto.salesOrderId + '，' + #dto.items.size() + ' 行'")
+    public Result<List<ProductionReleaseResultVO>> batchRelease(
+            @Valid @RequestBody ProductionBatchReleaseDTO dto) {
+        return Result.success(productionOrderService.batchRelease(dto));
     }
 
     @PostMapping("/{id}/start")

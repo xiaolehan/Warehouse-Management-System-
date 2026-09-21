@@ -3,6 +3,7 @@ package org.example.back.service;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
+import org.example.back.dto.ProductionBatchReleaseDTO;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.entity.BaseGoods;
@@ -18,6 +19,8 @@ import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionOrderVO;
+import org.example.back.vo.ProductionReleaseResultVO;
+import org.example.back.vo.SalesSourceOptionVO;
 import org.example.back.vo.QcStateVO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -39,6 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -817,5 +822,229 @@ class ProductionOrderServiceTest {
         ProductionOrderVO vo = service.getById(7L);
 
         assertNull(vo.getInFlightRequestNo());
+    }
+
+    // ============================== D113：按销售单批量下达 ==============================
+
+    private org.example.back.entity.BizSalesDetail salesLine(long id, long goodsId, String name, int qty) {
+        org.example.back.entity.BizSalesDetail line = new org.example.back.entity.BizSalesDetail();
+        line.setId(id);
+        line.setSalesId(501L);
+        line.setGoodsId(goodsId);
+        line.setGoodsName(name);
+        line.setQuantity(qty);
+        return line;
+    }
+
+    private ProductionBatchReleaseDTO.BatchItemDTO releaseItem(long detailId, int qty) {
+        ProductionBatchReleaseDTO.BatchItemDTO item = new ProductionBatchReleaseDTO.BatchItemDTO();
+        item.setSalesDetailId(detailId);
+        item.setQuantity(qty);
+        return item;
+    }
+
+    private ProductionBatchReleaseDTO releaseDto(ProductionBatchReleaseDTO.BatchItemDTO... items) {
+        ProductionBatchReleaseDTO dto = new ProductionBatchReleaseDTO();
+        dto.setSalesOrderId(501L);
+        dto.setItems(List.of(items));
+        return dto;
+    }
+
+    /** 两行成品明细（goods 29/30），销售单正常且待出库 */
+    private void mockTwoLineSales() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(salesOrder(1, SalesService.CONFIRM_PENDING));
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(
+                List.of(salesLine(9001L, 29L, "PTO153", 10), salesLine(9002L, 30L, "PTO155", 5)));
+    }
+
+    /** insert 回填自增 id（301 起连续） */
+    private void mockOrderInsertBackfill() {
+        long[] seq = {301L};
+        when(orderMapper.insert(any(BizProductionOrder.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizProductionOrder.class).setId(seq[0]++);
+            return 1;
+        });
+    }
+
+    private BizProductionOrder savedOrder(long id, String orderNo) {
+        BizProductionOrder saved = new BizProductionOrder();
+        saved.setId(id);
+        saved.setOrderNo(orderNo);
+        return saved;
+    }
+
+    private BaseGoods product30() {
+        BaseGoods p = new BaseGoods();
+        p.setId(30L);
+        p.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        p.setStatus(1);
+        p.setGoodsName("PTO155");
+        p.setUnit("台");
+        return p;
+    }
+
+    @Test
+    void batchReleaseSalesOptions_listsPendingSalesOrders() {
+        BizSales sales = salesOrder(1, SalesService.CONFIRM_PENDING);
+        sales.setCustomerName("客户A");
+        sales.setOperationTime(java.time.LocalDateTime.of(2026, 9, 20, 10, 0));
+        when(bizSalesMapper.selectList(any())).thenReturn(List.of(sales));
+
+        List<SalesSourceOptionVO> options = service.batchReleaseSalesOptions();
+
+        assertEquals(1, options.size());
+        assertEquals(501L, options.get(0).getId());
+        assertEquals("XS260910001", options.get(0).getSalesNo());
+        assertEquals("客户A", options.get(0).getCustomerName());
+    }
+
+    @Test
+    void batchRelease_twoBomLines_createsTwoOrdersEachAnchoredToItsDetail() {
+        mockTwoLineSales();
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom());
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        when(baseGoodsMapper.selectById(30L)).thenReturn(product30());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921001"));
+        when(orderMapper.selectById(302L)).thenReturn(savedOrder(302L, "PRO260921002"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9002L, 5)));
+
+        assertEquals(2, results.size());
+        assertTrue(results.get(0).getSuccess());
+        assertEquals("PRO260921001", results.get(0).getOrderNo());
+        assertTrue(results.get(1).getSuccess());
+        assertEquals("PRO260921002", results.get(1).getOrderNo());
+
+        ArgumentCaptor<BizProductionOrder> cap = ArgumentCaptor.forClass(BizProductionOrder.class);
+        verify(orderMapper, times(2)).insert(cap.capture());
+        assertEquals(9001L, cap.getAllValues().get(0).getSalesDetailId());
+        assertEquals(501L, cap.getAllValues().get(0).getSalesOrderId());
+        assertEquals(9002L, cap.getAllValues().get(1).getSalesDetailId());
+        verify(productionStepService, times(2)).initStepsForOrder(any());
+    }
+
+    @Test
+    void batchRelease_noBomLineSkipped_othersCreated() {
+        mockTwoLineSales();
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        when(baseGoodsMapper.selectById(30L)).thenReturn(product30());
+        // 逐行建单按提交顺序：第一行（goods 29）有 BOM，第二行（goods 30）无
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom(), (BizBom) null);
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921001"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9002L, 5)));
+
+        assertTrue(results.get(0).getSuccess());
+        assertFalse(results.get(1).getSuccess());
+        assertTrue(results.get(1).getSkipReason().contains("尚未建立 BOM"), results.get(1).getSkipReason());
+        verify(orderMapper, times(1)).insert(any(BizProductionOrder.class));
+    }
+
+    @Test
+    void batchRelease_inFlightLineSkippedWithOrderNo() {
+        mockTwoLineSales();
+        BizProductionOrder inFlight = new BizProductionOrder();
+        inFlight.setId(401L);
+        inFlight.setSalesDetailId(9001L);
+        inFlight.setOrderNo("PRO260918001");
+        inFlight.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(orderMapper.selectList(any())).thenReturn(List.of(inFlight));
+        // 9001 被在途拦截，只有 9002 走到建单
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom());
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectById(30L)).thenReturn(product30());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921002"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9002L, 5)));
+
+        assertFalse(results.get(0).getSuccess());
+        assertTrue(results.get(0).getSkipReason().contains("PRO260918001"), results.get(0).getSkipReason());
+        assertTrue(results.get(1).getSuccess());
+        verify(orderMapper, times(1)).insert(any(BizProductionOrder.class));
+    }
+
+    @Test
+    void batchRelease_doneQuantitySatisfiedSkipped() {
+        mockTwoLineSales();
+        BizProductionOrder done = new BizProductionOrder();
+        done.setId(402L);
+        done.setSalesDetailId(9001L);
+        done.setOrderNo("PRO260915001");
+        done.setStatus(BizProductionOrder.STATUS_DONE);
+        done.setQuantity(10);
+        when(orderMapper.selectList(any())).thenReturn(List.of(done));
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom());
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectById(30L)).thenReturn(product30());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921002"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9002L, 5)));
+
+        assertFalse(results.get(0).getSuccess());
+        assertTrue(results.get(0).getSkipReason().contains("已完成 10"), results.get(0).getSkipReason());
+        assertTrue(results.get(1).getSuccess());
+    }
+
+    @Test
+    void batchRelease_foreignAndDuplicateItemsSkipped() {
+        mockTwoLineSales();
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom());
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921001"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9999L, 3), releaseItem(9001L, 4)));
+
+        assertEquals(3, results.size());
+        assertTrue(results.get(0).getSuccess());
+        assertTrue(results.get(1).getSkipReason().contains("不归属该销售单"));
+        assertTrue(results.get(2).getSkipReason().contains("重复"));
+        verify(orderMapper, times(1)).insert(any(BizProductionOrder.class));
+    }
+
+    @Test
+    void batchRelease_kitBlockLine_sendsShortageNoticePerCreatedOrder() {
+        mockTwoLineSales();
+        when(bomMapper.selectOne(any())).thenReturn(new BizBom());
+        // 行1：BOM 物料库存 0 → block；行2：无物料行 → ok
+        BizBomDetail bound = new BizBomDetail();
+        bound.setId(12L);
+        bound.setBomId(1L);
+        bound.setGoodsId(51L);
+        bound.setComponentName("板1");
+        bound.setIsReference(0);
+        bound.setQuantity(BigDecimal.valueOf(2));
+        when(bomDetailMapper.selectList(any())).thenReturn(List.of(bound), List.of());
+        BaseGoods g51 = new BaseGoods();
+        g51.setId(51L);
+        g51.setGoodsName("板1");
+        g51.setStock(0);
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(g51));
+        when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
+        when(baseGoodsMapper.selectById(30L)).thenReturn(product30());
+        mockOrderInsertBackfill();
+        when(orderMapper.selectById(301L)).thenReturn(savedOrder(301L, "PRO260921001"));
+        when(orderMapper.selectById(302L)).thenReturn(savedOrder(302L, "PRO260921002"));
+
+        List<ProductionReleaseResultVO> results = service.batchRelease(
+                releaseDto(releaseItem(9001L, 10), releaseItem(9002L, 5)));
+
+        assertTrue(results.get(0).getSuccess());
+        assertEquals("block", results.get(0).getKitStatus());
+        assertTrue(results.get(1).getSuccess());
+        verify(messageService, times(1)).sendKitShortageToPurchaseAdmins(
+                eq("PRO260921001"), eq("PTO153"), anyString(), eq(301L));
     }
 }
