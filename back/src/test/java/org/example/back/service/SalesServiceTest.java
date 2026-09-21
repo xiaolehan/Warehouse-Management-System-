@@ -4,16 +4,20 @@ import org.example.back.dto.LoginResponse;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
+import org.example.back.entity.BizBom;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizSales;
 import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
+import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
+import org.example.back.vo.SalesDetailVO;
 import org.example.back.vo.SalesSourceOptionVO;
+import org.example.back.vo.SalesVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +31,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -58,6 +63,7 @@ class SalesServiceTest {
     @Mock private MessageService messageService;
     @Mock private SysConfigService sysConfigService;
     @Mock private SalesReturnService salesReturnService;
+    @Mock private BizBomMapper bizBomMapper;
 
     @InjectMocks private SalesService service;
 
@@ -83,6 +89,10 @@ class SalesServiceTest {
                 new org.apache.ibatis.builder.MapperBuilderAssistant(
                         new org.apache.ibatis.session.Configuration(), "test"),
                 BizProductionOrder.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BizBom.class);
     }
 
     private BaseGoods product(long id, String name, int stock, String salePrice) {
@@ -129,6 +139,11 @@ class SalesServiceTest {
         when(bizPurchaseMapper.latestValidUnitPrices(anyCollection(), any())).thenReturn(java.util.List.of());
         when(sysConfigService.getPriceDeviationThreshold()).thenReturn(new BigDecimal("0.05"));
         when(authService.getUserInfo()).thenReturn(operator());
+        // D112：轴承已建档 BOM，PTO153 未建档（缺货文案带建档指引）
+        BizBom bom = new BizBom();
+        bom.setId(1L);
+        bom.setGoodsId(30L);
+        when(bizBomMapper.selectList(any())).thenReturn(java.util.List.of(bom));
         when(bizSalesMapper.insert(any(BizSales.class))).thenAnswer(inv -> {
             inv.getArgument(0, BizSales.class).setId(501L);
             return 1;
@@ -144,10 +159,71 @@ class SalesServiceTest {
 
         verify(bizSalesDetailMapper, times(2)).insert(any(BizSalesDetail.class));
         verify(messageService).sendSalesDemandToProductionAdmins(
-                anyString(), eq("PTO153×10（现存 0）、轴承×8（现存 5）"),
+                anyString(), eq("PTO153×10（现存 0）（未建档 BOM，需先在 BOM 管理建档）、轴承×8（现存 5）"),
                 eq("客户甲"), eq("销售管理员"), eq(501L)); // 一单一缺货消息
         verify(messageService).sendSalesPendingConfirmToWarehouseAdmins(
                 anyString(), eq("客户甲"), eq("销售管理员"), eq(501L));
+    }
+
+    @Test
+    void create_noBomShortageLine_messageCarriesGuidance() {
+        BaseGoods pto = product(29L, "新品A", 0, "100.00");
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(pto));
+        when(bizPurchaseMapper.latestValidUnitPrices(anyCollection(), any())).thenReturn(java.util.List.of());
+        when(sysConfigService.getPriceDeviationThreshold()).thenReturn(new BigDecimal("0.05"));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizBomMapper.selectList(any())).thenReturn(java.util.List.of()); // 无 BOM
+        when(bizSalesMapper.insert(any(BizSales.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizSales.class).setId(502L);
+            return 1;
+        });
+
+        service.create(dto(List.of(item(29L, 5, "100.00"))));
+
+        ArgumentCaptor<String> descCap = ArgumentCaptor.forClass(String.class);
+        verify(messageService).sendSalesDemandToProductionAdmins(
+                anyString(), descCap.capture(), eq("客户甲"), eq("销售管理员"), eq(502L));
+        assertTrue(descCap.getValue().contains("新品A×5（现存 0）（未建档 BOM，需先在 BOM 管理建档）"),
+                descCap.getValue());
+    }
+
+    @Test
+    void getById_flagsZeroStockAndNoBom() {
+        BizSales head = new BizSales();
+        head.setId(501L);
+        head.setSalesNo("SAL260921001");
+        head.setBizStatus(1);
+        head.setConfirmStatus(1);
+        when(bizSalesMapper.selectById(501L)).thenReturn(head);
+        BizSalesDetail zeroNoBom = new BizSalesDetail();
+        zeroNoBom.setId(9001L);
+        zeroNoBom.setSalesId(501L);
+        zeroNoBom.setGoodsId(29L);
+        zeroNoBom.setGoodsName("新品A");
+        zeroNoBom.setQuantity(3);
+        BizSalesDetail okLine = new BizSalesDetail();
+        okLine.setId(9002L);
+        okLine.setSalesId(501L);
+        okLine.setGoodsId(30L);
+        okLine.setGoodsName("PTO153");
+        okLine.setQuantity(2);
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(List.of(zeroNoBom, okLine));
+        BaseGoods g29 = product(29L, "新品A", 0, "50.00");
+        BaseGoods g30 = product(30L, "PTO153", 10, "100.00");
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(g29, g30));
+        BizBom bom = new BizBom();
+        bom.setId(1L);
+        bom.setGoodsId(30L);
+        when(bizBomMapper.selectList(any())).thenReturn(List.of(bom));
+
+        SalesVO vo = service.getById(501L);
+
+        SalesDetailVO l1 = vo.getDetails().stream().filter(d -> d.getGoodsId() == 29L).findFirst().orElseThrow();
+        SalesDetailVO l2 = vo.getDetails().stream().filter(d -> d.getGoodsId() == 30L).findFirst().orElseThrow();
+        assertTrue(l1.getZeroStock());
+        assertFalse(l1.getHasBom());
+        assertFalse(l2.getZeroStock());
+        assertTrue(l2.getHasBom());
     }
 
     @Test

@@ -281,7 +281,7 @@ public class MessageService {
                 ),
                 "sales",
                 salesId,
-                ROUTE_PRODUCTION_ORDER);
+                ROUTE_PRODUCTION_ORDER + "?salesId=" + salesId); // D112：query 带销售单 id，前端直达批量下达弹窗
     }
 
     /**

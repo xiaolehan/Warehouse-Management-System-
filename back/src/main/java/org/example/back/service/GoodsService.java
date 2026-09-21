@@ -14,7 +14,9 @@ import org.example.back.entity.BizPurchase;
 import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
+import org.example.back.entity.BizBom;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
@@ -50,6 +52,9 @@ public class GoodsService {
 
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
+
+    @Autowired
+    private BizBomMapper bizBomMapper;
 
     @Autowired
     private BaseSupplierMapper baseSupplierMapper;
@@ -158,8 +163,17 @@ public class GoodsService {
             // D66：下达生产任务单的成品下拉只列「已建立有效(未删) BOM」的成品
             wrapper.inSql(BaseGoods::getId, "SELECT goods_id FROM biz_bom WHERE is_deleted = 0");
         }
-        return baseGoodsMapper.selectList(wrapper).stream()
-                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(), item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getPurchasePrice(), item.getType()))
+        List<BaseGoods> goods = baseGoodsMapper.selectList(wrapper);
+        // D112：一次 in 查有效 BOM 归属——成品行下拉可标「无 BOM」，指引先建档（不再静默消失）
+        List<Long> optionIds = goods.stream().map(BaseGoods::getId).toList();
+        Set<Long> bomGoodsIds = optionIds.isEmpty() ? Set.of() : bizBomMapper.selectList(
+                        new LambdaQueryWrapper<BizBom>().in(BizBom::getGoodsId, optionIds)).stream()
+                .map(BizBom::getGoodsId).collect(Collectors.toSet());
+        return goods.stream()
+                .map(item -> new GoodsOptionVO(item.getId(), item.getGoodsName(), item.getStock(), item.getUnit(),
+                        item.getSpec(), item.getMaterial(), item.getSalePrice(), item.getPurchasePrice(),
+                        item.getType(),
+                        "product".equals(item.getType()) ? bomGoodsIds.contains(item.getId()) : null))
                 .toList();
     }
 

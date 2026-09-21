@@ -178,6 +178,14 @@
             <el-table-column prop="quantity" label="数量" width="80" align="center" />
             <el-table-column v-if="showPrice" prop="unitPrice" label="销售单价(元)" width="110" />
             <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />
+            <el-table-column label="标记" width="140">
+              <template #default="scope">
+                <!-- D112：零库存/无 BOM 行标注（不拦下单，提示联动生产） -->
+                <el-tag v-if="scope.row.zeroStock" type="warning" size="small">零库存</el-tag>
+                <el-tag v-if="scope.row.hasBom === false" type="danger" size="small" style="margin-left: 4px">无 BOM</el-tag>
+                <span v-if="!scope.row.zeroStock && scope.row.hasBom !== false" style="color:#c0c4cc">—</span>
+              </template>
+            </el-table-column>
             <el-table-column v-if="isWarehouseUser" label="库存/缺货" width="170">
               <template #default="scope">
                 <el-tag v-if="scope.row.shortage" type="danger" size="small">缺货（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</el-tag>
@@ -211,10 +219,15 @@
                     <el-option
                       v-for="g in availableGoods(scope.$index)"
                       :key="g.id"
-                      :label="`${g.name}（库存 ${g.stock || 0}${g.unit ? ' ' + g.unit : ''}）`"
+                      :label="`${g.name}（库存 ${g.stock || 0}${g.unit ? ' ' + g.unit : ''}${g.hasBom === false ? ' ｜ 无BOM' : ''}）`"
                       :value="g.id"
                     />
                   </el-select>
+                  <div v-if="lineStock(scope.row) === 0 || lineGoods(scope.row)?.hasBom === false" class="line-flags">
+                    <!-- D112：零库存/无 BOM 行标注（不拦下单） -->
+                    <el-tag v-if="lineStock(scope.row) === 0" type="warning" size="small">零库存</el-tag>
+                    <el-tag v-if="lineGoods(scope.row)?.hasBom === false" type="danger" size="small" style="margin-left: 4px">无 BOM</el-tag>
+                  </div>
                   <div v-if="lineStock(scope.row) !== null" class="stock-hint">
                     当前库存：{{ lineStock(scope.row) }} {{ lineUnit(scope.row) }}<span v-if="lineSalePrice(scope.row)"> ｜ 标准售价：¥{{ lineSalePrice(scope.row) }}</span>
                   </div>
@@ -692,6 +705,12 @@ onMounted(async () => {
   margin-top: 4px;
   font-size: 12px;
   color: #e6a23c;
+  line-height: 1.4;
+}
+
+/* D112：编辑器行内零库存/无 BOM 标注 */
+.line-flags {
+  margin-top: 4px;
   line-height: 1.4;
 }
 

@@ -124,10 +124,30 @@ const canAccessPath = (path) => {
   return allowed
 }
 
+// D112：targetRoute 可带 query（如 /business/production-order?salesId=1），拆出纯路径做可达性与同页判定
+const parseJumpTarget = (target) => {
+  if (!target) return null
+  const [path, queryString] = String(target).split('?')
+  const query = {}
+  if (queryString) {
+    new URLSearchParams(queryString).forEach((value, key) => { query[key] = value })
+  }
+  return { path, query }
+}
+
+// D112：扁平字符串 query 等值比较（键数+逐键，避免 JSON.stringify 的键序敏感）
+const sameFlatQuery = (a = {}, b = {}) => {
+  const ka = Object.keys(a)
+  return ka.length === Object.keys(b).length && ka.every((k) => String(a[k]) === String(b[k]))
+}
+
 // D75：消息自带跳转目标优先（可达性校验，不可达/缺失回落 bizType 映射——存量消息兼容）
 const resolveJumpPath = (item) => {
   if (!item) return null
-  if (item.targetRoute && canAccessPath(item.targetRoute)) return item.targetRoute
+  if (item.targetRoute) {
+    const parsed = parseJumpTarget(item.targetRoute)
+    if (parsed && canAccessPath(parsed.path)) return item.targetRoute
+  }
   if (!item.bizType) return null
   // 超管仅能进超管中心：价格偏离审批消息（biz_type=sales）映射到审批页
   if (isSuperAdmin(getRole())) {
@@ -247,15 +267,17 @@ const handleRead = async (message) => {
 
 // 整卡点击：自动已读 + 跳对应业务列表页；已读失败不跳转（避免状态分叉）；不可跳转的消息点击无行为
 const handleMessageClick = async (item) => {
-  const path = item.jumpPath ?? resolveJumpPath(item)
-  if (!path) return
+  const raw = item.jumpPath ?? resolveJumpPath(item)
+  if (!raw) return
   if (!item.read) {
     const ok = await handleRead(item)
     if (!ok) return
   }
   drawerVisible.value = false
-  if (route.path !== path) {
-    router.push(path)
+  // D112：targetRoute 可带 query（生产缺货消息 → 生产任务单页并预选销售单），拆开跳转
+  const target = parseJumpTarget(raw)
+  if (route.path !== target.path || !sameFlatQuery(route.query, target.query)) {
+    router.push({ path: target.path, query: target.query })
   } else {
     ElMessage.info('已位于待处理页面')
   }

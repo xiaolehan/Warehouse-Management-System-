@@ -5,6 +5,19 @@
 
 ---
 
+## 会话 49 — 2026-09-21
+
+### 票 04/D112 新成品销售-生产联动——行标注+建档指引消息+?salesId= 直达，336 单测全绿 + E2E 23/23
+
+- **后端：** SalesDetailVO 增 zeroStock（stock==0）与 hasBom（批量 in 查有效 BOM 存在性，SalesService 私有助手 bomGoodsIds 复用 fillDetails/create 两处，防 N+1）；GoodsService.options 全量成品带 hasBom（成品=布尔，物料=null），GoodsOptionVO 10 参构造；缺货消息文案无 BOM 行追加「（未建档 BOM，需先在 BOM 管理建档）」（仅该行，有 BOM 行不带）；sendSalesDemandToProductionAdmins targetRoute=`/business/production-order?salesId=<id>`（票 03 批量下达已承载跳过+汇总，本票不重复）。
+- **前端：** SalesView 编辑器行「零库存」橙标+「无 BOM」红标（下拉选项文本对无 BOM 成品带「｜ 无BOM」）+详情行「标记」列，全部不拦下单；MessageCenter parseJumpTarget 拆 targetRoute 的 path/query（URLSearchParams），canAccessPath 按纯路径判定（存量无 query 消息兼容），handleMessageClick push {path, query}（sameFlatQuery 键级比较，评审修复替换 JSON.stringify）；ProductionOrderView watch route.query.salesId（immediate）→ openBatchRelease(id) 预选+加载预览，消费后 router.replace 清 query 防刷新重弹；canBatchRelease 复用 canAccessRoles/hasDeptAccess/isSuperAdmin（评审修复：不再内联重写 v-permission 语义），预选未命中候选时提示回落（评审补充）；手动建单成品下拉下加「为何选不到新成品？…先在 BOM 管理建档」指引（D67 hasBom 过滤口径不变）。
+- **单测：** SalesServiceTest +3（无 BOM 缺货行文案带指引/详情行双标断言/既有多行文案断言加强）；**全量 336 全绿**；npm build clean。
+- **E2E（/tmp/d112_e2e.py）23/23：** API 新建无 BOM 成品（options 断言 hasBom=false）→ 两行销售单（PTO153+新品）→ getById 行级 zeroStock/hasBom 断言 → sys_message 断言（文案带「（未建档 BOM…）」仅无 BOM 行、target_route 带 ?salesId=）→ 生产端批量下达：候选/预览标注/PTO153 生成、新品行跳过带 BOM 原因 → 作废+销售删除+SQL 软删+成品删除，无残留。首跑 4 失败均为脚本断言缺陷（PTO153 库存已被往轮 E2E 耗尽为 0 属正确行为、mysql 表头行误当数据行），修正后全过。
+- **/code-review 两轴：** standards 无硬违规；修 4 处（bomGoodsIds 助手提取/auth 工具复用/sameFlatQuery/测试内联 FQN 改 import+GoodsService import 归组）；spec 无正确性缺陷，SalesDetailVO.hasBom javadoc 反义修正。**评审不修（在案）：** 编辑器行标注从 options 派生而详情行读 VO 字段——两数据源天然不同不可合一；GoodsService.options 带 hasBom 超 spec 字面（SalesView 编辑器标注的必要支撑，已声明）。
+- **下一步：** 票 05/D114 生产任务单生命周期时间线 → 终审+提交 → 用户统一手测（D112 复测项已记 pending-retest.md）。
+
+---
+
 ## 会话 48 — 2026-09-21
 
 ### 票 03/D113 按销售单批量下达生产任务单落地——334 单测全绿 + E2E 28/28

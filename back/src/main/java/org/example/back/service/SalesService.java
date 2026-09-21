@@ -12,10 +12,12 @@ import org.example.back.dto.SalesQueryDTO;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
+import org.example.back.entity.BizBom;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizSales;
 import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
@@ -36,6 +38,7 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,6 +68,9 @@ public class SalesService {
 
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
+
+    @Autowired
+    private BizBomMapper bizBomMapper;
 
     @Autowired
     private SalesReturnService salesReturnService;
@@ -170,11 +176,14 @@ public class SalesService {
                 .filter(Objects::nonNull).distinct().toList();
         Map<Long, Integer> stockMap = goodsIds.isEmpty() ? Map.of() : baseGoodsMapper.selectBatchIds(goodsIds).stream()
                 .collect(Collectors.toMap(BaseGoods::getId, g -> g.getStock() == null ? 0 : g.getStock()));
+        // D112：一次 in 查询行成品的有效 BOM 存在性（详情/列表行「无 BOM」标记）
+        Set<Long> bomGoodsIds = bomGoodsIds(goodsIds);
         Map<Long, List<BizSalesDetail>> bySales = details.stream()
                 .collect(Collectors.groupingBy(BizSalesDetail::getSalesId));
         for (SalesVO vo : records) {
             List<SalesDetailVO> lineVOs = bySales.getOrDefault(vo.getId(), List.of()).stream()
-                    .map(d -> toDetailVO(d, stockMap.getOrDefault(d.getGoodsId(), 0)))
+                    .map(d -> toDetailVO(d, stockMap.getOrDefault(d.getGoodsId(), 0),
+                            bomGoodsIds.contains(d.getGoodsId())))
                     .toList();
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
@@ -182,7 +191,18 @@ public class SalesService {
         }
     }
 
-    private SalesDetailVO toDetailVO(BizSalesDetail d, int stock) {
+    /**
+     * D112：批量查一批成品中已建档有效 BOM 的成品 id 集合（一次 in 查询，避免逐行 N+1）。
+     */
+    private Set<Long> bomGoodsIds(Collection<Long> goodsIds) {
+        if (goodsIds == null || goodsIds.isEmpty()) {
+            return Set.of();
+        }
+        return bizBomMapper.selectList(new LambdaQueryWrapper<BizBom>().in(BizBom::getGoodsId, goodsIds))
+                .stream().map(BizBom::getGoodsId).collect(Collectors.toSet());
+    }
+
+    private SalesDetailVO toDetailVO(BizSalesDetail d, int stock, boolean hasBom) {
         SalesDetailVO line = new SalesDetailVO();
         line.setId(d.getId());
         line.setSalesId(d.getSalesId());
@@ -194,6 +214,8 @@ public class SalesService {
         line.setSortNo(d.getSortNo());
         line.setStock(stock);
         line.setShortage(stock < d.getQuantity());
+        line.setZeroStock(stock == 0);
+        line.setHasBom(hasBom);
         return line;
     }
 
@@ -439,12 +461,18 @@ public class SalesService {
                 entity.getSalesNo(), entity.getCustomerName(), loginUser.getRealName(), entity.getId());
 
         // D70/D110 决策⑤：缺货行按单汇总一条消息通知生产管理员（不再逐行刷屏）
+        // D112：无 BOM 缺货行追加建档指引（新成品照常下单，生产端有明确指引）
+        Set<Long> bomGoodsIds = bomGoodsIds(goodsMap.keySet());
         List<String> shortageDescs = new ArrayList<>();
         for (BizSalesDetail detail : detailEntities) {
             BaseGoods goods = goodsMap.get(detail.getGoodsId());
             int available = goods.getStock() == null ? 0 : goods.getStock();
             if (detail.getQuantity() > available) {
-                shortageDescs.add(detail.getGoodsName() + "×" + detail.getQuantity() + "（现存 " + available + "）");
+                String desc = detail.getGoodsName() + "×" + detail.getQuantity() + "（现存 " + available + "）";
+                if (!bomGoodsIds.contains(detail.getGoodsId())) {
+                    desc += "（未建档 BOM，需先在 BOM 管理建档）";
+                }
+                shortageDescs.add(desc);
             }
         }
         if (!shortageDescs.isEmpty()) {

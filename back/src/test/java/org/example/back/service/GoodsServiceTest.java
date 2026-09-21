@@ -9,6 +9,7 @@ import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
@@ -52,6 +53,7 @@ class GoodsServiceTest {
     }
 
     @Mock private BaseGoodsMapper baseGoodsMapper;
+    @Mock private BizBomMapper bizBomMapper;
     @Mock private BaseSupplierMapper baseSupplierMapper;
     @Mock private BizPurchaseRequestDetailMapper purchaseRequestDetailMapper;
     @Mock private BizPurchaseRequestMapper purchaseRequestMapper;

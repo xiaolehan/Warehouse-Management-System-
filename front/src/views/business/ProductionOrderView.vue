@@ -104,6 +104,10 @@
               :label="`${opt.goodsName}（${opt.unit || ''}）`" :value="opt.goodsId"
             />
           </el-select>
+          <!-- D112：新成品未建档 BOM 时下拉选不到，给出建档指引（低成本提示，不改变 D67 过滤口径） -->
+          <div style="color:#909399; font-size:12px; line-height:1.5; margin-top:2px">
+            为何选不到新成品？新成品需先在「BOM 管理」建档（录入成品与物料组成）后才会出现在此下拉。
+          </div>
         </el-form-item>
         <el-form-item label="生产数量" prop="quantity">
           <el-input-number v-model="createForm.quantity" :min="1" style="width: 200px" />
@@ -626,6 +630,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Refresh, Plus, Check, Close
@@ -651,6 +656,7 @@ import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/bas
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
 import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI, confirmPickListAPI } from '@/api/pickList'
 import { useUserStore } from '@/stores/user'
+import { canAccessRoles, hasDeptAccess, isSuperAdmin } from '@/utils/auth'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -803,6 +809,14 @@ const closeCreate = () => {
 }
 
 // ============================== D113：按销售单批量下达 ==============================
+const route = useRoute()
+const router = useRouter()
+// D112：消息直达自动打开弹窗前先判权限——复用 v-permission 指令同源鉴权工具，与工具栏按钮同口径（超管只读不弹）
+const canBatchRelease = computed(() => {
+  const role = userStore.role
+  if (isSuperAdmin(role)) return false
+  return canAccessRoles(role, ['admin']) && hasDeptAccess(userStore.deptCode, ['production'], role)
+})
 const batchVisible = ref(false)
 const batchSalesOptions = ref([])
 const batchOptionsLoading = ref(false)
@@ -816,7 +830,7 @@ const batchSubmitting = ref(false)
 // D113：齐套快照文案（结果汇总用；与列表 kitStatusText 同口径）
 const kitText = (k) => ({ ok: '齐料', partial: '部分缺料', block: '严重缺料', issued: '已领料' }[k] || k)
 
-const openBatchRelease = async () => {
+const openBatchRelease = async (preselectSalesId = null) => {
   batchSalesId.value = null
   batchPreview.value = null
   batchResult.value = null
@@ -826,6 +840,16 @@ const openBatchRelease = async () => {
   try {
     const res = await getBatchReleaseSalesOptionsAPI()
     batchSalesOptions.value = res.data || []
+    // D112：消息中心带 ?salesId= 跳入 → 预选该销售单并加载预览（不在候选中提示回落，如尚未确认出库）
+    if (preselectSalesId != null) {
+      const hit = batchSalesOptions.value.some((o) => o.id === Number(preselectSalesId))
+      if (hit) {
+        batchSalesId.value = Number(preselectSalesId)
+        await loadBatchPreview(batchSalesId.value)
+      } else {
+        ElMessage.info('消息关联的销售单当前不在可下达候选中（需正常且待出库状态），请手动选择')
+      }
+    }
   } catch {
     // 业务错误已由拦截器统一提示
   } finally {
@@ -900,6 +924,18 @@ const closeBatchRelease = () => {
   batchVisible.value = false
   if (batchResult.value) loadList()
 }
+
+// D112：站内消息点击缺货消息 → 跳本页并自动打开「按销售单下达」弹窗、预选该销售单
+// 监听 query.salesId（首次进入与页内跳转都覆盖）；消费后清空 query 防刷新重复弹窗
+watch(() => route.query.salesId, (salesId) => {
+  if (!salesId) return
+  if (!canBatchRelease.value) {
+    router.replace({ path: route.path, query: {} })
+    return
+  }
+  openBatchRelease(salesId)
+  router.replace({ path: route.path, query: {} })
+}, { immediate: true })
 
 const openDetail = async (row) => {
   const res = await getProductionOrderDetailAPI(row.id)

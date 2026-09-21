@@ -36,4 +36,7 @@ public class GoodsOptionVO {
 
     /** D41 货品类型: material/product */
     private String type;
+
+    /** D112：是否已建档有效 BOM（成品行无 BOM 红标指引先建档；物料恒 null） */
+    private Boolean hasBom;
 }
