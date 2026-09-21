@@ -4,12 +4,14 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.PurchaseReturnSaveDTO;
 import org.example.back.entity.BaseGoods;
+import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizPurchase;
 import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.entity.BizPurchaseReturn;
 import org.example.back.entity.BizPurchaseReturnDetail;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
@@ -30,6 +32,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -53,6 +56,7 @@ class PurchaseReturnServiceTest {
     @Mock private BizPurchaseMapper bizPurchaseMapper;
     @Mock private BizPurchaseDetailMapper bizPurchaseDetailMapper;
     @Mock private BaseGoodsMapper baseGoodsMapper;
+    @Mock private BaseSupplierMapper baseSupplierMapper;
     @Mock private BizApprovalOrderMapper bizApprovalOrderMapper;
     @Mock private AuthService authService;
     @Mock private AuthzService authzService;
@@ -366,5 +370,46 @@ class PurchaseReturnServiceTest {
 
         assertDoesNotThrow(() -> service.ensureNoActiveReturn(100L));
         assertDoesNotThrow(() -> service.ensureNoActiveReturn(null));
+    }
+
+    // ---------- D123：退货单供应商 = 来源进货单头级供应商（仅展示） ----------
+
+    @Test
+    void getById_fillsSupplierNameFromSourcePurchase() {
+        BizPurchaseReturn head = returnHead(300L, 1, 3);
+        head.setSourcePurchaseId(75L);
+        head.setSourcePurchaseNo("PUR-SRC");
+        when(bizPurchaseReturnMapper.selectById(300L)).thenReturn(head);
+        when(bizPurchaseReturnDetailMapper.selectList(any())).thenReturn(List.of());
+        BizPurchase sourcePurchase = new BizPurchase();
+        sourcePurchase.setId(75L);
+        sourcePurchase.setSupplierId(9L);
+        when(bizPurchaseMapper.selectBatchIds(any())).thenReturn(List.of(sourcePurchase));
+        BaseSupplier sourceSupplier = new BaseSupplier();
+        sourceSupplier.setId(9L);
+        sourceSupplier.setSupplierName("胖牛有限公司");
+        when(baseSupplierMapper.selectBatchIds(any())).thenReturn(List.of(sourceSupplier));
+        when(bizApprovalOrderMapper.selectList(any())).thenReturn(List.of());
+
+        org.example.back.vo.PurchaseReturnVO vo = service.getById(300L);
+
+        assertEquals("胖牛有限公司", vo.getSupplierName());
+    }
+
+    @Test
+    void getById_legacySourceWithoutSupplier_leavesSupplierNameNull() {
+        BizPurchaseReturn head = returnHead(301L, 1, 3);
+        head.setSourcePurchaseId(76L); // 存量来源进货单：无头级供应商
+        head.setSourcePurchaseNo("PUR-OLD");
+        when(bizPurchaseReturnMapper.selectById(301L)).thenReturn(head);
+        when(bizPurchaseReturnDetailMapper.selectList(any())).thenReturn(List.of());
+        BizPurchase sourcePurchase = new BizPurchase();
+        sourcePurchase.setId(76L);
+        when(bizPurchaseMapper.selectBatchIds(any())).thenReturn(List.of(sourcePurchase));
+        when(bizApprovalOrderMapper.selectList(any())).thenReturn(List.of());
+
+        org.example.back.vo.PurchaseReturnVO vo = service.getById(301L);
+
+        assertNull(vo.getSupplierName());
     }
 }

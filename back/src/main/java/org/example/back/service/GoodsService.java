@@ -36,6 +36,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
@@ -144,6 +145,7 @@ public class GoodsService {
         Page<BaseGoods> page = baseGoodsMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BaseSupplier> supplierMap = buildSupplierMap(page.getRecords().stream().map(BaseGoods::getSupplierId).collect(Collectors.toSet()));
         List<GoodsVO> records = page.getRecords().stream().map(item -> toVO(item, supplierMap.get(item.getSupplierId()))).toList();
+        fillLatestSuppliers(records); // D123：物料「最新供应商」
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -183,7 +185,51 @@ public class GoodsService {
         requireGoodsReadAccess();
         BaseGoods goods = requireGoods(id);
         BaseSupplier supplier = baseSupplierMapper.selectById(goods.getSupplierId());
-        return toVO(goods, supplier);
+        GoodsVO vo = toVO(goods, supplier);
+        fillLatestSuppliers(List.of(vo)); // D123：物料「最新供应商」
+        return vo;
+    }
+
+    /**
+     * D123：物料「最新供应商」批量填充——最近一张 已入库+正常+头级供应商非空 进货单的供应商名；
+     * 无此记录回退物料绑定供应商并标「默认」。仅物料计算（成品无供应商概念），防 N+1：
+     * 一次窗口函数查询 + 一次供应商批量加载。
+     */
+    private void fillLatestSuppliers(List<GoodsVO> records) {
+        List<Long> materialIds = records.stream()
+                .filter(v -> GOODS_TYPE_MATERIAL.equals(v.getType()) && v.getId() != null)
+                .map(GoodsVO::getId).toList();
+        if (materialIds.isEmpty()) {
+            return;
+        }
+        Map<Long, Long> latestByGoods = bizPurchaseMapper.latestValidSuppliers(materialIds).stream()
+                .collect(Collectors.toMap(BizPurchaseMapper.LatestPurchaseSupplier::getGoodsId,
+                        BizPurchaseMapper.LatestPurchaseSupplier::getSupplierId));
+        Set<Long> latestSupplierIds = new HashSet<>(latestByGoods.values());
+        Map<Long, BaseSupplier> latestSupplierMap = latestSupplierIds.isEmpty() ? Map.of()
+                : baseSupplierMapper.selectBatchIds(latestSupplierIds).stream()
+                        .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
+        for (GoodsVO vo : records) {
+            if (!GOODS_TYPE_MATERIAL.equals(vo.getType())) {
+                continue; // 成品/其他类型不计算
+            }
+            Long latestSupplierId = latestByGoods.get(vo.getId());
+            if (latestSupplierId != null) {
+                BaseSupplier latest = latestSupplierMap.get(latestSupplierId);
+                if (latest != null) {
+                    vo.setLatestSupplierName(latest.getSupplierName());
+                    vo.setLatestSupplierDefault(false);
+                } else {
+                    // review：最新供应商行已被删除（供应商资料删除）——视为无可用最新记录，回退绑定供应商
+                    vo.setLatestSupplierName(vo.getSupplierName());
+                    vo.setLatestSupplierDefault(true);
+                }
+            } else {
+                // 无进货记录（或历史单据均无头级供应商）：回退绑定供应商，标「默认」
+                vo.setLatestSupplierName(vo.getSupplierName());
+                vo.setLatestSupplierDefault(true);
+            }
+        }
     }
 
     // D102/D111：进价历史——该物料全部有效已入库明细行（最近在上，LIMIT 100）；仅采购部门成员/超管可见。

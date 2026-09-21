@@ -11,11 +11,13 @@ import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.dto.PurchaseReturnQueryDTO;
 import org.example.back.dto.PurchaseReturnSaveDTO;
 import org.example.back.entity.BaseGoods;
+import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizPurchase;
 import org.example.back.entity.BizPurchaseDetail;
 import org.example.back.entity.BizPurchaseReturn;
 import org.example.back.entity.BizPurchaseReturnDetail;
+import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizPurchaseDetailMapper;
@@ -37,6 +39,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -61,6 +64,9 @@ public class PurchaseReturnService {
 
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
+
+    @Autowired
+    private BaseSupplierMapper baseSupplierMapper;
 
     @Autowired
     private BizApprovalOrderMapper bizApprovalOrderMapper;
@@ -573,11 +579,28 @@ public class PurchaseReturnService {
                         .orderByAsc(BizPurchaseReturnDetail::getId));
         Map<Long, List<BizPurchaseReturnDetail>> byReturn = details.stream()
                 .collect(Collectors.groupingBy(BizPurchaseReturnDetail::getReturnId));
+        // D123：退货单供应商 = 来源进货单头级供应商（create 限定单来源，故一一对应）；
+        // 存量来源单无头级供应商时留空。批量预取防 N+1。
+        List<Long> sourcePurchaseIds = records.stream().map(PurchaseReturnVO::getSourcePurchaseId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, BizPurchase> sourceMap = sourcePurchaseIds.isEmpty() ? Map.of()
+                : bizPurchaseMapper.selectBatchIds(sourcePurchaseIds).stream()
+                        .collect(Collectors.toMap(BizPurchase::getId, p -> p));
+        Set<Long> sourceSupplierIds = sourceMap.values().stream()
+                .map(BizPurchase::getSupplierId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, BaseSupplier> sourceSupplierMap = sourceSupplierIds.isEmpty() ? Map.of()
+                : baseSupplierMapper.selectBatchIds(sourceSupplierIds).stream()
+                        .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
         for (PurchaseReturnVO vo : records) {
             List<PurchaseReturnDetailVO> lineVOs = byReturn.getOrDefault(vo.getId(), List.of()).stream()
                     .map(this::toDetailVO).toList();
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
+            BizPurchase sourcePurchase = vo.getSourcePurchaseId() == null ? null : sourceMap.get(vo.getSourcePurchaseId());
+            if (sourcePurchase != null && sourcePurchase.getSupplierId() != null) {
+                BaseSupplier sourceSupplier = sourceSupplierMap.get(sourcePurchase.getSupplierId());
+                vo.setSupplierName(sourceSupplier == null ? null : sourceSupplier.getSupplierName());
+            }
         }
     }
 

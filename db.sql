@@ -301,6 +301,7 @@ CREATE TABLE `biz_purchase` (
     `operator_name` VARCHAR(50) DEFAULT NULL COMMENT '操作人姓名(冗余字段)',
     `operation_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作发生时间',
     `remark` VARCHAR(200) DEFAULT NULL COMMENT '备注',
+    `supplier_id` BIGINT DEFAULT NULL COMMENT '供应商ID(D123头级:手动进货必填,存量/采购申请渠道单据可空)',
     `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单',
     `confirm_status` TINYINT NOT NULL DEFAULT 1 COMMENT '入库确认: 1-待到货, 2-待入库确认, 3-已入库',
     `arrive_time` DATETIME DEFAULT NULL COMMENT '采购到货确认时间',
@@ -2088,3 +2089,12 @@ SET d.`receive_status` = 2,
     d.`arrive_batch_no` = 'B1',
     d.`arrive_batch_time` = COALESCE(r.arrive_time, r.create_time)
 WHERE r.`status` = 5;
+
+-- =============================================
+-- 二十四、D123 进货单头级供应商 + 物料最新供应商
+-- =============================================
+-- 手动进货单头级必填供应商；存量单与采购申请渠道(createInternal)单据可空。
+-- 物料「最新供应商」= 最近一张 已入库(confirm_status=3)+正常(biz_status=1)+供应商非空 进货单的头级供应商。
+-- 1) 列（列增删不可重复执行）
+ALTER TABLE `biz_purchase`
+    ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT '供应商ID(D123头级:手动进货必填,存量/采购申请渠道单据可空)' AFTER `remark`;

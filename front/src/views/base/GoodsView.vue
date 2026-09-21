@@ -43,10 +43,12 @@
       <el-table-column prop="description" label="备注" min-width="110">
         <template #default="scope">{{ scope.row.description || '—' }}</template>
       </el-table-column>
-      <el-table-column v-if="!isProduct" label="所属供应商" min-width="160">
+      <!-- D123：所属供应商列升级为「最新供应商」——最近一张已入库+正常进货单的头级供应商；
+           无进货记录回退绑定供应商并标「默认」。D109 待匹配 tag 保留（按绑定关系判断） -->
+      <el-table-column v-if="!isProduct" label="最新供应商" min-width="180">
         <template #default="scope">
-          <span>{{ scope.row.supplierName || '—' }}</span>
-          <!-- D109：挂系统默认供应商的未知物料标「待匹配」，仓储行内一键匹配 -->
+          <span>{{ scope.row.latestSupplierName || scope.row.supplierName || '—' }}</span>
+          <el-tag v-if="scope.row.latestSupplierDefault" size="small" type="info" effect="plain" style="margin-left: 6px">默认</el-tag>
           <el-tag v-if="scope.row.supplierId === DEFAULT_SUPPLIER_ID" size="small" type="warning" effect="plain" style="margin-left: 6px">待匹配</el-tag>
         </template>
       </el-table-column>
@@ -126,6 +128,12 @@
             <el-select v-model="form.supplierId" placeholder="请绑定供应商" style="width: 100%;" :disabled="isView || isPurchase">
               <el-option v-for="sup in suppliers" :key="sup.id" :label="sup.name" :value="sup.id" />
             </el-select>
+          </el-form-item>
+          <!-- D123：最新供应商只读展示（详情/编辑态均可见，编辑不影响） -->
+          <el-form-item label="最新供应商">
+            <el-input :value="form.latestSupplierName || '—'" disabled>
+              <template #append v-if="form.latestSupplierDefault">默认</template>
+            </el-input>
           </el-form-item>
         </template>
         <el-form-item label="单位">
@@ -248,7 +256,9 @@ const form = reactive({
   material: '',
   description: '',
   stock: 0,
-  warningStock: 10
+  warningStock: 10,
+  latestSupplierName: '', // D123：详情展示用（只读）
+  latestSupplierDefault: false
 })
 
 const rules = computed(() => {
@@ -352,6 +362,8 @@ const initForm = () => {
   form.description = ''
   form.stock = 0
   form.warningStock = 10
+  form.latestSupplierName = ''
+  form.latestSupplierDefault = false
 }
 
 const handleAdd = () => {
@@ -382,7 +394,9 @@ const openByDetail = async (row, viewMode) => {
     material: detail.material || '',
     description: detail.description || '',
     stock: detail.stock || 0,
-    warningStock: detail.warningStock ?? 10
+    warningStock: detail.warningStock ?? 10,
+    latestSupplierName: detail.latestSupplierName || '', // D123：详情展示用（只读）
+    latestSupplierDefault: !!detail.latestSupplierDefault
   })
   formRef.value?.clearValidate()
   dialogVisible.value = true

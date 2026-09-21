@@ -8,11 +8,13 @@ import org.example.back.dto.QuickProductDTO;
 import org.example.back.vo.QuickProductVO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.vo.GoodsVO;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.SupplierMatchVO;
@@ -60,6 +62,7 @@ class GoodsServiceTest {
     @Mock private BaseGoodsMapper baseGoodsMapper;
     @Mock private BizBomMapper bizBomMapper;
     @Mock private BaseSupplierMapper baseSupplierMapper;
+    @Mock private BizPurchaseMapper bizPurchaseMapper;
     @Mock private BizPurchaseRequestDetailMapper purchaseRequestDetailMapper;
     @Mock private BizPurchaseRequestMapper purchaseRequestMapper;
     @Mock private AuthzService authzService;
@@ -613,6 +616,70 @@ class GoodsServiceTest {
         g.setUnit("台");
         g.setSalePrice(new BigDecimal("1888"));
         return g;
+    }
+
+    // ---------- D123：物料「最新供应商」----------
+
+    private BaseGoods materialWithSupplier(long id, String name, long supplierId) {
+        BaseGoods g = new BaseGoods();
+        g.setId(id);
+        g.setType(GoodsService.GOODS_TYPE_MATERIAL);
+        g.setGoodsName(name);
+        g.setStatus(1);
+        g.setStock(50);
+        g.setUnit("个");
+        g.setSupplierId(supplierId);
+        return g;
+    }
+
+    private Page<BaseGoods> pageOf(java.util.List<BaseGoods> records) {
+        Page<BaseGoods> page = new Page<>(1, 10);
+        page.setRecords(records);
+        page.setTotal(records.size());
+        return page;
+    }
+
+    @Test
+    void page_materialWithLatestPurchase_fillsLatestSupplier() {
+        BaseGoods steel = materialWithSupplier(29L, "钢板", 5L);
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(pageOf(java.util.List.of(steel)));
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(5L, "华东钢业")));
+        when(baseSupplierMapper.selectBatchIds(any())).thenReturn(java.util.List.of(supplier(9L, "北方特钢")));
+        BizPurchaseMapper.LatestPurchaseSupplier latest =
+                new BizPurchaseMapper.LatestPurchaseSupplier();
+        latest.setGoodsId(29L);
+        latest.setSupplierId(9L);
+        when(bizPurchaseMapper.latestValidSuppliers(any())).thenReturn(java.util.List.of(latest));
+
+        GoodsVO vo = service.page(new GoodsQueryDTO()).getRecords().get(0);
+
+        assertEquals("北方特钢", vo.getLatestSupplierName());
+        assertEquals(Boolean.FALSE, vo.getLatestSupplierDefault());
+    }
+
+    @Test
+    void page_materialNoPurchaseRecord_fallsBackToBoundSupplierWithDefaultTag() {
+        BaseGoods steel = materialWithSupplier(29L, "钢板", 5L);
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(pageOf(java.util.List.of(steel)));
+        when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(5L, "华东钢业")));
+        when(bizPurchaseMapper.latestValidSuppliers(any())).thenReturn(java.util.List.of());
+
+        GoodsVO vo = service.page(new GoodsQueryDTO()).getRecords().get(0);
+
+        assertEquals("华东钢业", vo.getLatestSupplierName());
+        assertEquals(Boolean.TRUE, vo.getLatestSupplierDefault());
+    }
+
+    @Test
+    void page_product_skipsLatestSupplierFill() {
+        BaseGoods machine = product(40L, "整机", 1);
+        when(baseGoodsMapper.selectPage(any(), any())).thenReturn(pageOf(java.util.List.of(machine)));
+
+        GoodsVO vo = service.page(new GoodsQueryDTO()).getRecords().get(0);
+
+        assertNull(vo.getLatestSupplierName());
+        assertNull(vo.getLatestSupplierDefault());
+        verify(bizPurchaseMapper, never()).latestValidSuppliers(any());
     }
 
     @Test

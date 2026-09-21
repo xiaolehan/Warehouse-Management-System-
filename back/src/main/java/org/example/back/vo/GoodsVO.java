@@ -27,6 +27,12 @@ public class GoodsVO {
 
     private String supplierName;
 
+    /** D123 物料「最新供应商」：最近一张已入库+正常进货单的头级供应商名；无进货记录回退绑定供应商 */
+    private String latestSupplierName;
+
+    /** D123：latestSupplierName 是否为回退值（true 时前端标「默认」tag） */
+    private Boolean latestSupplierDefault;
+
     private BigDecimal purchasePrice;
 
     private BigDecimal salePrice;

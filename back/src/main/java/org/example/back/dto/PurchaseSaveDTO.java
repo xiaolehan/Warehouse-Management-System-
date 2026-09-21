@@ -20,6 +20,12 @@ public class PurchaseSaveDTO {
 
     private LocalDateTime operationTime;
 
+    /**
+     * D123 头级供应商：手动进货必填（Service 校验存在性）；
+     * 采购申请批次入库（createInternal）无供应商来源，可空。
+     */
+    private Long supplierId;
+
     private String remark;
 
     @Data

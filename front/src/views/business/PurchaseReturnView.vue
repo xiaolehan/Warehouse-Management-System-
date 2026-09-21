@@ -41,6 +41,8 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="returnNo" label="退货单号" width="150" />
         <el-table-column prop="sourcePurchaseNo" label="原进货单" width="150" />
+        <!-- D123：供应商随来源进货单带出，仅展示；存量来源单无头级供应商时为空 -->
+        <el-table-column prop="supplierName" label="供应商" width="140" show-overflow-tooltip />
         <el-table-column prop="goodsSummary" label="退货物料" min-width="150" show-overflow-tooltip />
         <el-table-column prop="totalQuantity" label="退货总数量" width="100" />
         <el-table-column v-if="showPrice" prop="totalAmount" label="退货金额(元)" width="120" />
@@ -133,6 +135,7 @@
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="退货单号"><el-input :value="viewForm.returnNo" disabled /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="来源进货单"><el-input :value="viewForm.sourcePurchaseNo || '-'" disabled /></el-form-item></el-col>
+          <el-col v-if="viewForm.supplierName" :span="12"><el-form-item label="供应商"><el-input :value="viewForm.supplierName" disabled /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="退货日期"><el-input :value="viewForm.returnDate" disabled /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" disabled /></el-form-item></el-col>
         </el-row>
@@ -298,7 +301,7 @@ const dialogVisible = ref(false)
 const dialogType = ref('add')
 const dialogForm = reactive({ sourcePurchaseId: null, returnDate: '', remark: '' })
 
-const viewForm = reactive({ returnNo: '', sourcePurchaseNo: '', returnDate: '', operator: '', remark: '', details: [] })
+const viewForm = reactive({ returnNo: '', sourcePurchaseNo: '', supplierName: '', returnDate: '', operator: '', remark: '', details: [] })
 
 const normalizeDateTime = (val) => {
   if (!val) return ''
@@ -509,6 +512,7 @@ const handleView = async (row) => {
     Object.assign(viewForm, {
       returnNo: detail.returnNo ?? '',
       sourcePurchaseNo: detail.sourcePurchaseNo ?? '',
+      supplierName: detail.supplierName ?? '',
       returnDate: normalizeDateTime(detail.returnDate || detail.operationTime || detail.createTime),
       operator: detail.operator ?? '',
       remark: detail.remark || '',

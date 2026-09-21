@@ -20,6 +20,9 @@ public class PurchaseReturnVO {
 
     private String sourcePurchaseNo;
 
+    /** D123：来源进货单头级供应商名称（仅展示，随来源单带出；存量来源单无则为 null） */
+    private String supplierName;
+
     private Integer totalQuantity;
 
     private BigDecimal totalAmount;

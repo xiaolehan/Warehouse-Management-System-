@@ -4,6 +4,7 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseGoods;
+import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizPurchase;
 import org.example.back.entity.BizPurchaseDetail;
@@ -98,7 +99,16 @@ class PurchaseServiceTest {
     private PurchaseSaveDTO dto(List<PurchaseSaveDTO.LineDTO> lines) {
         PurchaseSaveDTO dto = new PurchaseSaveDTO();
         dto.setLines(lines);
+        dto.setSupplierId(11L); // D123 头级供应商必填（内部 createInternal 渠道不校验）
         return dto;
+    }
+
+    private BaseSupplier supplier(long id, String name) {
+        BaseSupplier s = new BaseSupplier();
+        s.setId(id);
+        s.setSupplierName(name);
+        s.setStatus(1);
+        return s;
     }
 
     private LoginResponse.UserInfoVO operator() {
@@ -116,6 +126,7 @@ class PurchaseServiceTest {
         BaseGoods steel = material(29L, "钢板", 100, "50.00");
         BaseGoods screw = material(30L, "螺丝", 1000, "0.50");
         when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(steel, screw));
+        when(baseSupplierMapper.selectById(11L)).thenReturn(supplier(11L, "华东钢业"));
         when(authService.getUserInfo()).thenReturn(operator());
         when(bizPurchaseMapper.insert(any(BizPurchase.class))).thenAnswer(inv -> {
             inv.getArgument(0, BizPurchase.class).setId(501L);
@@ -145,6 +156,65 @@ class PurchaseServiceTest {
 
         verify(bizPurchaseMapper, never()).insert(any(BizPurchase.class));
         verify(bizPurchaseDetailMapper, never()).insert(any(BizPurchaseDetail.class));
+    }
+
+    // ---------- D123：手动进货头级供应商必填且须为有效供应商 ----------
+
+    @Test
+    void create_missingSupplier_rejected() {
+        PurchaseSaveDTO noSupplier = dto(List.of(line(29L, 5, "50.00")));
+        noSupplier.setSupplierId(null);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.create(noSupplier));
+        assertTrue(ex.getMessage().contains("供应商不能为空"), "实际: " + ex.getMessage());
+
+        verify(bizPurchaseMapper, never()).insert(any(BizPurchase.class));
+    }
+
+    @Test
+    void create_unknownSupplier_rejected() {
+        when(baseSupplierMapper.selectById(999L)).thenReturn(null);
+        PurchaseSaveDTO badSupplier = dto(List.of(line(29L, 5, "50.00")));
+        badSupplier.setSupplierId(999L);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.create(badSupplier));
+        assertTrue(ex.getMessage().contains("供应商不存在"), "实际: " + ex.getMessage());
+
+        verify(bizPurchaseMapper, never()).insert(any(BizPurchase.class));
+    }
+
+    @Test
+    void create_disabledSupplier_rejected() {
+        BaseSupplier disabled = supplier(12L, "停用供应商");
+        disabled.setStatus(0);
+        when(baseSupplierMapper.selectById(12L)).thenReturn(disabled);
+        PurchaseSaveDTO badSupplier = dto(List.of(line(29L, 5, "50.00")));
+        badSupplier.setSupplierId(12L);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.create(badSupplier));
+        assertTrue(ex.getMessage().contains("供应商已停用"), "实际: " + ex.getMessage());
+
+        verify(bizPurchaseMapper, never()).insert(any(BizPurchase.class));
+    }
+
+    @Test
+    void create_withSupplier_persistsHeadSupplierId() {
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(material(29L, "钢板", 100, "50.00")));
+        when(baseSupplierMapper.selectById(11L)).thenReturn(supplier(11L, "华东钢业"));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizPurchaseMapper.insert(any(BizPurchase.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizPurchase.class).setId(502L);
+            return 1;
+        });
+
+        service.create(dto(List.of(line(29L, 5, "50.00"))));
+
+        ArgumentCaptor<BizPurchase> headCaptor = ArgumentCaptor.forClass(BizPurchase.class);
+        verify(bizPurchaseMapper).insert(headCaptor.capture());
+        assertEquals(11L, headCaptor.getValue().getSupplierId());
     }
 
     // ---------- D111：内部创建=一张多行已入库单，逐行加库存 + 逐行回写进价 ----------

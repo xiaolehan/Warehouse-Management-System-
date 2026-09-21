@@ -31,6 +31,12 @@ public class PurchaseVO {
     /** 供应商汇总：全部行同一供应商为其名称，跨供应商为 "多个供应商" */
     private String supplierSummary;
 
+    /** D123 头级供应商：手动进货必填；存量单与采购申请渠道单据为 null */
+    private Long supplierId;
+
+    /** D123 头级供应商名称；null 时前端回退 supplierSummary */
+    private String supplierName;
+
     private List<PurchaseDetailVO> details;
 
     private LocalDateTime operationTime;

@@ -37,6 +37,11 @@ public class BizPurchase {
     private String remark;
 
     /**
+     * D123 头级供应商：手动进货必填；存量单与采购申请渠道（createInternal）单据可空
+     */
+    private Long supplierId;
+
+    /**
      * 1-正常, 2-已作废, 3-红冲单
      */
     private Integer bizStatus;

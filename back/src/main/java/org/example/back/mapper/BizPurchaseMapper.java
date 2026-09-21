@@ -56,6 +56,54 @@ public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 		List<LatestPurchasePrice> latestValidUnitPrices(@Param("goodsIds") java.util.Collection<Long> goodsIds,
 																										@Param("bizTime") LocalDateTime bizTime);
 
+		/**
+		 * D123：多物料「最新供应商」批量查询——最近一张 已入库+正常+供应商非空 进货单的头级供应商。
+		 * 口径同 latestValidUnitPrices（窗口函数按 operation_time 最新取一）；
+		 * supplier_id IS NOT NULL 过滤掉存量单与采购申请渠道单据（其 supplier 为空不参与最新性）。
+		 */
+		@Select("""
+				<script>
+				SELECT t.goods_id AS goodsId, t.supplier_id AS supplierId
+				FROM (
+					SELECT d.goods_id, p.supplier_id,
+					       ROW_NUMBER() OVER (PARTITION BY d.goods_id ORDER BY p.operation_time DESC, d.id DESC) AS rn
+					FROM biz_purchase_detail d
+					JOIN biz_purchase p ON p.id = d.purchase_id
+					WHERE d.is_deleted = 0
+						AND p.is_deleted = 0
+						AND p.biz_status = 1
+						AND p.confirm_status = 3
+						AND p.supplier_id IS NOT NULL
+						AND d.goods_id IN
+						<foreach collection="goodsIds" item="gid" open="(" separator="," close=")">#{gid}</foreach>
+				) t
+				WHERE t.rn = 1
+				</script>
+				""")
+		List<LatestPurchaseSupplier> latestValidSuppliers(@Param("goodsIds") java.util.Collection<Long> goodsIds);
+
+		/** 最新供应商行（goodsId + supplierId，MyBatis 按别名映射） */
+		class LatestPurchaseSupplier {
+			private Long goodsId;
+			private Long supplierId;
+
+			public Long getGoodsId() {
+				return goodsId;
+			}
+
+			public void setGoodsId(Long goodsId) {
+				this.goodsId = goodsId;
+			}
+
+			public Long getSupplierId() {
+				return supplierId;
+			}
+
+			public void setSupplierId(Long supplierId) {
+				this.supplierId = supplierId;
+			}
+		}
+
 		/** 最新有效进价行（goodsId + unitPrice，MyBatis 按别名映射） */
 		class LatestPurchasePrice {
 			private Long goodsId;

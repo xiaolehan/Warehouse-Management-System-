@@ -41,7 +41,10 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="orderNo" label="进货单号" width="170" />
         <el-table-column prop="goodsSummary" label="物料名称" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="supplierSummary" label="供应商" min-width="120" show-overflow-tooltip />
+        <!-- D123：头级供应商优先；存量单/采购申请渠道单据回退旧口径（行物料绑定供应商汇总） -->
+        <el-table-column label="供应商" min-width="120" show-overflow-tooltip>
+          <template #default="scope">{{ scope.row.supplierName || scope.row.supplierSummary || '-' }}</template>
+        </el-table-column>
         <el-table-column v-if="showPrice" label="进货单价(元)" width="110">
           <template #default="{ row }">{{ row.avgPrice ?? '—' }}</template>
         </el-table-column>
@@ -139,6 +142,7 @@
           <el-col :span="12"><el-form-item label="进货日期"><el-input :value="viewForm.purchaseDate" /></el-form-item></el-col>
           <el-col v-if="showPrice" :span="12"><el-form-item label="进货总额"><el-input :value="viewForm.totalAmount"><template #append>元</template></el-input></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="供应商"><el-input :value="viewForm.supplierName || viewForm.supplierSummary || '-'" /></el-form-item></el-col>
           <el-col :span="24"><el-form-item label="备注"><el-input :value="viewForm.remark" type="textarea" :rows="2" /></el-form-item></el-col>
         </el-row>
       </el-form>
@@ -157,6 +161,12 @@
 
       <!-- D111：新增=多物料行编辑（同一物料一单只允许一行） -->
       <el-form v-if="dialogType !== 'view'" ref="dialogFormRef" :model="dialogForm" label-width="100px">
+        <!-- D123：头级供应商必填 -->
+        <el-form-item label="供应商" required>
+          <el-select v-model="dialogForm.supplierId" placeholder="请选择供应商" filterable style="width: 100%">
+            <el-option v-for="s in supplierOptions" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="物料明细" required>
           <div class="items-editor">
             <el-table :data="dialogForm.items" size="small" border style="width: 100%">
@@ -271,6 +281,7 @@ import {
   confirmReceivePurchaseAPI,
   getPurchaseTimelineAPI
 } from '@/api/business'
+import { getSupplierOptionsAPI } from '@/api/base'
 
 const searchForm = reactive({
   keywords: '',
@@ -301,6 +312,7 @@ const pageSize = ref(10)
 const total = ref(0)
 const loading = ref(false)
 const goodsOptions = ref([])
+const supplierOptions = ref([]) // D123：头级供应商下拉
 
 const tableData = ref([])
 
@@ -313,11 +325,12 @@ function emptyItem() {
 }
 // D111：新增=多物料行
 const dialogForm = reactive({
+  supplierId: null, // D123：头级供应商
   items: [emptyItem()],
   purchaseDate: '',
   remark: ''
 })
-const viewForm = reactive({ purchaseNo: '', purchaseDate: '', totalAmount: '', operator: '', remark: '', details: [] })
+const viewForm = reactive({ purchaseNo: '', purchaseDate: '', totalAmount: '', operator: '', supplierName: '', remark: '', details: [] })
 
 const lineMaterial = (row) => goodsOptions.value.find((g) => g.id === row.goodsId) || null
 const materialLabel = (g) => `${g.name}${g.spec ? '（' + g.spec + '）' : ''}`
@@ -495,7 +508,7 @@ const handleConfirmReceive = (row) => {
 const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
-  Object.assign(dialogForm, { items: [emptyItem()], purchaseDate: '', remark: '' })
+  Object.assign(dialogForm, { supplierId: null, items: [emptyItem()], purchaseDate: '', remark: '' })
   dialogVisible.value = true
 }
 
@@ -522,6 +535,7 @@ const handleView = async (row) => {
       purchaseDate: normalizeDateTime(detail.purchaseDate || detail.operationTime || detail.createTime),
       totalAmount: detail.totalAmount ?? '',
       operator: detail.operator ?? '',
+      supplierName: detail.supplierName ?? '',
       remark: detail.remark || '',
       details: detail.details || []
     })
@@ -570,6 +584,10 @@ const submitVoid = async (reason) => {
 }
 
 const submitForm = () => {
+  if (!dialogForm.supplierId) {
+    ElMessage.warning('请选择供应商')
+    return
+  }
   const items = dialogForm.items
   if (!items.length) {
     ElMessage.warning('请至少添加一行物料明细')
@@ -591,6 +609,7 @@ const submitForm = () => {
   ;(async () => {
     try {
       const payload = {
+        supplierId: dialogForm.supplierId, // D123：头级供应商
         lines: items.map((row) => ({
           goodsId: row.goodsId,
           quantity: row.quantity,
@@ -612,6 +631,9 @@ const submitForm = () => {
 onMounted(async () => {
   try {
     await loadGoodsOptions()
+    // D123：供应商下拉（供应商模块对本页角色开放 options 权限）
+    const supRes = await getSupplierOptionsAPI()
+    supplierOptions.value = supRes.data || []
     await loadList()
   } catch {
     // 业务错误已由拦截器统一提示

@@ -224,6 +224,18 @@ public class PurchaseService {
             }
         }
 
+        // D123：头级供应商必填且须为有效供应商（存在且未停用，与供应商下拉 options 口径一致）
+        if (dto.getSupplierId() == null) {
+            throw BusinessException.validateFail("供应商不能为空");
+        }
+        BaseSupplier supplier = baseSupplierMapper.selectById(dto.getSupplierId());
+        if (supplier == null) {
+            throw BusinessException.validateFail("供应商不存在");
+        }
+        if (!Integer.valueOf(1).equals(supplier.getStatus())) {
+            throw BusinessException.validateFail("供应商已停用，请重新选择");
+        }
+
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
@@ -269,6 +281,7 @@ public class PurchaseService {
         purchase.setOperatorName(loginUser.getRealName());
         purchase.setOperationTime(operationTime);
         purchase.setRemark(dto.getRemark());
+        purchase.setSupplierId(dto.getSupplierId()); // D123 头级供应商
         purchase.setBizStatus(1);
         purchase.setConfirmStatus(CONFIRM_PENDING);
 
@@ -283,6 +296,7 @@ public class PurchaseService {
     /**
      * 内部创建进货单（不校验权限，供采购申请仓储确认入库等内部流程复用）。
      * 一次调用生成一张多行已入库单；operator 由调用方传入（如仓储确认入库人）。
+     * D123：supplierId 保持 null（采购申请渠道无供应商来源），不参与「最新供应商」口径。
      */
     @Transactional(rollbackFor = Exception.class)
     public void createInternal(PurchaseSaveDTO dto, Long operatorId, String operatorName) {
@@ -661,6 +675,12 @@ public class PurchaseService {
                 .collect(Collectors.toMap(BaseGoods::getId, g -> g));
         Map<Long, BaseSupplier> supplierMap = buildSupplierMap(goodsMap.values().stream()
                 .map(BaseGoods::getSupplierId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        // D123：头级供应商批量预取（存量单与采购申请渠道单据 supplierId 为 null 不在集合中）
+        Set<Long> headSupplierIds = records.stream().map(PurchaseVO::getSupplierId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, BaseSupplier> headSupplierMap = headSupplierIds.isEmpty() ? Map.of()
+                : baseSupplierMapper.selectBatchIds(headSupplierIds).stream()
+                        .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
         Map<Long, List<BizPurchaseDetail>> byPurchase = details.stream()
                 .collect(Collectors.groupingBy(BizPurchaseDetail::getPurchaseId));
 
@@ -669,7 +689,11 @@ public class PurchaseService {
                     .map(this::toDetailVO).toList();
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
-            vo.setSupplierSummary(buildSupplierSummary(lineVOs, goodsMap, supplierMap));
+            // D123：头级供应商优先展示；无头级（存量/采购申请渠道单据）回退旧口径（行物料绑定供应商汇总）
+            BaseSupplier headSupplier = vo.getSupplierId() == null ? null : headSupplierMap.get(vo.getSupplierId());
+            vo.setSupplierName(headSupplier == null ? null : headSupplier.getSupplierName());
+            vo.setSupplierSummary(headSupplier != null ? headSupplier.getSupplierName()
+                    : buildSupplierSummary(lineVOs, goodsMap, supplierMap));
             vo.setAvgPrice(commonUnitPrice(lineVOs));
         }
     }
@@ -755,6 +779,7 @@ public class PurchaseService {
         vo.setOperatorName(purchase.getOperatorName());
         vo.setOperator(purchase.getOperatorName());
         vo.setRemark(purchase.getRemark());
+        vo.setSupplierId(purchase.getSupplierId()); // D123 头级供应商
         vo.setBizStatus(purchase.getBizStatus());
         vo.setConfirmStatus(purchase.getConfirmStatus());
         vo.setConfirmStatusText(confirmStatusText(purchase.getConfirmStatus()));
