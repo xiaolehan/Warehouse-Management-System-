@@ -7,10 +7,12 @@ import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
+import org.example.back.dto.QuickProductDTO;
 import org.example.back.service.GoodsService;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
+import org.example.back.vo.QuickProductVO;
 import org.example.back.vo.OptionVO;
 import org.example.back.vo.SupplierMatchVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +54,13 @@ public class GoodsController {
     public Result<Void> create(@Valid @RequestBody GoodsSaveDTO dto) {
         goodsService.create(dto);
         return Result.success();
+    }
+
+    // D121：销售建单内嵌「+新品」快速建品（ADR-0017）——同名成品直接选用（existing=true），字段服务端强制
+    @PostMapping("/quick-product")
+    @PreventDuplicateSubmit(message = "请勿重复提交快速建品请求")
+    public Result<QuickProductVO> quickCreateProduct(@Valid @RequestBody QuickProductDTO dto) {
+        return Result.success(goodsService.quickCreateProduct(dto));
     }
 
     @PutMapping("/{id}")

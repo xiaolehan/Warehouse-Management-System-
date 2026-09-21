@@ -24,6 +24,8 @@ export const deleteGoodsAPI = (id) => request.delete(`/base/goods/${id}`)
 export const getGoodsPurchasePriceHistoryAPI = (id) => request.get(`/base/goods/${id}/purchase-price-history`)
 // D109：未知物料匹配供应商（仓储管理员触发；按最新采购申请明细到货备注斜杠前的供应商名回绑）
 export const matchGoodsSupplierAPI = (id) => request.post(`/base/goods/${id}/match-supplier`)
+// D121：销售端「+新品」快速建品（ADR-0017）——同名成品直接选用（existing=true），返回体可直接并入成品下拉
+export const createQuickProductAPI = (data) => request.post('/base/goods/quick-product', data)
 
 export const getBomPageAPI = (params) => request.get('/base/bom/page', { params })
 export const getBomDetailAPI = (id) => request.get(`/base/bom/${id}`)

@@ -8,6 +8,7 @@ import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
+import org.example.back.dto.QuickProductDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizPurchase;
@@ -25,6 +26,7 @@ import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
+import org.example.back.vo.QuickProductVO;
 import org.example.back.vo.SupplierMatchVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -398,6 +400,74 @@ public class GoodsService {
         goods.setDescription("生产补料自动建档");
         baseGoodsMapper.insert(goods);
         return goods.getId();
+    }
+
+    /**
+     * D121：销售建单内嵌「+新品」快速建品（ADR-0017）——商品仍由系统建档，触发方从人工扩展为销售动作。
+     * 仅四项入参；type=product、库存 0、无进价、正常状态、无 BOM 均服务端强制（镜像 createMaterialFromProduction 范式）。
+     * 同名成品已存在 → 不报错、直接返回已有商品（existing=true）；同名物料占用 → 明确报错（checkGoodsNameUnique 全库唯一口径）。
+     */
+    public QuickProductVO quickCreateProduct(QuickProductDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门可快速建品");
+        String name = dto.getGoodsName().trim();
+        String spec = StringUtils.hasText(dto.getSpec()) ? dto.getSpec().trim() : null;
+        String unit = dto.getUnit().trim();
+        BigDecimal salePrice = dto.getSalePrice();
+        if (salePrice == null || salePrice.compareTo(BigDecimal.ZERO) < 0) {
+            throw BusinessException.validateFail("售价不能为空且不能为负数");
+        }
+
+        // 成品名唯一铁律（checkGoodsNameUnique 全库唯一口径）：先找同名成品——正常态直接选用；已停用不能选用也不能新建
+        List<BaseGoods> sameName = baseGoodsMapper.selectList(new LambdaQueryWrapper<BaseGoods>()
+                .eq(BaseGoods::getGoodsName, name)
+                .eq(BaseGoods::getType, GOODS_TYPE_PRODUCT)
+                .orderByDesc(BaseGoods::getId));
+        if (!sameName.isEmpty()) {
+            BaseGoods enabled = sameName.stream()
+                    .filter(g -> Integer.valueOf(1).equals(g.getStatus()))
+                    .findFirst().orElse(null);
+            if (enabled == null) {
+                throw BusinessException.validateFail(
+                        "已存在同名成品「" + name + "」但已停用，无法创建或选用，请联系管理员启用或换名");
+            }
+            return toQuickProductVO(enabled, true);
+        }
+
+        // 同名物料占用：全库唯一口径下无法建档，提前给出可理解的报错（create() 同名时报「商品名称已存在」）
+        Long materialCount = baseGoodsMapper.selectCount(new LambdaQueryWrapper<BaseGoods>()
+                .eq(BaseGoods::getGoodsName, name)
+                // 类型是恒等匹配（normalizeType 后只有 material/product），常量直比
+                .eq(BaseGoods::getType, GOODS_TYPE_MATERIAL));
+        if (materialCount > 0) {
+            throw BusinessException.validateFail("已存在同名物料「" + name + "」，成品与物料名称不可重复，请换个名称");
+        }
+
+        BaseGoods goods = new BaseGoods();
+        goods.setType(GOODS_TYPE_PRODUCT);
+        goods.setGoodsCode(CodeGenerator.goodsCode());
+        goods.setGoodsName(name);
+        goods.setSpec(spec);
+        goods.setUnit(unit);
+        goods.setSalePrice(salePrice);
+        goods.setSupplierId(DEFAULT_SUPPLIER_ID); // D65：成品无供应商概念，缺省挂缺省供应商
+        goods.setCategory("成品");
+        goods.setStock(0);
+        goods.setWarningStock(0); // D65：成品不参与库存预警
+        goods.setStatus(1);
+        goods.setDescription("销售快速建品");
+        baseGoodsMapper.insert(goods);
+        return toQuickProductVO(goods, false);
+    }
+
+    /** D121：快速建品返回体——新建品恒无 BOM；同名选用按 D112 口径现查有效 BOM 归属 */
+    private QuickProductVO toQuickProductVO(BaseGoods goods, boolean existing) {
+        boolean hasBom = !existing
+                ? false
+                : bizBomMapper.selectCount(new LambdaQueryWrapper<BizBom>()
+                        .eq(BizBom::getGoodsId, goods.getId())) > 0;
+        return new QuickProductVO(goods.getId(), goods.getGoodsName(), goods.getStock(), goods.getUnit(),
+                goods.getSpec(), goods.getSalePrice(), goods.getType(), hasBom, existing);
     }
 
     /**

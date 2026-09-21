@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
+import org.example.back.dto.QuickProductDTO;
+import org.example.back.vo.QuickProductVO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizPurchaseRequest;
@@ -26,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -50,6 +53,8 @@ class GoodsServiceTest {
         com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BaseSupplier.class);
         com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BizPurchaseRequestDetail.class);
         com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, BizPurchaseRequest.class);
+        // D121：快速建品同名选用需对 BizBom 构建 wrapper（hasBom 现查）
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(assistant, org.example.back.entity.BizBom.class);
     }
 
     @Mock private BaseGoodsMapper baseGoodsMapper;
@@ -585,5 +590,120 @@ class GoodsServiceTest {
         assertTrue(ex.getMessage().contains("到货备注"), "实际: " + ex.getMessage());
         verify(baseSupplierMapper, never()).selectList(any());
         verify(baseGoodsMapper, never()).update(any(), any());
+    }
+
+    // ---------- D121：销售端「+新品」快速建品（ADR-0017） ----------
+
+    private QuickProductDTO quickDto() {
+        QuickProductDTO dto = new QuickProductDTO();
+        dto.setGoodsName(" 智能炒锅 XT1 ");
+        dto.setSpec(" 5L ");
+        dto.setUnit(" 台 ");
+        dto.setSalePrice(new BigDecimal("1999.00"));
+        return dto;
+    }
+
+    private BaseGoods product(long id, String name, int status) {
+        BaseGoods g = new BaseGoods();
+        g.setId(id);
+        g.setType(GoodsService.GOODS_TYPE_PRODUCT);
+        g.setGoodsName(name);
+        g.setStatus(status);
+        g.setStock(0);
+        g.setUnit("台");
+        g.setSalePrice(new BigDecimal("1888"));
+        return g;
+    }
+
+    @Test
+    void quickCreate_appliesProductDefaultsAndTrims() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of()); // 无同名成品
+        when(baseGoodsMapper.selectCount(any())).thenReturn(0L);                 // 无同名物料
+        when(baseGoodsMapper.insert(any(BaseGoods.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BaseGoods.class).setId(66L);
+            return 1;
+        });
+
+        QuickProductVO vo = service.quickCreateProduct(quickDto());
+
+        assertFalse(vo.getExisting());
+        assertEquals(66L, vo.getId());
+        assertFalse(vo.getHasBom());
+        assertEquals("智能炒锅 XT1", vo.getName());
+        assertEquals("5L", vo.getSpec());
+        assertEquals("台", vo.getUnit());
+        ArgumentCaptor<BaseGoods> cap = ArgumentCaptor.forClass(BaseGoods.class);
+        verify(baseGoodsMapper).insert(cap.capture());
+        BaseGoods g = cap.getValue();
+        assertEquals(GoodsService.GOODS_TYPE_PRODUCT, g.getType());
+        assertEquals("智能炒锅 XT1", g.getGoodsName());
+        assertEquals("5L", g.getSpec());
+        assertEquals("台", g.getUnit());
+        assertEquals(new BigDecimal("1999.00"), g.getSalePrice());
+        assertEquals(GoodsService.DEFAULT_SUPPLIER_ID, g.getSupplierId());
+        assertEquals("成品", g.getCategory());
+        assertEquals(0, g.getStock());
+        assertEquals(0, g.getWarningStock());
+        assertEquals(1, g.getStatus());
+        assertNotNull(g.getGoodsCode());
+    }
+
+    @Test
+    void quickCreate_sameNameEnabledProduct_returnsExistingWithoutInsert() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of(product(9L, "智能炒锅 XT1", 1)));
+        when(bizBomMapper.selectCount(any())).thenReturn(1L); // 已建档 BOM → hasBom=true（D112 口径）
+
+        QuickProductVO vo = service.quickCreateProduct(quickDto());
+
+        assertTrue(vo.getExisting());
+        assertEquals(9L, vo.getId());
+        assertTrue(vo.getHasBom());
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    @Test
+    void quickCreate_sameNameDisabledProduct_rejected() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of(product(9L, "智能炒锅 XT1", 0)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.quickCreateProduct(quickDto()));
+        assertTrue(ex.getMessage().contains("停用"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    @Test
+    void quickCreate_materialNameConflict_rejected() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of()); // 无同名成品
+        when(baseGoodsMapper.selectCount(any())).thenReturn(1L);                 // 有同名物料
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.quickCreateProduct(quickDto()));
+        assertTrue(ex.getMessage().contains("物料"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    @Test
+    void quickCreate_superAdminWriteForbidden() {
+        doThrow(BusinessException.forbidden("超管不可写")).when(authzService).requireNotSuperAdminForBusinessWrite();
+
+        assertThrows(BusinessException.class, () -> service.quickCreateProduct(quickDto()));
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    @Test
+    void quickCreate_nonSalesMemberForbidden() {
+        doThrow(BusinessException.forbidden("仅销售部门")).when(authzService)
+                .requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_SALES), anyString());
+
+        assertThrows(BusinessException.class, () -> service.quickCreateProduct(quickDto()));
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
+    }
+
+    @Test
+    void quickCreate_negativePrice_rejected() {
+        QuickProductDTO dto = quickDto();
+        dto.setSalePrice(new BigDecimal("-1"));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.quickCreateProduct(dto));
+        assertTrue(ex.getMessage().contains("售价"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).insert(any(BaseGoods.class));
     }
 }

@@ -215,14 +215,26 @@
               <el-table-column type="index" label="#" width="50" align="center" />
               <el-table-column label="成品" min-width="180">
                 <template #default="scope">
-                  <el-select v-model="scope.row.goodsId" placeholder="选择成品" style="width: 100%" filterable @change="onGoodsSelected(scope.row)">
-                    <el-option
-                      v-for="g in availableGoods(scope.$index)"
-                      :key="g.id"
-                      :label="`${g.name}（库存 ${g.stock || 0}${g.unit ? ' ' + g.unit : ''}${g.hasBom === false ? ' ｜ 无BOM' : ''}）`"
-                      :value="g.id"
-                    />
-                  </el-select>
+                  <div class="goods-select-row">
+                    <el-select v-model="scope.row.goodsId" placeholder="选择成品" style="width: 100%" filterable @change="onGoodsSelected(scope.row)">
+                      <el-option
+                        v-for="g in availableGoods(scope.$index)"
+                        :key="g.id"
+                        :label="`${g.name}（库存 ${g.stock || 0}${g.unit ? ' ' + g.unit : ''}${g.hasBom === false ? ' ｜ 无BOM' : ''}）`"
+                        :value="g.id"
+                      />
+                    </el-select>
+                    <!-- D121：成品下拉搜不到时销售可四项快捷建档并自动选中（ADR-0017）；仅销售部门成员可见 -->
+                    <el-button
+                      v-if="canQuickCreate && dialogType !== 'view'"
+                      link
+                      type="primary"
+                      size="small"
+                      @click="openQuickProduct(scope.row)"
+                    >
+                      + 新品
+                    </el-button>
+                  </div>
                   <div v-if="lineStock(scope.row) === 0 || lineGoods(scope.row)?.hasBom === false" class="line-flags">
                     <!-- D112：零库存/无 BOM 行标注（不拦下单） -->
                     <el-tag v-if="lineStock(scope.row) === 0" type="warning" size="small">零库存</el-tag>
@@ -303,6 +315,35 @@
       :submitting="voidSubmitting"
       @confirm="submitVoid"
     />
+
+    <!-- D121：销售端「+新品」快速建品小表单（ADR-0017）——四项入参，同名成品直接选用 -->
+    <el-dialog
+      v-model="quickProductVisible"
+      title="快速新建成品"
+      width="440px"
+      append-to-body
+    >
+      <el-form label-width="90px">
+        <el-form-item label="成品名称" required>
+          <el-input v-model="quickProductForm.goodsName" placeholder="请输入成品名称" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="规格">
+          <el-input v-model="quickProductForm.spec" placeholder="选填" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="单位" required>
+          <el-input v-model="quickProductForm.unit" placeholder="如：台" maxlength="20" />
+        </el-form-item>
+        <el-form-item label="售价（元）" required>
+          <el-input-number v-model="quickProductForm.salePrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button :icon="Close" @click="quickProductVisible = false">取消</el-button>
+          <el-button type="primary" :icon="Check" :loading="quickProductSubmitting" @click="submitQuickProduct">创建并选中</el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -325,6 +366,7 @@ import {
   getSalesDetailAPI,
   getSalesPageAPI
 } from '@/api/business'
+import { createQuickProductAPI } from '@/api/base'
 
 const searchForm = reactive({ keywords: '', customerName: '', dateRange: [] })
 const userRole = getRole()
@@ -388,6 +430,64 @@ const availableGoods = (index) => {
 }
 
 const addItemRow = () => dialogForm.items.push(emptyItem())
+
+// D121：销售端快速建品（ADR-0017）——成品下拉搜不到时四项建档并自动选中当前行；仅销售部门成员可见
+const canQuickCreate = userDept === 'sales'
+const quickProductVisible = ref(false)
+const quickProductSubmitting = ref(false)
+const quickTargetRow = ref(null)
+const quickProductForm = reactive({ goodsName: '', spec: '', unit: '台', salePrice: 0 })
+
+const openQuickProduct = (row) => {
+  quickTargetRow.value = row
+  quickProductForm.goodsName = ''
+  quickProductForm.spec = ''
+  quickProductForm.unit = '台'
+  quickProductForm.salePrice = 0
+  quickProductVisible.value = true
+}
+
+const submitQuickProduct = async () => {
+  if (!quickProductForm.goodsName.trim()) {
+    ElMessage.warning('请输入成品名称')
+    return
+  }
+  if (!quickProductForm.unit.trim()) {
+    ElMessage.warning('请输入单位')
+    return
+  }
+  if (quickProductForm.salePrice === null || quickProductForm.salePrice < 0) {
+    ElMessage.warning('请输入不小于 0 的售价')
+    return
+  }
+  quickProductSubmitting.value = true
+  try {
+    const res = await createQuickProductAPI({
+      goodsName: quickProductForm.goodsName.trim(),
+      spec: quickProductForm.spec.trim() || undefined,
+      unit: quickProductForm.unit.trim(),
+      salePrice: quickProductForm.salePrice
+    })
+    const created = res.data
+    if (!goodsOptions.value.some((g) => g.id === created.id)) {
+      goodsOptions.value.push(created)
+    }
+    if (quickTargetRow.value) {
+      quickTargetRow.value.goodsId = created.id
+      onGoodsSelected(quickTargetRow.value)
+    }
+    quickProductVisible.value = false
+    if (created.existing) {
+      ElMessage.warning('已存在同名成品，已为你选用')
+    } else {
+      ElMessage.success(`成品「${created.name}」已创建并选中`)
+    }
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    quickProductSubmitting.value = false
+  }
+}
 
 // review 修复：选中成品后按标准售价预填单价（初始 0 会被后端 DTO 拒收「单价必须大于0」），用户可改
 const onGoodsSelected = (row) => {
@@ -701,6 +801,13 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* D121：成品下拉 + 快速建品按钮同行排布 */
+.goods-select-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .stock-hint {
   margin-top: 4px;
   font-size: 12px;
