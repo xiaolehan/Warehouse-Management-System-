@@ -22,20 +22,21 @@
 <script setup>
 // D104：单据流程时间线通用渲染组件（「谁在哪一步做了什么」）——
 // 纯展示，节点数据由各业务视图调各自 API 后传入；已作废节点红色、作废审批中蓝色空心。
+// D114：status='danger'（终态/驳回旁支）同样红色呈现。
 defineProps({
   nodes: { type: Array, default: () => [] },
   emptyText: { type: String, default: '暂无流程记录' }
 })
 
 const nodeType = (node) => {
-  if (node.key === 'voided') return 'danger'
+  if (node.key === 'voided' || node.status === 'danger') return 'danger'
   if (node.status === 'done') return 'success'
   if (node.status === 'current') return 'primary'
   return 'info'
 }
 
 const titleClass = (node) => {
-  if (node.key === 'voided') return 'node-title--voided'
+  if (node.key === 'voided' || node.status === 'danger') return 'node-title--voided'
   return `node-title--${node.status}`
 }
 

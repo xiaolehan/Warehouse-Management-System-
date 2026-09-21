@@ -37,6 +37,8 @@ export const getLinkableSalesOptionsAPI = (params) => request.get('/business/sal
 
 export const getProductionOrderPageAPI = (params) => request.get('/business/production-order/page', { params })
 export const getProductionOrderDetailAPI = (id) => request.get(`/business/production-order/${id}`)
+// D114：任务单全动线时间线（谁在哪一步做了什么）
+export const getProductionOrderTimelineAPI = (id) => request.get(`/business/production-order/${id}/timeline`)
 export const createProductionOrderAPI = (data) => request.post('/business/production-order', data)
 export const startProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/start`)
 export const completeProductionOrderAPI = (id) => request.post(`/business/production-order/${id}/complete`)

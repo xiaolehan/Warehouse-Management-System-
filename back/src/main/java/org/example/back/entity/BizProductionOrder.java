@@ -31,6 +31,10 @@ public class BizProductionOrder {
     public static final List<Integer> UNFINISHED_STATUSES =
             List.of(STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_AWAIT_QC);
 
+    /** D114：作废/终止原因在 remark 的留痕标记（写入方 patchRemark/appendRemark 与时间线解析共用，勿各自硬编码） */
+    public static final String REMARK_VOID_REASON_MARKER = "作废原因:";
+    public static final String REMARK_TERMINATE_REASON_MARKER = "终止原因:";
+
     public static final String KIT_OK = "ok";
     public static final String KIT_PARTIAL = "partial";
     public static final String KIT_BLOCK = "block";

@@ -10,7 +10,9 @@ import org.example.back.dto.ProductionBatchReleaseDTO;
 import org.example.back.dto.ProductionOrderQueryDTO;
 import org.example.back.dto.ProductionOrderSaveDTO;
 import org.example.back.service.ProductionOrderService;
+import org.example.back.service.ProductionOrderTimelineService;
 import org.example.back.service.ProductionStepService;
+import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.ProductionOrderVO;
 import org.example.back.vo.ProductionReleasePreviewVO;
 import org.example.back.vo.ProductionReleaseResultVO;
@@ -30,6 +32,9 @@ public class ProductionOrderController {
     @Autowired
     private ProductionStepService productionStepService;
 
+    @Autowired
+    private ProductionOrderTimelineService productionOrderTimelineService;
+
     @GetMapping("/page")
     public Result<PageResult<ProductionOrderVO>> page(ProductionOrderQueryDTO queryDTO) {
         return Result.success(productionOrderService.page(queryDTO));
@@ -38,6 +43,12 @@ public class ProductionOrderController {
     @GetMapping("/{id}")
     public Result<ProductionOrderVO> getById(@PathVariable Long id) {
         return Result.success(productionOrderService.getById(id));
+    }
+
+    /** D114：全动线时间线——谁在哪一步做了什么（与详情同读权限口径，守卫在 Service 内） */
+    @GetMapping("/{id}/timeline")
+    public Result<DocumentTimelineVO> timeline(@PathVariable Long id) {
+        return Result.success(productionOrderTimelineService.getTimeline(id));
     }
 
     @PostMapping

@@ -5,6 +5,19 @@
 
 ---
 
+## 会话 50 — 2026-09-21
+
+### 票 05/D114 生产任务单全动线时间线落地——342 单测全绿 + E2E 34/34
+
+- **后端：** 新建 ProductionOrderTimelineService（仿 DocumentTimelineService 合成模式，不读日志表）+ `GET /business/production-order/{id}/timeline`（单数路径沿既有 controller 惯例），守卫与 getById 同口径（requireAnyDeptMemberOrSuperAdmin DEPT_PRODUCTION）；节点链：下达（关联销售单）→ 补料段（申请→认领→第 Bn 批到货/入库确认成对重复 D120 语义→继续到货当前位；驳回红节点带原因，驳回单不出认领死节点——评审修复）→ 领料段（申请→仓储发料→生产确认收货；**驳回=4>已发料=2 不可按 >= 误判已发料**——E2E 前单测即抓出）→ 开工（最早人工打卡）/生产中（X/N 道工序，来自 listSteps）/完工报工/质检返工旁支（isNgPoint：仅 ng/rework 算，**untested 不算——buildState 对未测点返回 passed=false，E2E 抓出新单误挂返工节点**）→ 入库段（D107 两段式：CONFIRM_PENDING 当前/CONFIRMED 完成+确认人+N 件/REJECTED 红节点带原因；驳回后未重提补「提交入库申请」当前位置）→ 终态红节点（作废/终止原因解析 remark 留痕；**报废无 remark 留痕，新增 QcService.latestNgReason 取最近 NG 记录不合格原因**——评审修复）；终止(7)/作废(5)/报废(6) 走 pending 兜底不冒「全部工序完成」。remark 留痕标记提为 BizProductionOrder.REMARK_*_REASON_MARKER 常量（评审修复：写入方 patchRemark/appendRemark 与解析方共用，防两侧字符串漂移）。
+- **前端：** business.js +getProductionOrderTimelineAPI；ProductionOrderView 详情弹窗底部「生产生命周期」+DocumentTimeline（PurchaseRequestView 同款静默加载，**detail.value?.id===id 过期响应丢弃防快速切单串数据**——评审修复）；零新组件，补料弹窗/查看入口不变；DocumentTimeline.vue 加 status='danger' 红色支持（终态/驳回旁支，与既有 key='voided' 特判并存）。
+- **单测：** ProductionOrderTimelineServiceTest 6 例——齐套全链无补料段/缺料分批补料+生产中 3/10+领料链/终止+三类驳回旁支/入库驳回重提当前位/**全链（缺料→补料 B1→领料→打卡→两段式入库）**/报废原因取 NG 记录；**全量 342 全绿**；npm build clean。
+- **E2E（/tmp/d114_e2e.py）34/34：** 票 03 批量下达单 → 新单节点链（released/started/producing/complete_report/inbound_confirm 五节点占位，producing 0/N）→ 读守卫负测（仓储/销售/采购管理员全拒）→ 补料段出现/SQL 清理后消失（API 撤销守卫「仓储+申请人本人」双条件生产端自撤不了，既有设计记 pending-retest 观察项）→ 作废红节点带原因 → 清理无残留、库存零变动。两轮失败修复：controller 漏注入 timelineService 字段（JDT 残留陷阱复现，clean compile 解决）+ 上轮 8080 未杀净须 kill -9。
+- **/code-review 两轴：** standards 无硬违规；spec 无缺失功能。修 7 处——①报废原因缺（spec 要求带原因）→ latestNgReason；②驳回补料认领 pending 死节点 → 驳回不出认领；③loadTimeline 竞态；④remark 标记常量化（3 文件）；⑤发料 pending 节点带非空时间 → 条件置空+测试 helper 同步真实数据（驳回单 confirmTime 空）；⑥测试 helper 补 buildState 真实语义（untested→passed=false+status）；⑦测试内联 FQN 改 import+场景 B 领料改 STATUS_DONE（真实链路开工前提）。**评审不修（judgement calls 在案）：** node/vo/batchSeq 与 DocumentTimelineService 双向重复（仅 2 处使用不构成惯例，两服务描述语将分化，避免本票翻动 D104/D120 已提交代码）；bizStatus=1 字面量（兄弟类同款）；build* 签名数据团（重构收益低）；DocumentTimeline 双重判存（新旧两后端口径并存所需，已注释）。
+- **下一步：** 10 票全完成 → 用户统一手测（D111-D120 复测项+观察项均记 pending-retest.md）。
+
+---
+
 ## 会话 49 — 2026-09-21
 
 ### 票 04/D112 新成品销售-生产联动——行标注+建档指引消息+?salesId= 直达，336 单测全绿 + E2E 23/23

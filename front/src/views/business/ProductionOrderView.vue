@@ -410,6 +410,10 @@
             @click="doOpenReturn"
           >生产退料</el-button>
         </div>
+
+        <!-- D114：全动线时间线——下达→补料→领料→生产→入库→完成，谁在哪一步做了什么 -->
+        <el-divider content-position="left">生产生命周期</el-divider>
+        <DocumentTimeline :nodes="timelineNodes" />
       </template>
     </el-dialog>
 
@@ -645,6 +649,7 @@ import {
   getBatchReleaseSalesOptionsAPI,
   batchReleaseProductionAPI,
   getProductionOrderPageAPI,
+  getProductionOrderTimelineAPI,
   receiptProductionOrderAPI,
   revokeProductionStepAPI,
   startProductionOrderAPI,
@@ -652,6 +657,7 @@ import {
   voidProductionOrderAPI
 } from '@/api/business'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
+import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
 import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
 import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI, confirmPickListAPI } from '@/api/pickList'
@@ -690,6 +696,8 @@ const createRules = {
 
 const detailVisible = ref(false)
 const detail = ref(null)
+// D114：任务单全动线时间线节点
+const timelineNodes = ref([])
 
 const pickListStatus = ref(null)
 const pickListRow = ref(null) // D117：保存整行用于确认收货按钮（申请人判定）
@@ -940,6 +948,7 @@ watch(() => route.query.salesId, (salesId) => {
 const openDetail = async (row) => {
   const res = await getProductionOrderDetailAPI(row.id)
   detail.value = res.data || {}
+  loadTimeline(row.id) // D114：时间线静默加载，失败不阻塞详情
   // 加载领料单状态（优先取 PICK 类型行，用于"领料已出库"标签展示）
   try {
     const pickRes = await getProductionPickListAPI(row.id)
@@ -956,6 +965,16 @@ const openDetail = async (row) => {
     pickListRow.value = null
   }
   detailVisible.value = true
+}
+
+// D114：全动线时间线（失败静默，不打断详情展示；快速切换详情时丢弃过期响应，防旧单节点覆盖新单）
+const loadTimeline = async (id) => {
+  try {
+    const res = await getProductionOrderTimelineAPI(id)
+    if (detail.value?.id === id) timelineNodes.value = res.data?.nodes || []
+  } catch {
+    if (detail.value?.id === id) timelineNodes.value = []
+  }
 }
 
 const handleView = async (row) => {

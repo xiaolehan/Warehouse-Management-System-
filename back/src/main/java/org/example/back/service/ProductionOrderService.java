@@ -1139,9 +1139,9 @@ public class ProductionOrderService {
     private String patchRemark(String oldRemark, String reason) {
         String reasonText = StringUtils.hasText(reason) ? reason : "无";
         if (!StringUtils.hasText(oldRemark)) {
-            return "作废原因: " + reasonText;
+            return BizProductionOrder.REMARK_VOID_REASON_MARKER + " " + reasonText;
         }
-        return oldRemark + " | 作废原因: " + reasonText;
+        return oldRemark + " | " + BizProductionOrder.REMARK_VOID_REASON_MARKER + " " + reasonText;
     }
 
     // ============================== VO ==============================

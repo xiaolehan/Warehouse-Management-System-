@@ -262,6 +262,19 @@ public class QcService {
         return qcMapper.selectList(wrapper);
     }
 
+    /**
+     * D114：报废任务单的终态原因取最近一条 NG 记录的不合格原因（报废处置无独立原因输入）。
+     */
+    public String latestNgReason(Long orderId) {
+        BizProductionQc latestNg = null;
+        for (BizProductionQc r : listByOrder(orderId)) {
+            if (BizProductionQc.RESULT_NG.equals(r.getResult())) {
+                latestNg = r; // records 升序，最后一个命中的即最新
+            }
+        }
+        return latestNg == null ? null : latestNg.getReason();
+    }
+
     private BizProductionQc latestNgOfPoint(Long orderId, String point) {
         List<BizProductionQc> records = listByOrder(orderId);
         BizProductionQc latest = null;

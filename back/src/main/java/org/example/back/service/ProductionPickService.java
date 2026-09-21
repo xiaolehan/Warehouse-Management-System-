@@ -236,7 +236,8 @@ public class ProductionPickService {
         terminateWrapper.eq(BizProductionOrder::getId, orderId)
                 .in(BizProductionOrder::getStatus, BizProductionOrder.UNFINISHED_STATUSES)
                 .set(BizProductionOrder::getStatus, BizProductionOrder.STATUS_TERMINATED)
-                .set(BizProductionOrder::getRemark, appendRemark(order.getRemark(), "终止原因: " + reason.trim()));
+                .set(BizProductionOrder::getRemark, appendRemark(order.getRemark(),
+                        BizProductionOrder.REMARK_TERMINATE_REASON_MARKER + " " + reason.trim()));
         if (productionOrderMapper.update(null, terminateWrapper) != 1) {
             throw BusinessException.validateFail("生产任务单已被处理（已完工或已终态），请刷新后重试");
         }
