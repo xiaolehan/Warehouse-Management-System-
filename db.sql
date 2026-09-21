@@ -1318,7 +1318,7 @@ DROP TABLE IF EXISTS `biz_purchase_request`;
 CREATE TABLE IF NOT EXISTS `biz_purchase_request` (
     `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `request_no` VARCHAR(30) NOT NULL COMMENT '采购申请单号(PR开头)',
-    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中, 3-已入库, 4-已驳回, 5-待入库确认',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中(部分入库派生文案「部分入库」,不另设状态值), 3-已入库, 4-已驳回, 5-待入库确认',
     `applicant_id` BIGINT NOT NULL COMMENT '申请人ID(仓储管理员)',
     `applicant_name` VARCHAR(50) DEFAULT NULL COMMENT '申请人姓名(冗余字段)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '采购处理人ID(采购管理员)',
@@ -1348,14 +1348,19 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     `request_id` BIGINT NOT NULL COMMENT '采购申请单主表ID',
     `goods_id` BIGINT NOT NULL COMMENT '商品ID',
     `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '商品名称(冗余字段)',
-    `quantity` INT NOT NULL COMMENT '申请采购数量',
-    `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(采购到货提交时填写,确认入库按此数量加库存)',
+    `quantity` INT NOT NULL COMMENT '申请采购数量(行内数量不拆,整行到货)',
+    `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(=申请量;到货提交时写,确认入库按此数量加库存)',
     `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(到货时填写)',
+    `receive_status` TINYINT NOT NULL DEFAULT 1 COMMENT 'D120 行级接收状态: 1-待到货, 2-本批待入库确认, 3-已入库',
+    `arrive_batch_no` VARCHAR(20) DEFAULT NULL COMMENT 'D120 到货批次号(同批同号,如B1/B2;驳回/撤回按批)',
+    `arrive_batch_time` DATETIME DEFAULT NULL COMMENT 'D120 本批到货提交时间(时间线按批展示)',
+    `receive_batch_time` DATETIME DEFAULT NULL COMMENT 'D120 本批入库确认时间(时间线按批展示)',
     `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
     PRIMARY KEY (`id`),
     KEY `idx_prd_request_id` (`request_id`),
+    KEY `idx_prd_batch_no` (`arrive_batch_no`),
     KEY `idx_prd_goods_id` (`goods_id`),
     KEY `idx_prd_is_deleted` (`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购申请单明细表';
@@ -2046,3 +2051,40 @@ JOIN `biz_purchase` p ON d.purchase_id = p.id
 LEFT JOIN `base_goods` g ON d.goods_id = g.id
 LEFT JOIN `sys_user` u ON p.operator_id = u.id
 WHERE d.is_deleted = 0 AND p.is_deleted = 0;
+
+-- =============================================
+-- 二十三、D120 采购申请按行分批到货（行级接收状态+部分入库+每批一张多行进货单，ADR-0016）
+-- =============================================
+-- 背景：原为整单一次性到货，19+1 场景必须等全部到齐；改造为勾选明细行按批提交，
+-- 行内数量不拆。每批确认入库生成一张多行进货单（ADR-0015）。
+-- 1) 明细行加 receive_status / arrive_batch_no / arrive_batch_time / receive_batch_time
+-- 2) 存量回填：已入库(头3)→行3/B1；待入库确认(头5)→行2/B1；其余默认 1
+
+-- 1) 列 + 批次索引（列增删不可重复执行）
+ALTER TABLE `biz_purchase_request_detail`
+    ADD COLUMN `receive_status` TINYINT NOT NULL DEFAULT 1 COMMENT 'D120 行级接收状态: 1-待到货, 2-本批待入库确认, 3-已入库' AFTER `unit_price`,
+    ADD COLUMN `arrive_batch_no` VARCHAR(20) DEFAULT NULL COMMENT 'D120 到货批次号(同批同号,如B1/B2;驳回/撤回按批)' AFTER `receive_status`,
+    ADD COLUMN `arrive_batch_time` DATETIME DEFAULT NULL COMMENT 'D120 本批到货提交时间(时间线按批展示)' AFTER `arrive_batch_no`,
+    ADD COLUMN `receive_batch_time` DATETIME DEFAULT NULL COMMENT 'D120 本批入库确认时间(时间线按批展示)' AFTER `arrive_batch_time`,
+    ADD KEY `idx_prd_batch_no` (`arrive_batch_no`);
+
+-- 2) 头状态注释同步（部分入库不新增状态值，由行状态派生文案）
+ALTER TABLE `biz_purchase_request`
+    MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中(部分入库派生文案「部分入库」), 3-已入库, 4-已驳回, 5-待入库确认';
+
+-- 3) 存量已入库申请单（头=3）→ 行 3 / 批次 B1，批次时间取头表（空值用确认/创建时间兜底）
+UPDATE `biz_purchase_request_detail` d
+JOIN `biz_purchase_request` r ON r.id = d.request_id
+SET d.`receive_status` = 3,
+    d.`arrive_batch_no` = 'B1',
+    d.`arrive_batch_time` = COALESCE(r.arrive_time, r.confirm_time, r.create_time),
+    d.`receive_batch_time` = COALESCE(r.receive_time, r.confirm_time, r.create_time)
+WHERE r.`status` = 3;
+
+-- 4) 存量待入库确认申请单（头=5）→ 行 2 / 批次 B1（旧模型为整单到货）
+UPDATE `biz_purchase_request_detail` d
+JOIN `biz_purchase_request` r ON r.id = d.request_id
+SET d.`receive_status` = 2,
+    d.`arrive_batch_no` = 'B1',
+    d.`arrive_batch_time` = COALESCE(r.arrive_time, r.create_time)
+WHERE r.`status` = 5;

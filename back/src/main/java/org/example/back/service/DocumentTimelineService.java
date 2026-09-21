@@ -5,10 +5,12 @@ import org.example.back.common.exception.BusinessException;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizPurchase;
 import org.example.back.entity.BizPurchaseRequest;
+import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.entity.BizPurchaseReturn;
 import org.example.back.entity.BizSalesReturn;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.mapper.BizPurchaseReturnMapper;
 import org.example.back.mapper.BizSalesReturnMapper;
@@ -19,7 +21,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 单据流程时间线（D104）：进货单/采购申请单/进货退货单/销售退货单四类跨部门单据的
@@ -40,6 +46,8 @@ public class DocumentTimelineService {
     private BizPurchaseMapper bizPurchaseMapper;
     @Autowired
     private BizPurchaseRequestMapper bizPurchaseRequestMapper;
+    @Autowired
+    private BizPurchaseRequestDetailMapper bizPurchaseRequestDetailMapper;
     @Autowired
     private BizPurchaseReturnMapper bizPurchaseReturnMapper;
     @Autowired
@@ -92,15 +100,64 @@ public class DocumentTimelineService {
                 claimed ? r.getOperationTime() : null,
                 r.getOperatorName() == null ? "采购认领后进入采购中"
                         : "采购管理员 " + r.getOperatorName() + " 认领，进入采购中"));
-        nodes.add(node("arrived", "采购到货",
-                st == PurchaseRequestService.STATUS_AWAITING_CONFIRM
-                        || st == PurchaseRequestService.STATUS_RECEIVED ? "done"
-                        : (st == PurchaseRequestService.STATUS_PURCHASING ? "current" : "pending"),
-                r.getArriveTime(), "采购部提交到货，待仓储确认入库"));
-        nodes.add(node("received", "仓储入库确认",
-                st == PurchaseRequestService.STATUS_RECEIVED ? "done"
-                        : (st == PurchaseRequestService.STATUS_AWAITING_CONFIRM ? "current" : "pending"),
-                r.getConfirmTime(), confirmedDesc(r.getConfirmerName(), "确认入库，库存增加")));
+
+        // D120：到货/入库按批重复（第 N 批到货 → 第 N 批入库确认），批信息取明细行
+        List<BizPurchaseRequestDetail> details = bizPurchaseRequestDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                        .eq(BizPurchaseRequestDetail::getRequestId, id)
+                        .isNotNull(BizPurchaseRequestDetail::getArriveBatchNo));
+        Map<String, List<BizPurchaseRequestDetail>> batches = details.stream()
+                .collect(Collectors.groupingBy(BizPurchaseRequestDetail::getArriveBatchNo, LinkedHashMap::new, Collectors.toList()));
+        List<String> orderedBatches = batches.keySet().stream()
+                .sorted(Comparator.comparing((String b) -> batches.get(b).get(0).getArriveBatchTime(),
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                        // 同毫秒提交的兜底：按批次号数值比较（B2 < B10），不用字典序
+                        .thenComparing(b -> batchSeq(b)))
+                .toList();
+        for (String batchNo : orderedBatches) {
+            List<BizPurchaseRequestDetail> batchLines = batches.get(batchNo);
+            BizPurchaseRequestDetail first = batchLines.get(0);
+            // D120 前提：同批行状态始终整批一致迁移（确认/驳回/撤回都按批整组处理），
+            // 故节点状态取批内首行即可代表整批
+            int lineStatus = first.getReceiveStatus() == null ? 0 : first.getReceiveStatus();
+            String goodsSummary = batchLines.stream()
+                    .map(d -> (d.getGoodsName() == null ? "-" : d.getGoodsName()) + "×" + d.getQuantity())
+                    .collect(Collectors.joining("、"));
+            // 到货节点：本批待确认→current；已入库→done
+            nodes.add(node("arrived_" + batchNo, "第 " + batchNo + " 批到货",
+                    lineStatus == PurchaseRequestService.RECEIVE_AWAITING ? "current" : "done",
+                    first.getArriveBatchTime(),
+                    "本批 " + batchLines.size() + " 行：" + goodsSummary + "，待仓储确认入库"));
+            // 入库节点：本批待确认→current；已入库→done
+            nodes.add(node("received_" + batchNo, "第 " + batchNo + " 批入库确认",
+                    lineStatus == PurchaseRequestService.RECEIVE_AWAITING ? "current"
+                            : (lineStatus == PurchaseRequestService.RECEIVE_DONE ? "done" : "pending"),
+                    first.getReceiveBatchTime(),
+                    lineStatus == PurchaseRequestService.RECEIVE_DONE
+                            ? confirmedDesc(r.getConfirmerName(),
+                                    "确认入库，本批生成一张多行进货单（" + batchLines.size() + " 行）")
+                            : "仓储确认后本批生成一张多行进货单"));
+        }
+
+        // 未全部入库：补一个「继续到货」节点指示当前所处位置（待采购时为 pending，采购中/部分入库为 current；
+        // 待入库确认 5 时本批节点已在上方以 current 呈现，不重复追加）
+        if ((st == PurchaseRequestService.STATUS_PURCHASING || st == PurchaseRequestService.STATUS_PENDING) && !rejected) {
+            long remaining = 0;
+            if (st == PurchaseRequestService.STATUS_PURCHASING) {
+                // 批次明细外的未到货行
+                remaining = bizPurchaseRequestDetailMapper.selectCount(
+                        new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                                .eq(BizPurchaseRequestDetail::getRequestId, id)
+                                .ne(BizPurchaseRequestDetail::getReceiveStatus, PurchaseRequestService.RECEIVE_DONE));
+            }
+            boolean partial = !orderedBatches.isEmpty();
+            nodes.add(node("arrived_next", partial ? "继续到货（剩余 " + remaining + " 行）" : "采购到货",
+                    st == PurchaseRequestService.STATUS_PURCHASING ? "current" : "pending",
+                    null, partial ? "勾选剩余未到货行提交下一批" : "采购勾选到货行后提交"));
+            nodes.add(node("received_next", "仓储入库确认", "pending",
+                    null, "每批确认入库生成一张多行进货单"));
+        }
+
         if (rejected) {
             // 驳回仅发生在待采购状态（申请人重新调整后重提），节点时间取 updateTime 近似
             nodes.add(node("rejected", "已驳回", "done", r.getUpdateTime(),
@@ -201,6 +258,15 @@ public class DocumentTimelineService {
         }
         nodes.add(node("voided", "已作废", "done", voidTime,
                 voidReason == null || voidReason.isBlank() ? "单据已作废留痕" : "作废原因：" + voidReason));
+    }
+
+    /** 批次号 B 后的数值序（解析失败按 0），用于同毫秒批次的稳定排序 */
+    private int batchSeq(String batchNo) {
+        try {
+            return Integer.parseInt(batchNo.substring(1));
+        } catch (NumberFormatException | IndexOutOfBoundsException e) {
+            return 0;
+        }
     }
 
     private DocumentTimelineNodeVO node(String key, String title, String status,

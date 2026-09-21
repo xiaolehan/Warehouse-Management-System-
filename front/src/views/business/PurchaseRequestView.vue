@@ -195,6 +195,14 @@
               <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
             </el-table-column>
             <el-table-column prop="quantity" label="数量" width="90" />
+            <el-table-column label="到货批次" width="85">
+              <template #default="{ row }">{{ row.arriveBatchNo || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="到货状态" width="105">
+              <template #default="{ row }">
+                <el-tag size="small" :type="receiveTagType(row.receiveStatus)">{{ receiveStatusText(row.receiveStatus) }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column v-if="showPrice" label="采购单价" width="110">
               <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
             </el-table-column>
@@ -223,26 +231,50 @@
               <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
             </el-table-column>
             <el-table-column prop="quantity" label="数量" width="90" />
+            <el-table-column label="到货批次" width="85">
+              <template #default="{ row }">{{ row.arriveBatchNo || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="到货状态" width="105">
+              <template #default="{ row }">
+                <el-tag size="small" :type="receiveTagType(row.receiveStatus)">{{ receiveStatusText(row.receiveStatus) }}</el-tag>
+              </template>
+            </el-table-column>
             <el-table-column v-if="showPrice" label="采购单价" width="110">
               <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
             </el-table-column>
           </el-table>
         </template>
       </template>
-      <el-table v-else :data="viewData?.details || []" border size="small" style="margin-top: 12px">
-        <el-table-column label="序号" width="60" type="index" />
-        <el-table-column prop="goodsName" label="商品" />
-        <el-table-column prop="quantity" label="数量" width="100" />
-        <el-table-column label="预计到货" width="110">
-          <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
-        </el-table-column>
-        <el-table-column label="到货备注" min-width="100">
-          <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
-        </el-table-column>
-        <el-table-column v-if="showPrice" label="采购单价" width="120">
-          <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
-        </el-table-column>
-      </el-table>
+      <!-- D120：详情明细按到货批次分组展示（无批次时退化为单一分组） -->
+      <template v-else>
+        <template v-for="group in viewBatchGroups" :key="group.key">
+          <el-divider content-position="left">
+            {{ group.label }}
+            <el-tag size="small" :type="receiveTagType(group.status)" style="margin-left: 8px">
+              {{ group.statusLabel }}
+            </el-tag>
+          </el-divider>
+          <el-table :data="group.rows" border size="small">
+            <el-table-column label="序号" width="60" type="index" />
+            <el-table-column prop="goodsName" label="商品" />
+            <el-table-column prop="quantity" label="数量" width="100" />
+            <el-table-column label="到货状态" width="105">
+              <template #default="{ row }">
+                <el-tag size="small" :type="receiveTagType(row.receiveStatus)">{{ receiveStatusText(row.receiveStatus) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="预计到货" width="110">
+              <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
+            </el-table-column>
+            <el-table-column label="到货备注" min-width="100">
+              <template #default="{ row }">{{ row.arrivalRemark || '—' }}</template>
+            </el-table-column>
+            <el-table-column v-if="showPrice" label="采购单价" width="120">
+              <template #default="{ row }">{{ row.unitPrice ? '¥' + row.unitPrice : '—' }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </template>
       <!-- D104：详情展示单据流程时间线（谁在哪一步做了什么） -->
       <DocumentTimeline
         v-if="viewData?.id"
@@ -251,27 +283,27 @@
       />
     </el-dialog>
 
-    <!-- 到货提交对话框 -->
+    <!-- 到货提交对话框（D120：勾选待到货行按批提交，行内数量不拆） -->
     <el-dialog v-model="receiveVisible" title="采购到货提交" width="720px" :close-on-click-modal="false">
-      <el-alert title="提交后通知仓储管理员确认入库；确认前不增加库存" type="info" :closable="false" style="margin-bottom: 12px" />
-      <el-table :data="receiveForm.items" border size="small">
-        <el-table-column label="商品" min-width="180">
-          <template #default="{ row }">{{ row.goodsName }}</template>
-        </el-table-column>
-        <el-table-column label="申请数量" width="100">
-          <template #default="{ row }">{{ row.requestQuantity }}</template>
-        </el-table-column>
-        <el-table-column label="入库数量" width="140">
+      <el-alert title="勾选本次实际到货的行并填写采购单价；提交后通知仓储确认入库，确认前不增加库存。" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
+        title="按行整批到货：同一物料数量不支持分批，请等整行到齐后再勾选该行" />
+      <el-table :data="receiveForm.items" border size="small" @selection-change="handleReceiveSelection">
+        <el-table-column type="selection" width="45" />
+        <el-table-column label="商品" min-width="200">
           <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 120px" />
+            {{ row.goodsName }}<span v-if="row.spec">（{{ row.spec }}）</span>
           </template>
+        </el-table-column>
+        <el-table-column label="申请数量(整行)" width="120">
+          <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>
         <el-table-column label="预计到货" width="110">
           <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
         </el-table-column>
-        <el-table-column label="采购单价" width="160">
+        <el-table-column label="采购单价" width="170">
           <template #default="{ row }">
-            <el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" style="width: 140px" />
+            <el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" style="width: 150px" />
           </template>
         </el-table-column>
       </el-table>
@@ -457,6 +489,41 @@ const statusTagType = (status) => ({
 const formatTime = (t) => t ? String(t).replace('T', ' ').slice(0, 19) : '—'
 const formatDate = (t) => t ? String(t).replace('T', ' ').slice(0, 10) : '—'
 
+// D120：行级到货状态（1-待到货, 2-本批待入库确认, 3-已入库）
+const receiveStatusText = (status) => ({ 1: '待到货', 2: '待入库确认', 3: '已入库' }[status] || '待到货')
+const receiveTagType = (status) => ({ 1: 'info', 2: 'warning', 3: 'success' }[status] || 'info')
+
+// D120：详情明细按到货批次分组（同批整组迁移，组内状态一致）；未到货行单独一组，无批次时退化为单一「申请明细」
+const viewBatchGroups = computed(() => {
+  const rows = viewData.value?.details || []
+  if (!rows.some(d => d.arriveBatchNo)) {
+    return [{ key: 'all', label: '申请明细', status: null, statusLabel: '', rows }]
+  }
+  const map = {}
+  rows.forEach(d => {
+    const k = d.arriveBatchNo || '__pending__'
+    if (!map[k]) map[k] = []
+    map[k].push(d)
+  })
+  const keys = Object.keys(map).filter(k => k !== '__pending__')
+    .sort((a, b) => String(map[a][0].arriveBatchTime || '')
+      .localeCompare(String(map[b][0].arriveBatchTime || '')))
+  if (map.__pending__) keys.push('__pending__')
+  return keys.map(k => {
+    const list = map[k]
+    const isPending = k === '__pending__'
+    return {
+      key: k,
+      label: isPending ? '未到货'
+        : `第 ${k} 批（${formatTime(list[0].arriveBatchTime).slice(5, 16)} 到货）`,
+      status: isPending ? 1 : list[0].receiveStatus,
+      statusLabel: isPending ? '待到货'
+        : (list.every(d => d.receiveStatus === 3) ? '已入库' : '待入库确认'),
+      rows: list
+    }
+  })
+})
+
 const loadList = async () => {
   loading.value = true
   try {
@@ -615,18 +682,30 @@ const submitProcess = async () => {
   }
 }
 
+// D120：到货弹窗只列出待到货行；勾选行才进入本批提交
+const selectedReceiveRows = ref([])
+const handleReceiveSelection = (rows) => { selectedReceiveRows.value = rows }
+
 const handleArrive = async (row) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
     receiveForm.id = row.id
-    receiveForm.items = (res.data?.details || []).map(d => ({
-      detailId: d.id,
-      goodsName: d.goodsName,
-      requestQuantity: d.quantity,
-      quantity: d.quantity,
-      unitPrice: d.unitPrice ? Number(d.unitPrice) : null,
-      expectedArrivalTime: d.expectedArrivalTime
-    }))
+    receiveForm.items = (res.data?.details || [])
+      // receiveStatus: 1-待到货, 2-本批待入库确认, 3-已入库；后两种不在到货弹窗出现
+      .filter(d => !d.receiveStatus || d.receiveStatus === 1)
+      .map(d => ({
+        detailId: d.id,
+        goodsName: d.goodsName,
+        spec: d.spec,
+        quantity: d.quantity,
+        unitPrice: d.unitPrice ? Number(d.unitPrice) : null,
+        expectedArrivalTime: d.expectedArrivalTime
+      }))
+    selectedReceiveRows.value = []
+    if (!receiveForm.items.length) {
+      ElMessage.warning('该申请单没有待到货行（全部已入库或存在待确认批次）')
+      return
+    }
     receiveVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
@@ -634,12 +713,13 @@ const handleArrive = async (row) => {
 }
 
 const submitArrive = async () => {
-  if (receiveForm.items.some(i => !i.quantity || i.quantity < 1)) return ElMessage.warning('到货数量必须大于0')
-  if (receiveForm.items.some(i => !i.unitPrice || i.unitPrice <= 0)) return ElMessage.warning('请填写全部采购单价')
+  if (!selectedReceiveRows.value.length) return ElMessage.warning('请勾选本次实际到货的明细行')
+  if (selectedReceiveRows.value.some(i => !i.unitPrice || i.unitPrice <= 0)) {
+    return ElMessage.warning('请为勾选行填写采购单价')
+  }
   const payload = {
-    items: receiveForm.items.map(i => ({
+    items: selectedReceiveRows.value.map(i => ({
       detailId: i.detailId,
-      quantity: i.quantity,
       unitPrice: i.unitPrice
     }))
   }

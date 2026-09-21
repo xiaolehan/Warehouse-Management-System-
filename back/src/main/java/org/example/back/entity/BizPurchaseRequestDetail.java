@@ -53,9 +53,30 @@ public class BizPurchaseRequestDetail {
     private Integer arriveQuantity;
 
     /**
-     * 采购单价(入库时填写)
+     * 采购单价(到货时填写)
      */
     private BigDecimal unitPrice;
+
+    /**
+     * D120：行级接收状态: 1-待到货, 2-本批待入库确认, 3-已入库。
+     * 分批粒度=明细行，行内数量不拆；驳回/撤回到货只回置本批行。
+     */
+    private Integer receiveStatus;
+
+    /**
+     * D120：到货批次号（同一次到货提交的行同号，如 B1/B2；驳回/撤回按批操作）
+     */
+    private String arriveBatchNo;
+
+    /**
+     * D120：本批到货提交时间（时间线按批展示；头表 arrive_time 只存最新一批）
+     */
+    private LocalDateTime arriveBatchTime;
+
+    /**
+     * D120：本批入库确认时间（时间线按批展示；头表 confirm_time 只存最新一批）
+     */
+    private LocalDateTime receiveBatchTime;
 
     private Integer sortNo;
 

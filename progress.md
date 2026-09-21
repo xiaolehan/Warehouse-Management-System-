@@ -5,6 +5,21 @@
 
 ---
 
+## 会话 47 — 2026-09-21
+
+### 票 02/D120 采购申请按行分批到货落地（ADR-0016）——327 单测全绿 + E2E 46/46
+
+- **后端（D120 核心语义）：** 行级 `receive_status`(1 待到货/2 本批待入库确认/3 已入库)+`arrive_batch_no`(B1/B2…)+`arrive_batch_time`/`receive_batch_time` 四列落 `biz_purchase_request_detail`；到货提交改「勾选待到货行+逐行单价」（DTO 删数量字段，行内拆量在契约上不可表达，整行按申请量 arriveQuantity），批次号 nextBatchNo 递增；每批 confirm-receive 生成**一张多行进货单**（createInternal，备注「采购申请单 PR-x 第 Bn 批入库」），部分入库头回 2 派生文案「部分入库」（不新增状态值），全部入库头 3；驳回入库/撤回到货仅重置本批行（批次清空、单价保留预填），重提批次号重排；消息按批白名单撤（TITLE_PURCHASE_REQUEST_ARRIVED），终态 revokeUnreadByBiz；时间线到货/入库节点按批重复（第 Bn 批到货→第 Bn 批入库确认）+「继续到货（剩余 N 行）」当前节点；db.sql 规范段（头状态注释/明细列/索引 idx_prd_batch_no）+ 增量段 23（本地已执行：36 行历史明细按头状态回填 3/B1、5→2/B1）。
+- **前端：** 到货弹窗重写——仅列未到货行勾选表（数量只读=申请量、逐行单价、表头全选），明示「按行整批到货：同一物料数量不支持分批，请等整行到齐」；详情明细按到货批次分组（组头「第 Bn 批（时间 到货）」+组状态 tag，未到货行单独一组，无批次退化「申请明细」）；生产补料双表保留行级批次/状态列。
+- **单测：** PurchaseRequestServiceTest 重写 D120 组 5 例+评审新增 2 例（getById 部分入库派生文案时序、DTO 契约无 quantity 字段+部分确认不触发 D86 齐套通知）；**全量 327 全绿**。
+- **E2E（/tmp/d120_e2e.py）46/46：** 两行一批一张两行单/分两批两张单行单/部分入库派生文案/行级批次与状态/驳回重置后重提仍 B1/撤回重置/时间线 B1+B2 节点/逐行进货单价断言/进价回写断言（5.5/0.8→6.0→2.0）/作废四单库存完全还原/SQL 软删清理。
+- **自纠 + /code-review 修复（两轴并行子代理）：** ①**真 bug：toVO 在 details 装载前算 statusText，「部分入库」永不派生**（列表/详情全中招）→ 调整赋值顺序+单测钉住；②arrive() 写库循环 O(n²) 重配对+裸 orElseThrow → itemMap 一次构建；③装箱状态比较 6 处 → receiveStatusIs 助手（statusText 处为 VO 流，保留原地比较——误替换曾致 Eclipse 编译器「Unresolved compilation problem」，clean compile 实证修复）；④时间线同毫秒批次字典序 B10<B2 → batchSeq 数值 tiebreak+「首行代表整批」前提注释；⑤时间线两处全限定 LambdaQueryWrapper → 短名。
+- **评审不修（有意识留后）：** arrive_batch_time/receive_batch_time 超出 spec DB 清单（时间线按批需要，注释在案）；详情分组仅普通申请单做组化、生产补料双表保留平铺批次列（双层分组嵌套过重）；仓储端「本批行」以行级状态 tag 呈现（确认按钮为整单粒度）。
+- **运维实证（CLAUDE.md 坑位再确认）：** 增量编译掩盖主类编译错误（32 例全 ERROR 后 clean test 复绿）；Java/Python/SQL 三层大量近形标识符转录错误——长块改写一律 python 定界重写+Read 复核。
+- **下一步：** 票 03/D113 销售单按单批量下达 → 04/D112 新成品联动/缺料标识 → 05/D114 生产单生命周期时间线；全完成后终审+提交，交用户统一手测（D120 复测项已记 pending-retest.md）。
+
+---
+
 ## 会话 46 — 2026-09-21
 
 ### 手测十问题批次：小票 D115–D119 + 票 01/D111 进货头行结构落地——319 单测全绿 + E2E 19/19

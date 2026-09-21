@@ -41,5 +41,17 @@ public class PurchaseRequestDetailVO {
 
     private BigDecimal unitPrice;
 
+    /** D120 行级接收状态：1-待到货, 2-本批待入库确认, 3-已入库 */
+    private Integer receiveStatus;
+
+    /** D120 到货批次号（同批同号，如 B1/B2） */
+    private String arriveBatchNo;
+
+    /** D120 本批到货提交时间 */
+    private LocalDateTime arriveBatchTime;
+
+    /** D120 本批入库确认时间 */
+    private LocalDateTime receiveBatchTime;
+
     private Integer sortNo;
 }

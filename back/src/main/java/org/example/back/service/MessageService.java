@@ -556,10 +556,14 @@ public class MessageService {
                 ROUTE_PURCHASE_REQUEST);
     }
 
+    /** D120：采购到货消息标题常量——驳回/撤回按此标题白名单撤回，不误撤认领等他条通知 */
+    public static final String TITLE_PURCHASE_REQUEST_ARRIVED = "待确认采购入库";
+
     /**
-     * 采购到货后通知仓储管理员有待确认的采购入库。
+     * D120 采购到货后通知仓储管理员有待确认的采购入库（按批：文案带批次号与本批行数）。
      */
-    public void sendPurchaseRequestArrivedToWarehouseAdmins(String requestNo, String operatorName, Long requestId) {
+    public void sendPurchaseRequestArrivedToWarehouseAdmins(String requestNo, String operatorName,
+                                                             String batchLabel, int lineCount, Long requestId) {
         Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
         if (warehouseDeptId == null) {
             return;
@@ -567,11 +571,11 @@ public class MessageService {
         String operator = StringUtils.hasText(operatorName) ? operatorName : "采购管理员";
         sendToDeptAdminsWithBiz(
                 warehouseDeptId,
-                "待确认采购入库",
+                TITLE_PURCHASE_REQUEST_ARRIVED,
                 String.format(
                         Locale.ROOT,
-                        "采购申请单 %s 已由 %s 到货，请尽快确认入库。",
-                        requestNo, operator
+                        "采购申请单 %s 第 %s 批已由 %s 到货（本批 %d 行），请尽快确认入库。",
+                        requestNo, batchLabel, operator, lineCount
                 ),
                 "purchase_request",
                 requestId,

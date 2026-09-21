@@ -6,12 +6,15 @@ import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
+import org.example.back.dto.PurchaseRequestReceiveDTO;
+import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.vo.KitShortageVO;
+import org.example.back.vo.PurchaseRequestVO;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.junit.jupiter.api.BeforeAll;
@@ -26,6 +29,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -607,36 +612,57 @@ class PurchaseRequestServiceTest {
         assertEquals("仅采购中状态可修改到货计划", ex.getMessage());
     }
 
-    // ---------- D61：到货撤回仅撤销仓储部未读消息，保留认领通知 ----------
+    // ---------- D120：到货撤回只回本批行、按标题白名单撤到货待办，历史批次不动 ----------
     @Test
-    void arriveCancel_revokesOnlyWarehouseDeptUnread() {
+    void arriveCancel_resetsOnlyBatchLines_andRevokesArrivedTitle() {
         BizPurchaseRequest request = new BizPurchaseRequest();
         request.setId(5L);
         request.setStatus(5); // AWAITING_CONFIRM
         when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+        BizPurchaseRequestDetail batchLine = batchDetail(201L, 2, "B1");
+        BizPurchaseRequestDetail historyLine = batchDetail(200L, 3, "B1");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(historyLine, batchLine));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
 
         service.arriveCancel(5L);
 
-        verify(messageService).revokeUnreadByBizAndDeptCode(
-                eq("purchase_request"), eq(5L), eq(AuthzService.DEPT_WAREHOUSE));
+        // 只本批行（id=201）被回写一次；历史行(id=200)状态3不匹配，不会被重复回写
+        verify(bizPurchaseRequestDetailMapper, times(1)).update(any(), org.mockito.ArgumentMatchers.any());
+        // 白名单撤回
+        verify(messageService).revokeUnreadByBizAndTitles(
+                eq("purchase_request"), eq(5L),
+                eq(List.of(MessageService.TITLE_PURCHASE_REQUEST_ARRIVED)));
         verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
     }
 
-    // ---------- D61：入库驳回仅撤销仓储部未读消息，保留认领通知 ----------
+    // ---------- D120：入库驳回同样只退本批 ----------
     @Test
-    void arriveReject_revokesOnlyWarehouseDeptUnread() {
+    void arriveReject_resetsOnlyBatchLines_andRevokesArrivedTitle() {
         BizPurchaseRequest request = new BizPurchaseRequest();
         request.setId(5L);
-        request.setStatus(5); // AWAITING_CONFIRM
+        request.setStatus(5);
         when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(request);
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(batchDetail(201L, 2, "B1")));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
 
         service.arriveReject(5L);
 
-        verify(messageService).revokeUnreadByBizAndDeptCode(
-                eq("purchase_request"), eq(5L), eq(AuthzService.DEPT_WAREHOUSE));
+        verify(messageService).revokeUnreadByBizAndTitles(
+                eq("purchase_request"), eq(5L),
+                eq(List.of(MessageService.TITLE_PURCHASE_REQUEST_ARRIVED)));
         verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
+    }
+
+    private BizPurchaseRequestDetail batchDetail(long id, int receiveStatus, String batchNo) {
+        BizPurchaseRequestDetail d = new BizPurchaseRequestDetail();
+        d.setId(id);
+        d.setRequestId(5L);
+        d.setGoodsName("物料" + id);
+        d.setQuantity(5);
+        d.setReceiveStatus(receiveStatus);
+        d.setArriveBatchNo(batchNo);
+        return d;
     }
 
     // ---------- D61：明细ID为空时单独报错 ----------
@@ -683,6 +709,181 @@ class PurchaseRequestServiceTest {
         verify(bizPurchaseRequestDetailMapper, never()).updateById(any(BizPurchaseRequestDetail.class));
     }
 
+    // ============================== D120：按行分批到货 ==============================
+
+    private BizPurchaseRequest purchasingHead(long id) {
+        BizPurchaseRequest head = new BizPurchaseRequest();
+        head.setId(id);
+        head.setRequestNo("PR-" + id);
+        head.setStatus(PurchaseRequestService.STATUS_PURCHASING);
+        head.setSourceType("warehouse");
+        return head;
+    }
+
+    private BizPurchaseRequestDetail requestDetail(long id, int receiveStatus, String name, int quantity) {
+        BizPurchaseRequestDetail d = new BizPurchaseRequestDetail();
+        d.setId(id);
+        d.setRequestId(5L);
+        d.setGoodsId(id + 1000);
+        d.setGoodsName(name);
+        d.setQuantity(quantity);
+        d.setReceiveStatus(receiveStatus);
+        return d;
+    }
+
+    private static PurchaseRequestReceiveDTO.ReceiveItemDTO arriveItem(Long detailId, String unitPrice) {
+        PurchaseRequestReceiveDTO.ReceiveItemDTO item = new PurchaseRequestReceiveDTO.ReceiveItemDTO();
+        item.setDetailId(detailId);
+        item.setUnitPrice(new BigDecimal(unitPrice));
+        return item;
+    }
+
+    private LoginResponse.UserInfoVO purchaseUser() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(20L);
+        user.setRealName("采购乙");
+        return user;
+    }
+
+    @Test
+    void arrive_partialLines_setsBatchAndHeadStatus_andNotifies() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        BizPurchaseRequestDetail line1 = requestDetail(101L, 1, "钢板", 19);
+        BizPurchaseRequestDetail line2 = requestDetail(102L, 1, "螺丝", 1);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(line1, line2));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(purchaseUser());
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        // 只勾选 101 一行（模拟 19 个先到，1 个未到）
+        dto.setItems(List.of(arriveItem(101L, "50.00")));
+        service.arrive(5L, dto);
+
+        // 明细回写：行→待确认(2)、批次 B1、到货量=整行申请量 19（无拆量）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequestDetail>> cap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(bizPurchaseRequestDetailMapper).update(isNull(), cap.capture());
+        String sqlSet = String.valueOf(cap.getValue().getSqlSet());
+        // .set 的值在参数 Map 中（sqlSet 里是占位符）
+        var params = cap.getValue().getParamNameValuePairs();
+        assertTrue(sqlSet.contains("receiveStatus=") && params.containsValue(2), sqlSet + params);
+        assertTrue(sqlSet.contains("arriveBatchNo=") && params.containsValue("B1"), sqlSet + params);
+        assertTrue(sqlSet.contains("arriveQuantity=") && params.containsValue(19), sqlSet + params);
+        // 头 2→5；到货消息带批次与行数
+        verify(messageService).sendPurchaseRequestArrivedToWarehouseAdmins(
+                eq("PR-5"), eq("采购乙"), eq("B1"), eq(1), eq(5L));
+    }
+
+    @Test
+    void arrive_rejectsAlreadyReceivedLine() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        // 行已是 已入库(3)
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 3, "钢板", 19)));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00")));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("已入库，不可重复到货"), ex.getMessage());
+
+        verify(bizPurchaseRequestMapper, never()).update(any(), any());
+        verify(messageService, never()).sendPurchaseRequestArrivedToWarehouseAdmins(
+                any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+    }
+
+    @Test
+    void arrive_rejectsWhenAnotherBatchAwaiting() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        // 头=2 却存在 待确认行（异常态）→ 防御性拦截
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 2, "钢板", 19)));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00")));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("待入库确认的批次"), ex.getMessage());
+    }
+
+    @Test
+    void confirmReceive_partial_returnsToPurchasing_andReceiptOnlyForBatch() {
+        BizPurchaseRequest head = purchasingHead(5L);
+        head.setStatus(PurchaseRequestService.STATUS_AWAITING_CONFIRM);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(head);
+        BizPurchaseRequestDetail batchLine = requestDetail(101L, 2, "钢板", 19);
+        batchLine.setArriveBatchNo("B1");
+        batchLine.setUnitPrice(new BigDecimal("50.00"));
+        BizPurchaseRequestDetail pendingLine = requestDetail(102L, 1, "螺丝", 1);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(batchLine, pendingLine));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(warehouseUser());
+
+        service.confirmReceive(5L);
+
+        // 进货单只含本批 1 行（数量19），不含未到货行
+        ArgumentCaptor<PurchaseSaveDTO> receiptCap = ArgumentCaptor.forClass(PurchaseSaveDTO.class);
+        verify(purchaseService).createInternal(receiptCap.capture(), anyLong(), any());
+        assertEquals(1, receiptCap.getValue().getLines().size());
+        assertEquals(19, receiptCap.getValue().getLines().get(0).getQuantity());
+        // 头回 2（部分入库）+ 只按标题撤本批到货待办
+        verify(messageService).revokeUnreadByBizAndTitles(
+                eq("purchase_request"), eq(5L),
+                eq(List.of(MessageService.TITLE_PURCHASE_REQUEST_ARRIVED)));
+        verify(messageService, never()).revokeUnreadByBiz(any(), any());
+    }
+
+    private LoginResponse.UserInfoVO warehouseUser() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(3L);
+        user.setRealName("仓储管理员");
+        return user;
+    }
+
+    @Test
+    void twoBatches_19plus1_eachBatchOneReceipt_andFinalHead3() {
+        BizPurchaseRequest head = purchasingHead(5L);
+        BizPurchaseRequestDetail line1 = requestDetail(101L, 1, "钢板", 19);
+        BizPurchaseRequestDetail line2 = requestDetail(102L, 1, "螺丝", 1);
+        List<BizPurchaseRequestDetail> store = new java.util.ArrayList<>(List.of(line1, line2));
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(head);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenAnswer(inv -> new ArrayList<>(store));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(warehouseUser());
+
+        // ---- 第 1 批：勾选 101 到货并确认入库 ----
+        PurchaseRequestReceiveDTO arrive1 = new PurchaseRequestReceiveDTO();
+        arrive1.setItems(List.of(arriveItem(101L, "50.00")));
+        service.arrive(5L, arrive1);
+        line1.setReceiveStatus(2); line1.setArriveBatchNo("B1");
+        line1.setUnitPrice(new BigDecimal("50.00")); head.setStatus(5); // 模拟DB
+
+        service.confirmReceive(5L);
+        line1.setReceiveStatus(3); head.setStatus(2); // 部分入库回到采购中
+
+        // ---- 第 2 批：剩余 102 到货并确认入库 ----
+        PurchaseRequestReceiveDTO arrive2 = new PurchaseRequestReceiveDTO();
+        arrive2.setItems(List.of(arriveItem(102L, "0.50")));
+        service.arrive(5L, arrive2);
+        line2.setReceiveStatus(2); line2.setArriveBatchNo("B2");
+        line2.setUnitPrice(new BigDecimal("0.50")); head.setStatus(5);
+
+        service.confirmReceive(5L);
+        line2.setReceiveStatus(3); head.setStatus(3);
+
+        // 两批各一张进货单：第1张1行19个，第2张1行1个
+        ArgumentCaptor<PurchaseSaveDTO> receipts = ArgumentCaptor.forClass(PurchaseSaveDTO.class);
+        verify(purchaseService, times(2)).createInternal(receipts.capture(), anyLong(), any());
+        List<PurchaseSaveDTO> all = receipts.getAllValues();
+        assertEquals(1, all.get(0).getLines().size());
+        assertEquals(19, all.get(0).getLines().get(0).getQuantity());
+        assertTrue(all.get(0).getRemark().contains("B1"), all.get(0).getRemark()); // 批次信息写在备注
+        assertEquals(1, all.get(1).getLines().size());
+        assertEquals(1, all.get(1).getLines().get(0).getQuantity());
+        assertTrue(all.get(1).getRemark().contains("B2"), all.get(1).getRemark());
+        // 仅终态撤全部未读
+        verify(messageService).revokeUnreadByBiz("purchase_request", 5L);
+    }
+
     // ============================== D62：确认入库齐套通知 ==============================
 
     private BizPurchaseRequest awaitingConfirmRequest(String sourceType) {
@@ -706,6 +907,9 @@ class PurchaseRequestServiceTest {
         detail.setQuantity(10);
         detail.setArriveQuantity(10);
         detail.setUnitPrice(BigDecimal.ONE);
+        // D120：本批待入库确认
+        detail.setReceiveStatus(PurchaseRequestService.RECEIVE_AWAITING);
+        detail.setArriveBatchNo("B1");
         return detail;
     }
 
@@ -810,5 +1014,55 @@ class PurchaseRequestServiceTest {
 
         verify(productionOrderService, never()).computeShortageForOrder(anyLong());
         verify(messageService, never()).sendKitCompleteToProductionAdmins(anyString(), anyString(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void getById_partialReceive_statusTextDerivesPartial() {
+        // D120：「部分入库」由行状态派生（头仍是采购中），且必须在明细装载之后计算
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        BizPurchaseRequestDetail done = requestDetail(101L, PurchaseRequestService.RECEIVE_DONE, "钢板", 19);
+        done.setArriveBatchNo("B1");
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(
+                done, requestDetail(102L, PurchaseRequestService.RECEIVE_PENDING, "螺丝", 1)));
+
+        PurchaseRequestVO vo = service.getById(5L);
+
+        assertEquals("部分入库", vo.getStatusText());
+
+        // 全部行未入库时不派生，仍是「采购中」
+        when(bizPurchaseRequestMapper.selectById(6L)).thenReturn(purchasingHead(6L));
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(
+                requestDetail(201L, PurchaseRequestService.RECEIVE_PENDING, "螺母", 2)));
+        assertEquals("采购中", service.getById(6L).getStatusText());
+    }
+
+    @Test
+    void confirmReceive_partial_productionSource_noKitNotify() {
+        // D120/review：生产补料单部分入库未齐料——D86 齐料重算/通知必须不触发
+        BizPurchaseRequest head = purchasingHead(5L);
+        head.setStatus(PurchaseRequestService.STATUS_AWAITING_CONFIRM);
+        head.setSourceType(PurchaseRequestService.SOURCE_PRODUCTION);
+        head.setProductionOrderId(7L);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(head);
+        BizPurchaseRequestDetail batchLine = requestDetail(101L, 2, "钢板", 19);
+        batchLine.setArriveBatchNo("B1");
+        batchLine.setUnitPrice(new BigDecimal("50.00"));
+        BizPurchaseRequestDetail pendingLine = requestDetail(102L, 1, "螺丝", 1);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(batchLine, pendingLine));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(warehouseUser());
+
+        service.confirmReceive(5L);
+
+        verify(productionOrderService, never()).computeShortageForOrder(anyLong());
+        verify(messageService, never()).sendKitCompleteToProductionAdmins(
+                anyString(), anyString(), any(), anyString(), anyLong());
+    }
+
+    @Test
+    void receiveItemDTO_hasNoQuantityField_splitByConstruction() {
+        // D120/spec：接收 DTO 不含数量字段——「行内拆量」在契约上不可表达，整行按申请量到货
+        assertThrows(NoSuchFieldException.class,
+                () -> PurchaseRequestReceiveDTO.ReceiveItemDTO.class.getDeclaredField("quantity"));
     }
 }
