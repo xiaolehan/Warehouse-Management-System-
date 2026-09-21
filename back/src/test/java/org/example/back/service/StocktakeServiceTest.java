@@ -39,6 +39,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -761,5 +762,55 @@ class StocktakeServiceTest {
             wb.write(out);
             return out.toByteArray();
         }
+    }
+
+    // ---------- D122：导出盘点表——盲盘/明盘列差异与读权限 ----------
+
+    private void stubExportData() {
+        when(bizStocktakeMapper.selectById(2L)).thenReturn(order(2, 1));
+        BizStocktakeDetail d = detail(1L, 2L, 5L, 7);
+        when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(d));
+    }
+
+    @Test
+    void export_blindOmitsBookQtyColumn() throws Exception {
+        stubExportData();
+
+        byte[] bytes = service.export(2L, true);
+
+        assertTrue(bytes.length > 4 && bytes[0] == 'P' && bytes[1] == 'K', "xlsx 非空");
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            assertEquals("实盘数", sheet.getRow(0).getCell(5).getStringCellValue());
+            for (int c = 0; c <= 5; c++) {
+                assertNotEquals("账面数", sheet.getRow(0).getCell(c).getStringCellValue());
+            }
+            assertEquals(7.0, sheet.getRow(1).getCell(5).getNumericCellValue(), 0.0001);
+        }
+    }
+
+    @Test
+    void export_openIncludesBookQtyColumn() throws Exception {
+        stubExportData();
+
+        byte[] bytes = service.export(2L, false);
+
+        assertTrue(bytes.length > 4);
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            assertEquals("账面数", sheet.getRow(0).getCell(5).getStringCellValue());
+            assertEquals("实盘数", sheet.getRow(0).getCell(6).getStringCellValue());
+            assertEquals(10.0, sheet.getRow(1).getCell(5).getNumericCellValue(), 0.0001);
+            assertEquals(7.0, sheet.getRow(1).getCell(6).getNumericCellValue(), 0.0001);
+        }
+    }
+
+    @Test
+    void export_requiresWarehouseReadAccess() {
+        doThrow(BusinessException.forbidden("仅仓储部门"))
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.export(2L, true));
+        verify(bizStocktakeMapper, never()).selectById(2L);
     }
 }
