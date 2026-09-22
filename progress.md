@@ -5,6 +5,42 @@
 
 ---
 
+## 会话 53 — 2026-09-22
+
+### 第三轮手测四票（D128-D131）全部实施 + 评审修复 + 全链 E2E，待用户复测
+
+- **实施（按 D131→D129→D130→D128 顺序，每票实施+单测+提交）**：
+  - **D131+D129（fcaf8fd，同批——口径耦合，spec 02 blocked by 04）**：进货明细行 supplier_id 权威（ADR-0018）——手动建单头级下拉统一填行；到货提交逐行选供应商（校验必填/存在/启用，写入 request_detail；预填绑定值、绑定=系统默认锚点 1 则留空必选）；confirmReceive 缺单价/缺供应商行硬校验；createInternal 按行复制供应商、头级留 NULL；最新供应商口径改 `COALESCE(行级,头级)` 回退链（BizPurchaseMapper 窗口 SQL 投影+过滤双处）；退货 VO 行级优先展示。D129：新批量端点 `GET /base/goods/latest-suppliers`（GoodsService.computeLatestSuppliers 共用 resolveLatestSupplier 内核，一次窗口查询+两次批量供应商加载防 N+1）；PurchaseRequestView 六处「上次供应商」列（缺货识别/手动建单/详情三表/认领/到货提交）+ 到货弹窗 960px 带供应商必选列；ProductionOrderView 补料表格同列。存量 85/86 回填 SQL 一次性执行不入 db.sql。
+  - **D130（19ec538）**：create/listShortageGoods 换 requireProductionAccess（requireWarehouseAccess 删除）；requireModuleReadAccess 补 DEPT_PRODUCTION（读路径同口径，防 page 403 复辙）；delete 改 requireNotSuperAdminForBusinessWrite + 申请人本人（顺带修补料草稿撤销死路）；前端建单按钮 v-permission ['production']、撤销按钮 isApplicant（D117 userId 范式）、路由 meta +生产菜单项。
+  - **D128（c61aa99，后 amend 为 ab73490）**：biz_sales/biz_sales_return 加 customer_contact_name(50)/customer_phone(30)（db.sql 规范段+增量段二十六双录，本地 DDL 已执行）；实体/DTO/VO 透传（BeanUtils 自动流动；SalesSourceOptionVO 显式带出供退货预填链）；SalesReturnService.create 快照= dto hasText 优先否则来源单带出（镜像 customerName 范式）；SalesView/SalesReturnView 建单弹窗+详情弹窗全链、选源单自动带出可改。
+- **评审修复（三代理并行两轴评审，ff97599）**：
+  - D128：SalesView handleAdd 重置漏两键（上一单联系人泄漏到下一单——must-fix）；退货预填改镜像 customerName（来源无值保留已填，原实现静默清空）；未用 import 清理。
+  - **D130：时间线读守卫漏生产**（DocumentTimelineService 仍限仓储/采购——生产详情页时间线静默空白，正是「改一处漏一处」类，must-fix）；认领通知改发生产部（原按 sourceType 路由→仓储，新普通申请创建者收不到；sourceType 死参数移除）；控制器 @RequireAdmin/@AuditLog「仓储建」文案→「生产」（审计误归属）；补规格测试项 process/arrive/reject→采购守卫、confirmReceive→仓储守卫、delete 超管禁令（5 测试）。
+  - D131+D129：**computeLatestSuppliers 补 requireGoodsReadAccess**（原无守卫——人事等四部门外登录者可枚举物料供应商映射，must-fix+权限负测）；进货列表头级供应商列对齐 ADR-0018「内部单显示—，行级真相在详情」（删 buildSupplierSummary/buildSupplierMap）；进货退货供应商展示改行级优先对齐 spec；confirmReceive 缺供应商报错补恢复路径提示；成品行真实过滤测试强化。
+- **全链 E2E（用户第三轮场景复刻）**：生产建两行申请（38 手柄帽 01/39 手柄底座 01 各 2）→ 采购认领排到货计划 → 采购到货提交行级选供应商（胖牛 9/胖乐 10；负测：缺供应商 400、不存在供应商 400、仓储调到货 403）→ 仓储确认入库 → 进货 87 头级 NULL+两行供应商 9/10 ✓ → latest-suppliers 38→9/39→10 且 isDefault=false（前置为绑定 2 德州旺旺+默认 tag，切换实证）→ D130 矩阵（生产建✓/读✓/本人撤✓；仓储建 403；采购全链不变）→ D128 链（销售 21 带联系人→仓储确认出库→可退选项带出王五/13800138000→退货不传自动带出✓）。评审修复后复验：hr_admin 调 latest-suppliers 403、进货 87 详情头级空行级保留。
+- **终验证**：全量 413 单测全绿（BUILD SUCCESS；46→51 采购申请、48→49 商品、新增 6 守卫/快照测试等）；npm run build 绿；后端重启 curl 验证。
+- **数据清理（API 优先+SQL 兜底，库存全还原）**：退货 2 删除（pending 直删）、销售 21/进货 87 作废（库存自动回冲）、申请 36+明细 SQL 软删（终态 API 不可删）；库存 30=2/38=0/39=0 与原值一致；作废单不参与最新性计算顺带验证（latest-suppliers 回落绑定 2）。透明备注：确认销售 21 时踩「历史销售单作废需提交仓储审批」（确认出库权在仓储）与价格偏离门闸（首单按 66 录入偏离标准价 12999 被拒，作废重建）——均既有设计非缺陷。
+- **落盘**：四票 Status→ready-for-human；CONTEXT.md 词条修订（采购申请单/进货单/到货备注/最新供应商+新增客户联系人）；pending-retest 观察项 1（补料草稿撤销死路）销账转复测。
+- **下一步**：用户第三轮手测（D128-D131 + D121-D127 复测项 + pending-retest.md）；已推送 origin/main。
+
+---
+
+## 会话 52 — 2026-09-22
+
+### 会话恢复 + 第三轮手测四问题 grilling 定案落票（D128-D131，未实施）
+
+- **会话恢复**：/tmp 交接文件已随 WSL 重启丢失（无碍——progress.md 会话 51 + pending-retest.md 全覆盖）；双端服务重启并 curl 验证；库内锚点核查——58/59 库存=0（数据事件干净）、销售单 4/19 confirm_status=2（confirm_status 与 biz_status 是两字段，4 的「已出库」在 confirm_status）、PTO153/SMC105 库存 0→2（D113 全链生产入库所致，B 组缺货复测需先耗库存）、进货 85/86 在库。
+- **grilling 定案（4 问题 10 决策）**：
+  - **D128 销售单客户联系人/手机号**：头表两选填自由文本字段；退货建单带出可编辑（镜像 customerName）；列表不加列；消息不携带；手机号不校验格式。
+  - **D129 采购申请全链「上次供应商」列**：新批量端点 `GET /base/goods/latest-suppliers`（内核复用 fillLatestSuppliers），前端六处（手动建单/缺货识别/详情/认领/到货/生产补料弹窗）只读展示；口径随 D131。
+  - **D130 采购申请创建权 仓储→生产**：方案 A——create/listShortageGoods 换 requireProductionAccess，采购功能零改动（认领/到货/自主进货直通车全保留），仓储保留确认入库+只读；**撤销守卫改「申请人本人可撤」**（顺带修复 pending-retest 观察项「补料草稿撤销死路」）；sourceType 语义不变。
+  - **D131 进货单供应商行级化**（ADR-0018）：detail.supplier_id 权威；手动建单头级下拉统一填行（交互不变）；到货提交逐行选供应商（预填绑定值，绑定=系统默认则留空必选）写入 request_detail 并在 createInternal 复制到进货行、头级留空；最新供应商口径改 `COALESCE(行级,头级)` 回退链；否决按供应商拆单（连锁改 D120 批次语义）与头级取多数（信息有损）；存量回填 85（全德州旺旺）/86（行级胖牛/胖乐、头级空）——一次性 SQL 不入 db.sql。
+- **关键调研发现（根因）**：Q4 非用户操作问题——createInternal 从不填头级供应商（进货 85/86 supplier_id=NULL 实证），D123 SQL 显式排除头级空单 → 回退「默认」；申请 35 两行两供应商（胖牛/胖乐）暴露头级模型装不下申请链的多供应商现实。
+- **落盘**：4 张票 `.scratch/manual-test-2026-09-22/issues/`（01-d128…04-d131，全部 ready-for-agent，02 blocked by 04）；ADR-0018；CONTEXT.md 修订 4 词条（进货单/最新供应商/采购申请单/到货备注）+ 新增「客户联系人」；pending-retest.md 观察项 1 销账转复测。
+- **下一步**：实施 D131+D129（同批，口径耦合）→ D130 → D128；每票 /code-review 两轴；然后用户继续第三轮手测（D121-D127 复测项仍待）。
+
+---
+
 ## 会话 51 — 2026-09-21
 
 ### 第二轮手测 7 项问题定案并全部落地——D121-D127 七票完成，387 单测全绿
