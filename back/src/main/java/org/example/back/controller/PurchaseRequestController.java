@@ -70,9 +70,9 @@ public class PurchaseRequestController {
     }
 
     @PostMapping
-    @RequireAdmin("仅仓储管理员可创建采购申请单")
+    @RequireAdmin("仅生产管理员可创建采购申请单")
     @AuditLog(module = "采购申请", action = "建单", targetType = "采购申请单",
-            detail = "'仓储建采购申请，共 ' + #dto.details?.size() + ' 行明细'")
+            detail = "'生产建采购申请，共 ' + #dto.details?.size() + ' 行明细'")
     @PreventDuplicateSubmit(intervalMs = 1800, message = "请勿重复提交采购申请单")
     public Result<Void> create(@Valid @RequestBody PurchaseRequestSaveDTO dto) {
         purchaseRequestService.create(dto);

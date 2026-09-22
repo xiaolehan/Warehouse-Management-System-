@@ -559,14 +559,14 @@ public class MessageService {
     }
 
     /**
-     * 仓储创建采购申请单后通知采购管理员有待处理的采购申请。
+     * 采购申请单提交后（D130 起由生产管理员创建）通知采购管理员有待处理的采购申请。
      */
     public void sendPurchaseRequestToPurchaseAdmins(String requestNo, String applicantName, Long requestId) {
         Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
         if (purchaseDeptId == null) {
             return;
         }
-        String applicant = StringUtils.hasText(applicantName) ? applicantName : "仓储管理员";
+        String applicant = StringUtils.hasText(applicantName) ? applicantName : "申请人";
         sendToDeptAdminsWithBiz(
                 purchaseDeptId,
                 "待处理采购申请",
@@ -607,15 +607,13 @@ public class MessageService {
     }
 
     /**
-     * D61 采购认领后向来源申请人推送行级到货摘要（生产补料→生产部管理员，仓储建单→仓储部管理员）。
+     * D130 起采购申请创建权归生产管理员（补料/普通申请同源）——认领后向生产部管理员推送行级到货摘要。
      * biz 绑定 purchase_request/requestId：认领时 process() 先 revoke 旧待处理消息再发本条，
      * 后续终态（入库/驳回/撤销）由既有 revokeUnreadByBiz 调用点统一回收未读。
      */
     public void sendPurchaseRequestClaimedToSourceApplicant(String requestNo, String operatorName,
-                                                            String sourceType, String arrivalSummary, Long requestId) {
-        String deptCode = PurchaseRequestService.SOURCE_PRODUCTION.equals(sourceType)
-                ? AuthzService.DEPT_PRODUCTION : AuthzService.DEPT_WAREHOUSE;
-        Long deptId = resolveDeptIdByCode(deptCode);
+                                                            String arrivalSummary, Long requestId) {
+        Long deptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
         if (deptId == null) {
             return;
         }

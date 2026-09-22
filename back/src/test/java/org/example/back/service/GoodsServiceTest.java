@@ -688,7 +688,8 @@ class GoodsServiceTest {
     @Test
     void computeLatestSuppliers_latestWinsAndExposesBinding() {
         when(baseGoodsMapper.selectBatchIds(any()))
-                .thenReturn(java.util.List.of(materialWithSupplier(29L, "钢板", 5L)));
+                .thenReturn(java.util.List.of(materialWithSupplier(29L, "钢板", 5L),
+                        product(40L, "整机", 1)));
         when(baseSupplierMapper.selectBatchIds(any()))
                 .thenReturn(java.util.List.of(supplier(9L, "北方特钢"), supplier(5L, "华东钢业")));
         BizPurchaseMapper.LatestPurchaseSupplier latest = new BizPurchaseMapper.LatestPurchaseSupplier();
@@ -704,7 +705,19 @@ class GoodsServiceTest {
         assertEquals("北方特钢", info.getSupplierName());
         assertEquals(Boolean.FALSE, info.getIsDefault());
         assertEquals(5L, info.getBindingSupplierId());
-        assertFalse(result.containsKey(40L), "未知/成品 id 不入结果");
+        assertFalse(result.containsKey(40L), "成品行真实命中 type 过滤，不入结果");
+    }
+
+    @Test
+    void computeLatestSuppliers_rejectsNonGoodsDeptMember() {
+        doThrow(new BusinessException("仅仓储、采购、生产或销售部门可访问物料资料"))
+                .when(authzService).requireAnyDeptMemberOrSuperAdmin(anyString(),
+                        anyString(), anyString(), anyString(), anyString());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.computeLatestSuppliers(java.util.List.of(29L)));
+        assertTrue(ex.getMessage().contains("仅仓储、采购、生产或销售"), ex.getMessage());
+        verify(baseGoodsMapper, never()).selectBatchIds(any());
     }
 
     @Test

@@ -377,7 +377,7 @@ public class PurchaseRequestService {
         }
         messageService.revokeUnreadByBiz("purchase_request", id);
         messageService.sendPurchaseRequestClaimedToSourceApplicant(
-                entity.getRequestNo(), loginUser.getRealName(), entity.getSourceType(),
+                entity.getRequestNo(), loginUser.getRealName(),
                 buildArrivalSummary(details, itemMap), id);
     }
 
@@ -559,7 +559,8 @@ public class PurchaseRequestService {
                 throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少采购单价");
             }
             if (detail.getSupplierId() == null) {
-                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少供应商，请重新到货提交");
+                throw BusinessException.validateFail("明细[" + detail.getGoodsName()
+                        + "]缺少供应商，请采购撤回本批到货或仓储驳回后重新到货提交并选择供应商");
             }
             PurchaseSaveDTO.LineDTO line = new PurchaseSaveDTO.LineDTO();
             line.setGoodsId(detail.getGoodsId());

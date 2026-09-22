@@ -81,7 +81,8 @@ public class DocumentTimelineService {
 
     public DocumentTimelineVO getPurchaseRequestTimeline(Long id) {
         authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅仓储/采购管理员可查看采购申请时间线", AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE);
+                "仅仓储/采购/生产管理员可查看采购申请时间线",
+                AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE, AuthzService.DEPT_PRODUCTION);
         BizPurchaseRequest r = bizPurchaseRequestMapper.selectById(id);
         if (r == null) {
             throw BusinessException.notFound("采购申请单不存在");
@@ -91,7 +92,7 @@ public class DocumentTimelineService {
         List<DocumentTimelineNodeVO> nodes = new ArrayList<>();
         String source = PurchaseRequestService.SOURCE_PRODUCTION.equals(r.getSourceType())
                 ? "生产补料申请（申请人 " + r.getApplicantName() + "）"
-                : "仓储 " + r.getApplicantName() + " 发起采购申请";
+                : "申请人 " + r.getApplicantName() + " 发起采购申请";
         nodes.add(node("submitted", "提交申请", "done", r.getCreateTime(),
                 source + " " + r.getRequestNo()));
         boolean claimed = st >= PurchaseRequestService.STATUS_PURCHASING && st <= PurchaseRequestService.STATUS_RECEIVED;

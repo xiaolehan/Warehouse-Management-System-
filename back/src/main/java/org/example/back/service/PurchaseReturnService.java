@@ -608,25 +608,27 @@ public class PurchaseReturnService {
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
             BizPurchase sourcePurchase = vo.getSourcePurchaseId() == null ? null : sourceMap.get(vo.getSourcePurchaseId());
-            if (sourcePurchase != null && sourcePurchase.getSupplierId() != null) {
-                BaseSupplier sourceSupplier = sourceSupplierMap.get(sourcePurchase.getSupplierId());
-                vo.setSupplierName(sourceSupplier == null ? null : sourceSupplier.getSupplierName());
-            } else if (sourcePurchase != null) {
-                // D131：来源单头级空 → 按退货行对应的来源明细行供应商归并（同单语义：一行各 supplier 或「多个供应商」）
-                Set<String> lineNames = new HashSet<>();
-                for (PurchaseReturnDetailVO lineVO : lineVOs) {
-                    BizPurchaseDetail sourceDetail = sourceDetailMap.get(lineVO.getSourceDetailId());
-                    Long lineSupplierId = sourceDetail == null ? null : sourceDetail.getSupplierId();
-                    BaseSupplier lineSupplier = lineSupplierId == null ? null : lineSupplierMap.get(lineSupplierId);
-                    if (lineSupplier != null) {
-                        lineNames.add(lineSupplier.getSupplierName());
-                    }
+            // D131：退货行供应商展示行级优先（来源明细行 supplier_id 为权威），行空回退头级（ADR-0018）
+            BaseSupplier headSupplier = (sourcePurchase == null || sourcePurchase.getSupplierId() == null)
+                    ? null : sourceSupplierMap.get(sourcePurchase.getSupplierId());
+            String headName = headSupplier == null ? null : headSupplier.getSupplierName();
+            Set<String> lineNames = new HashSet<>();
+            for (PurchaseReturnDetailVO lineVO : lineVOs) {
+                BizPurchaseDetail sourceDetail = sourceDetailMap.get(lineVO.getSourceDetailId());
+                Long lineSupplierId = sourceDetail == null ? null : sourceDetail.getSupplierId();
+                BaseSupplier lineSupplier = lineSupplierId == null ? null : lineSupplierMap.get(lineSupplierId);
+                String name = lineSupplier != null ? lineSupplier.getSupplierName() : headName;
+                if (name != null) {
+                    lineNames.add(name);
                 }
-                if (lineNames.size() == 1) {
-                    vo.setSupplierName(lineNames.iterator().next());
-                } else if (lineNames.size() > 1) {
-                    vo.setSupplierName("多个供应商");
-                }
+            }
+            if (lineNames.size() == 1) {
+                vo.setSupplierName(lineNames.iterator().next());
+            } else if (lineNames.size() > 1) {
+                vo.setSupplierName("多个供应商");
+            } else if (headName != null) {
+                // 无退货行或行级均无法解析 → 回退头级展示（D123 口径）
+                vo.setSupplierName(headName);
             }
         }
     }

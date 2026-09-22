@@ -277,9 +277,10 @@ public class GoodsService {
     /**
      * D129：批量查询物料「最新供应商」（采购申请全链参考列 + 到货提交预填绑定值）。
      * 口径与商品资料页 fillLatestSuppliers 完全一致（共用 resolveLatestSupplier 内核）；
-     * 成品/未知 id 不入结果。供应商名非价格敏感数据，登录即可调（同 page/options 家族）。
+     * 成品/未知 id 不入结果。读权限与 page/options 同一族（四部门成员+超管）。
      */
     public Map<Long, GoodsLatestSupplierVO> computeLatestSuppliers(java.util.Collection<Long> goodsIds) {
+        requireGoodsReadAccess();
         if (goodsIds == null || goodsIds.isEmpty()) {
             return Map.of();
         }

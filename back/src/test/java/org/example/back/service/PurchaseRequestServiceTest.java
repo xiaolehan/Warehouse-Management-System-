@@ -8,6 +8,7 @@ import org.example.back.dto.ProductionDraftItemDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestDetailDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
+import org.example.back.dto.PurchaseRequestRejectDTO;
 import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseSupplier;
@@ -578,7 +579,7 @@ class PurchaseRequestServiceTest {
         service.process(5L, dto);
 
         verify(messageService).sendPurchaseRequestClaimedToSourceApplicant(
-                eq("PR-1"), eq("采购乙"), eq("production"),
+                eq("PR-1"), eq("采购乙"),
                 Mockito.contains("轴承 2026-09-15"), eq(5L));
     }
 
@@ -607,7 +608,7 @@ class PurchaseRequestServiceTest {
         assertEquals(LocalDateTime.of(2026, 9, 25, 0, 0), detCap.getValue().getExpectedArrivalTime());
         assertEquals("改发厂家B", detCap.getValue().getArrivalRemark());
         // 修改不触发任何消息与撤销
-        verify(messageService, never()).sendPurchaseRequestClaimedToSourceApplicant(any(), any(), any(), any(), any());
+        verify(messageService, never()).sendPurchaseRequestClaimedToSourceApplicant(any(), any(), any(), any());
         verify(messageService, never()).revokeUnreadByBiz(anyString(), any());
     }
 
@@ -1282,6 +1283,53 @@ class PurchaseRequestServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(8L));
         assertTrue(ex.getMessage().contains("仅申请人本人"), ex.getMessage());
         verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
+    }
+
+    @Test
+    void delete_superAdmin_blockedByBusinessWriteBan() {
+        doThrow(new BusinessException("超级管理员不可执行业务写操作"))
+                .when(authzService).requireNotSuperAdminForBusinessWrite();
+
+        assertThrows(BusinessException.class, () -> service.delete(8L));
+        verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
+    }
+
+    // ---------- D130 复测护栏：采购系/仓储系守卫不回归（mocked AuthzService 下钉住调用契约） ----------
+
+    @Test
+    void process_guardRequiresPurchaseAccess() {
+        doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.process(5L, new PurchaseRequestProcessDTO()));
+        verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
+    }
+
+    @Test
+    void arrive_guardRequiresPurchaseAccess() {
+        doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.arrive(5L, new PurchaseRequestReceiveDTO()));
+        verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
+    }
+
+    @Test
+    void reject_guardRequiresPurchaseAccess() {
+        doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.reject(5L, new PurchaseRequestRejectDTO()));
+        verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
+    }
+
+    @Test
+    void confirmReceive_guardRequiresWarehouseAccess() {
+        doThrow(new BusinessException("仅仓储管理员可确认采购入库"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.confirmReceive(5L));
+        verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
     }
 
     @Test

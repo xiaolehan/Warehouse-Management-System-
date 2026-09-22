@@ -702,12 +702,6 @@ public class PurchaseService {
                         .in(BizPurchaseDetail::getPurchaseId, purchaseIds)
                         .orderByAsc(BizPurchaseDetail::getSortNo)
                         .orderByAsc(BizPurchaseDetail::getId));
-        List<Long> goodsIds = details.stream().map(BizPurchaseDetail::getGoodsId)
-                .filter(Objects::nonNull).distinct().toList();
-        Map<Long, BaseGoods> goodsMap = goodsIds.isEmpty() ? Map.of() : baseGoodsMapper.selectBatchIds(goodsIds).stream()
-                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
-        Map<Long, BaseSupplier> supplierMap = buildSupplierMap(goodsMap.values().stream()
-                .map(BaseGoods::getSupplierId).filter(Objects::nonNull).collect(Collectors.toSet()));
         // D123：头级供应商批量预取（存量单与采购申请渠道单据 supplierId 为 null 不在集合中）
         Set<Long> headSupplierIds = records.stream().map(PurchaseVO::getSupplierId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
@@ -728,11 +722,10 @@ public class PurchaseService {
                     .map(d -> toDetailVO(d, lineSupplierMap)).toList();
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
-            // D123：头级供应商优先展示；无头级（存量/采购申请渠道单据）回退行级供应商汇总
+            // D123：头级供应商展示；无头级（存量/采购申请渠道单据）列表显示「—」——行级真相在详情（ADR-0018）
             BaseSupplier headSupplier = vo.getSupplierId() == null ? null : headSupplierMap.get(vo.getSupplierId());
             vo.setSupplierName(headSupplier == null ? null : headSupplier.getSupplierName());
-            vo.setSupplierSummary(headSupplier != null ? headSupplier.getSupplierName()
-                    : buildSupplierSummary(lineVOs, goodsMap, supplierMap));
+            vo.setSupplierSummary(headSupplier != null ? headSupplier.getSupplierName() : null);
             vo.setAvgPrice(commonUnitPrice(lineVOs));
         }
     }
@@ -768,34 +761,6 @@ public class PurchaseService {
         return firstName + "等" + lines.size() + "种";
     }
 
-    /** 供应商汇总：优先按行级供应商归并（D131），行级为空回退物料绑定供应商；跨供应商为「多个供应商」 */
-    private String buildSupplierSummary(List<PurchaseDetailVO> lines,
-                                        Map<Long, BaseGoods> goodsMap,
-                                        Map<Long, BaseSupplier> supplierMap) {
-        Set<String> names = new HashSet<>();
-        for (PurchaseDetailVO line : lines) {
-            if (line.getSupplierName() != null) {
-                names.add(line.getSupplierName());
-                continue;
-            }
-            BaseGoods goods = goodsMap.get(line.getGoodsId());
-            if (goods == null || goods.getSupplierId() == null) {
-                continue;
-            }
-            BaseSupplier supplier = supplierMap.get(goods.getSupplierId());
-            if (supplier != null) {
-                names.add(supplier.getSupplierName());
-            }
-        }
-        if (names.isEmpty()) {
-            return "-";
-        }
-        if (names.size() == 1) {
-            return names.iterator().next();
-        }
-        return "多个供应商";
-    }
-
     /** 全部行同价返回该单价，否则 null（列表单价列多价时显示「—」） */
     private BigDecimal commonUnitPrice(List<PurchaseDetailVO> lines) {
         Set<BigDecimal> prices = lines.stream()
@@ -803,14 +768,6 @@ public class PurchaseService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         return prices.size() == 1 ? prices.iterator().next() : null;
-    }
-
-    private Map<Long, BaseSupplier> buildSupplierMap(Set<Long> supplierIds) {
-        if (supplierIds.isEmpty()) {
-            return Map.of();
-        }
-        return baseSupplierMapper.selectBatchIds(supplierIds).stream()
-                .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
     }
 
     private PurchaseVO toVO(BizPurchase purchase, BizApprovalOrder approvalOrder) {
