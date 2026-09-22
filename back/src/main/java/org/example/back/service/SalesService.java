@@ -314,6 +314,8 @@ public class SalesService {
                     vo.setId(head.getId());
                     vo.setSalesNo(head.getSalesNo());
                     vo.setCustomerName(head.getCustomerName());
+                    vo.setCustomerContactName(head.getCustomerContactName()); // D128 退货带出
+                    vo.setCustomerPhone(head.getCustomerPhone());
                     vo.setOperationTime(head.getOperationTime());
                     vo.setLines(optionLines);
                     return vo;
@@ -442,6 +444,8 @@ public class SalesService {
         entity.setConfirmStatus(CONFIRM_PENDING);
         entity.setCustomerName(dto.getCustomerName());
         entity.setContractNo(dto.getContractNo());
+        entity.setCustomerContactName(dto.getCustomerContactName()); // D128 选填透传
+        entity.setCustomerPhone(dto.getCustomerPhone());
         entity.setTaxIncluded(dto.getTaxIncluded());
 
         bizSalesMapper.insert(entity);

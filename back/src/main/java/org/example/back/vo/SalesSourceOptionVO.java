@@ -18,6 +18,12 @@ public class SalesSourceOptionVO {
 
     private String customerName;
 
+    /** D128 客户联系人姓名（退货建单带出用） */
+    private String customerContactName;
+
+    /** D128 客户手机号（退货建单带出用） */
+    private String customerPhone;
+
     private LocalDateTime operationTime;
 
     /**

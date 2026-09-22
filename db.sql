@@ -434,6 +434,8 @@ CREATE TABLE `biz_sales` (
     `confirmer_name` VARCHAR(50) DEFAULT NULL COMMENT '确认人姓名(冗余字段)',
     `customer_name` VARCHAR(100) DEFAULT NULL COMMENT '客户公司名(对齐下单文档)',
     `contract_no` VARCHAR(50) DEFAULT NULL COMMENT '合同编号(对齐下单文档)',
+    `customer_contact_name` VARCHAR(50) DEFAULT NULL COMMENT '客户联系人姓名(D128选填,自由文本)',
+    `customer_phone` VARCHAR(30) DEFAULT NULL COMMENT '客户手机号(D128选填,不做格式校验)',
     `tax_included` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否含税: 0-不含税, 1-含税(仅记录标志)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -480,6 +482,8 @@ CREATE TABLE `biz_sales_return` (
     `source_sales_id` BIGINT DEFAULT NULL COMMENT '来源销售单ID',
     `source_sales_no` VARCHAR(30) DEFAULT NULL COMMENT '来源销售单号',
     `customer_name` VARCHAR(100) DEFAULT NULL COMMENT '退货公司名快照(从来源销售单带入)',
+    `customer_contact_name` VARCHAR(50) DEFAULT NULL COMMENT '客户联系人姓名快照(D128,可从来源销售单带出可改)',
+    `customer_phone` VARCHAR(30) DEFAULT NULL COMMENT '客户手机号快照(D128,可从来源销售单带出可改)',
     `total_quantity` INT NOT NULL DEFAULT 0 COMMENT '退货总数量(建单按明细行合计，单据不可编辑)',
     `total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 COMMENT '退货总金额(建单按明细行合计，单据不可编辑)',
     `operator_id` BIGINT DEFAULT NULL COMMENT '操作人ID',
@@ -2112,3 +2116,15 @@ ALTER TABLE `biz_purchase_detail`
     ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(手动单=头级统一填入;申请单=到货提交逐行选定)' AFTER `total_price`;
 ALTER TABLE `biz_purchase_request_detail`
     ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(到货提交时选定,确认入库复制到进货明细行)' AFTER `unit_price`;
+
+-- =============================================
+-- 二十六、D128 销售单/客退单客户联系人与手机号
+-- =============================================
+-- 头表选填自由文本（手机号不做格式校验）；退货快照可从来源销售单带出、可改。
+-- 1) 列（列增删不可重复执行）
+ALTER TABLE `biz_sales`
+    ADD COLUMN `customer_contact_name` VARCHAR(50) DEFAULT NULL COMMENT '客户联系人姓名(D128选填,自由文本)' AFTER `contract_no`,
+    ADD COLUMN `customer_phone` VARCHAR(30) DEFAULT NULL COMMENT '客户手机号(D128选填,不做格式校验)' AFTER `customer_contact_name`;
+ALTER TABLE `biz_sales_return`
+    ADD COLUMN `customer_contact_name` VARCHAR(50) DEFAULT NULL COMMENT '客户联系人姓名快照(D128,可从来源销售单带出可改)' AFTER `customer_name`,
+    ADD COLUMN `customer_phone` VARCHAR(30) DEFAULT NULL COMMENT '客户手机号快照(D128,可从来源销售单带出可改)' AFTER `customer_contact_name`;

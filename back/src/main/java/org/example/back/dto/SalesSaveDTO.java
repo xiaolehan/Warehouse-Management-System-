@@ -32,6 +32,16 @@ public class SalesSaveDTO {
     private String contractNo;
 
     /**
+     * D128 客户联系人姓名（选填自由文本）
+     */
+    private String customerContactName;
+
+    /**
+     * D128 客户手机号（选填，不做格式校验）
+     */
+    private String customerPhone;
+
+    /**
      * 是否含税: 0-不含税, 1-含税（仅记录标志，不影响金额计算）
      */
     private Integer taxIncluded;

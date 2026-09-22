@@ -33,6 +33,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -165,6 +166,40 @@ class SalesServiceTest {
                 eq("客户甲"), eq("销售管理员"), eq(501L)); // 一单一缺货消息
         verify(messageService).sendSalesPendingConfirmToWarehouseAdmins(
                 anyString(), eq("客户甲"), eq("销售管理员"), eq(501L));
+    }
+
+    // ---------- D128：客户联系人/手机号（选填，头表透传） ----------
+
+    @Test
+    void create_contactFields_persistedAndOptional() {
+        BaseGoods pto = product(29L, "PTO153", 10, "100.00");
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(pto));
+        when(bizPurchaseMapper.latestValidUnitPrices(anyCollection(), any())).thenReturn(java.util.List.of());
+        when(sysConfigService.getPriceDeviationThreshold()).thenReturn(new BigDecimal("0.05"));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizSalesMapper.insert(any(BizSales.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizSales.class).setId(503L);
+            return 1;
+        });
+
+        // 带联系人：透传落库
+        SalesSaveDTO withContact = dto(List.of(item(29L, 2, "100.00")));
+        withContact.setCustomerContactName("王五");
+        withContact.setCustomerPhone("13800138000");
+        service.create(withContact);
+        ArgumentCaptor<BizSales> cap = ArgumentCaptor.forClass(BizSales.class);
+        verify(bizSalesMapper, times(1)).insert(cap.capture());
+        assertEquals("王五", cap.getValue().getCustomerContactName());
+        assertEquals("13800138000", cap.getValue().getCustomerPhone());
+
+        // 不带联系人：留空不报错
+        SalesSaveDTO noContact = dto(List.of(item(29L, 1, "100.00")));
+        noContact.setCustomerName(null);
+        service.create(noContact);
+        ArgumentCaptor<BizSales> cap2 = ArgumentCaptor.forClass(BizSales.class);
+        verify(bizSalesMapper, times(2)).insert(cap2.capture());
+        assertNull(cap2.getValue().getCustomerContactName());
+        assertNull(cap2.getValue().getCustomerPhone());
     }
 
     @Test

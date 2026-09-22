@@ -79,6 +79,16 @@ public class BizSales {
      */
     private String contractNo;
 
+    /**
+     * D128 客户联系人姓名（选填自由文本）
+     */
+    private String customerContactName;
+
+    /**
+     * D128 客户手机号（选填，不做格式校验）
+     */
+    private String customerPhone;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

@@ -31,6 +31,16 @@ public class SalesReturnSaveDTO {
      */
     private String customerName;
 
+    /**
+     * D128 客户联系人姓名（可选，默认从来源销售单带出）
+     */
+    private String customerContactName;
+
+    /**
+     * D128 客户手机号（可选，默认从来源销售单带出）
+     */
+    private String customerPhone;
+
     private String remark;
 
     @Data

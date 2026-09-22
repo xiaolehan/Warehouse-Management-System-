@@ -31,6 +31,16 @@ public class BizSalesReturn {
     private String customerName;
 
     /**
+     * D128 客户联系人姓名快照（可从来源销售单带出可改）
+     */
+    private String customerContactName;
+
+    /**
+     * D128 客户手机号快照（可从来源销售单带出可改）
+     */
+    private String customerPhone;
+
+    /**
      * 退货总数量(建单按明细行合计，单据不可编辑)
      */
     private Integer totalQuantity;

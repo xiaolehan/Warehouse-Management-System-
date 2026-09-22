@@ -181,6 +181,61 @@ class SalesReturnServiceTest {
                 anyString(), eq("销售管理员"), eq(601L));
     }
 
+    // ---------- D128：联系人/手机号快照（带出与覆盖） ----------
+
+    @Test
+    void create_withoutContact_carriesFromSourceSales() {
+        BizSales source = shippedSourceSales();
+        source.setCustomerContactName("王五");
+        source.setCustomerPhone("13800138000");
+        when(bizSalesMapper.selectById(501L)).thenReturn(source);
+        when(bizSalesDetailMapper.selectList(any()))
+                .thenReturn(List.of(sourceLine(1L, 29L, "PTO153", 5, "100.00", "60.00")));
+        when(bizSalesReturnDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(goods(29L, "PTO153", "55.00")));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizSalesReturnMapper.insert(any(BizSalesReturn.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizSalesReturn.class).setId(602L);
+            return 1;
+        });
+
+        service.create(dto(501L, List.of(item(1L, 1))));
+
+        // 未传 → 从来源销售单带出
+        ArgumentCaptor<BizSalesReturn> headCaptor = ArgumentCaptor.forClass(BizSalesReturn.class);
+        verify(bizSalesReturnMapper).insert(headCaptor.capture());
+        assertEquals("王五", headCaptor.getValue().getCustomerContactName());
+        assertEquals("13800138000", headCaptor.getValue().getCustomerPhone());
+    }
+
+    @Test
+    void create_explicitContact_overridesSourceValues() {
+        BizSales source = shippedSourceSales();
+        source.setCustomerContactName("王五");
+        source.setCustomerPhone("13800138000");
+        when(bizSalesMapper.selectById(501L)).thenReturn(source);
+        when(bizSalesDetailMapper.selectList(any()))
+                .thenReturn(List.of(sourceLine(1L, 29L, "PTO153", 5, "100.00", "60.00")));
+        when(bizSalesReturnDetailMapper.selectList(any())).thenReturn(List.of());
+        when(baseGoodsMapper.selectBatchIds(anyCollection())).thenReturn(List.of(goods(29L, "PTO153", "55.00")));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizSalesReturnMapper.insert(any(BizSalesReturn.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizSalesReturn.class).setId(603L);
+            return 1;
+        });
+
+        SalesReturnSaveDTO explicit = dto(501L, List.of(item(1L, 1)));
+        explicit.setCustomerContactName("赵六");
+        explicit.setCustomerPhone("13900139000");
+        service.create(explicit);
+
+        // 显式传参优先于源单值
+        ArgumentCaptor<BizSalesReturn> headCaptor = ArgumentCaptor.forClass(BizSalesReturn.class);
+        verify(bizSalesReturnMapper).insert(headCaptor.capture());
+        assertEquals("赵六", headCaptor.getValue().getCustomerContactName());
+        assertEquals("13900139000", headCaptor.getValue().getCustomerPhone());
+    }
+
     @Test
     void create_exceedsLineReturnable_rejected() {
         when(bizSalesMapper.selectById(501L)).thenReturn(shippedSourceSales());

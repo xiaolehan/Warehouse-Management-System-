@@ -234,6 +234,11 @@ public class SalesReturnService {
         // 退货公司名快照：优先取前端传入，否则从来源销售单带出
         entity.setCustomerName(StringUtils.hasText(dto.getCustomerName())
                 ? dto.getCustomerName() : sourceSales.getCustomerName());
+        // D128 联系人/手机号快照：同 customerName 范式——dto 传入优先，否则从来源销售单带出
+        entity.setCustomerContactName(StringUtils.hasText(dto.getCustomerContactName())
+                ? dto.getCustomerContactName() : sourceSales.getCustomerContactName());
+        entity.setCustomerPhone(StringUtils.hasText(dto.getCustomerPhone())
+                ? dto.getCustomerPhone() : sourceSales.getCustomerPhone());
         entity.setBizStatus(1);
         entity.setConfirmStatus(CONFIRM_PENDING);
 

@@ -24,6 +24,12 @@ public class SalesReturnVO {
 
     private String customerName;
 
+    /** D128 客户联系人姓名快照 */
+    private String customerContactName;
+
+    /** D128 客户手机号快照 */
+    private String customerPhone;
+
     private Integer totalQuantity;
 
     private BigDecimal totalAmount;

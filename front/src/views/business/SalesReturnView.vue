@@ -136,6 +136,9 @@
             <el-col :span="12"><el-form-item label="原销售单"><el-input :value="viewForm.orderNo" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="退货公司名"><el-input :value="viewForm.customerName" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="退货日期"><el-input :value="viewForm.returnDate" /></el-form-item></el-col>
+            <!-- D128：客户联系人与手机号（无值显示 —） -->
+            <el-col :span="12"><el-form-item label="客户联系人"><el-input :value="viewForm.customerContactName || '—'" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="手机号"><el-input :value="viewForm.customerPhone || '—'" /></el-form-item></el-col>
             <el-col v-if="showPrice" :span="12"><el-form-item label="退货总额"><el-input :value="viewForm.totalAmount"><template #append>元</template></el-input></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="操作人"><el-input :value="viewForm.operator" /></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="退货原因"><el-input :value="viewForm.reason" type="textarea" :rows="2" /></el-form-item></el-col>
@@ -186,6 +189,19 @@
             <el-option v-for="name in customerNameOptions" :key="name" :label="name" :value="name" />
           </el-select>
         </el-form-item>
+        <!-- D128：联系人/手机号选填，选中来源单后自动带出、可编辑 -->
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="客户联系人">
+              <el-input v-model="dialogForm.customerContactName" placeholder="请输入客户联系人（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="手机号">
+              <el-input v-model="dialogForm.customerPhone" placeholder="请输入手机号（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-form-item v-if="selectedSourceSales" label="退回明细" required>
           <div class="return-lines">
             <el-table :data="selectedSourceSales.lines" size="small" border style="width: 100%">
@@ -329,8 +345,8 @@ const selectedSourceSales = ref(null)
 // D110：行级退货录入——来源明细行 id → 退回数量 / 退货单价（默认原行单价）
 const returnQty = reactive({})
 const returnPrice = reactive({})
-const dialogForm = reactive({ sourceSalesId: null, returnDate: '', reason: '', customerName: '' })
-const viewForm = reactive({ returnNo: '', orderNo: '', customerName: '', returnDate: '', totalAmount: '', operator: '', reason: '', details: [] })
+const dialogForm = reactive({ sourceSalesId: null, returnDate: '', reason: '', customerName: '', customerContactName: '', customerPhone: '' })
+const viewForm = reactive({ returnNo: '', orderNo: '', customerName: '', customerContactName: '', customerPhone: '', returnDate: '', totalAmount: '', operator: '', reason: '', details: [] })
 
 const refundAmountText = computed(() => {
   if (!selectedSourceSales.value) return '0.00'
@@ -417,6 +433,9 @@ const handleSourceSalesChange = (sourceSalesId) => {
     }
     // 选中来源单后自动带出该公司名（仍可手动修改）
     dialogForm.customerName = selectedSourceSales.value.customerName || dialogForm.customerName || ''
+    // D128：联系人/手机号同款带出（仍可手动修改；来源单无值时保留已填内容，镜像 customerName 范式）
+    dialogForm.customerContactName = selectedSourceSales.value.customerContactName || dialogForm.customerContactName || ''
+    dialogForm.customerPhone = selectedSourceSales.value.customerPhone || dialogForm.customerPhone || ''
   }
 }
 
@@ -517,6 +536,8 @@ const handleView = async (row) => {
       returnNo: detail.returnNo || '',
       orderNo: detail.orderNo || detail.sourceSalesNo || '',
       customerName: detail.customerName || '',
+      customerContactName: detail.customerContactName || '',
+      customerPhone: detail.customerPhone || '',
       returnDate: normalizeDateTime(detail.returnDate || detail.operationTime || detail.createTime),
       totalAmount: detail.totalAmount ?? '—',
       operator: detail.operator || detail.operatorName || '',
@@ -600,6 +621,8 @@ const submitForm = () => {
         sourceSalesId: dialogForm.sourceSalesId,
         items,
         customerName: dialogForm.customerName || undefined,
+        customerContactName: dialogForm.customerContactName || undefined,
+        customerPhone: dialogForm.customerPhone || undefined,
         operationTime: buildOperationTime(dialogForm.returnDate),
         remark: dialogForm.reason || ''
       }

@@ -158,6 +158,9 @@
           <el-col :span="12"><el-form-item label="销售单号"><el-input :value="viewForm.salesNo" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="客户公司名"><el-input :value="viewForm.customerName" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="合同编号"><el-input :value="viewForm.contractNo" /></el-form-item></el-col>
+          <!-- D128：客户联系人与手机号（无值显示 —） -->
+          <el-col :span="12"><el-form-item label="客户联系人"><el-input :value="viewForm.customerContactName || '—'" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="手机号"><el-input :value="viewForm.customerPhone || '—'" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="销售日期"><el-input :value="viewForm.salesDate" /></el-form-item></el-col>
           <el-col v-if="showPrice" :span="12"><el-form-item label="销售总额"><el-input :value="viewForm.totalAmount"><template #append>元</template></el-input></el-form-item></el-col>
           <el-col v-if="showPrice" :span="12"><el-form-item label="销售均价"><el-input :value="viewForm.avgPrice"><template #append>元</template></el-input></el-form-item></el-col>
@@ -206,6 +209,17 @@
           <el-col :span="12">
             <el-form-item label="合同编号">
               <el-input v-model="dialogForm.contractNo" placeholder="请输入合同编号（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+          <!-- D128：客户联系人与手机号（选填自由文本，手机号不做格式校验） -->
+          <el-col :span="12">
+            <el-form-item label="客户联系人">
+              <el-input v-model="dialogForm.customerContactName" placeholder="请输入客户联系人（可选）"></el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="手机号">
+              <el-input v-model="dialogForm.customerPhone" placeholder="请输入手机号（可选）"></el-input>
             </el-form-item>
           </el-col>
         </el-row>
@@ -409,10 +423,12 @@ const dialogForm = reactive({
   items: [emptyItem()],
   customerName: '',
   contractNo: '',
+  customerContactName: '',
+  customerPhone: '',
   taxIncluded: 0,
   remark: ''
 })
-const viewForm = reactive({ salesNo: '', customerName: '', contractNo: '', salesDate: '', totalAmount: '', avgPrice: '', taxIncluded: 0, operator: '', remark: '', details: [] })
+const viewForm = reactive({ salesNo: '', customerName: '', contractNo: '', customerContactName: '', customerPhone: '', salesDate: '', totalAmount: '', avgPrice: '', taxIncluded: 0, operator: '', remark: '', details: [] })
 
 function emptyItem() {
   return { goodsId: null, quantity: 1, unitPrice: 0 }
@@ -666,7 +682,7 @@ const handleCurrentChange = (val) => {
 const handleAdd = () => {
   dialogType.value = 'add'
   dialogFormRef.value?.clearValidate()
-  Object.assign(dialogForm, { items: [emptyItem()], customerName: '', contractNo: '', taxIncluded: 0, remark: '' })
+  Object.assign(dialogForm, { items: [emptyItem()], customerName: '', contractNo: '', customerContactName: '', customerPhone: '', taxIncluded: 0, remark: '' })
   dialogVisible.value = true
 }
 
@@ -680,6 +696,8 @@ const handleView = async (row) => {
       salesNo: detail.salesNo || '',
       customerName: detail.customerName || '',
       contractNo: detail.contractNo || '',
+      customerContactName: detail.customerContactName || '',
+      customerPhone: detail.customerPhone || '',
       salesDate: normalizeDateTime(detail.salesDate || detail.operationTime || detail.createTime),
       totalAmount: detail.totalAmount ?? '—',
       avgPrice: detail.avgPrice ?? '—',
@@ -776,6 +794,8 @@ const submitForm = () => {
         // D106：销售日期由后端按开单时间自动生成，不再上传
         customerName: dialogForm.customerName || undefined,
         contractNo: dialogForm.contractNo || undefined,
+        customerContactName: dialogForm.customerContactName || undefined,
+        customerPhone: dialogForm.customerPhone || undefined,
         taxIncluded: dialogForm.taxIncluded ?? 0,
         remark: dialogForm.remark || ''
       }
