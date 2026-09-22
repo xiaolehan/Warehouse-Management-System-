@@ -102,6 +102,8 @@
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          <!-- D130：普通采购申请创建权从仓储移到生产 -->
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>

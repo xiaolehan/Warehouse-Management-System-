@@ -166,7 +166,8 @@ const router = createRouter({
           path: "business/purchase-request",
           name: "BusinessPurchaseRequest",
           component: () => import("../views/business/PurchaseRequestView.vue"),
-          meta: { roles: ['admin'], deptCodes: ['warehouse', 'purchase'] }
+          // D130：生产=创建/撤销；采购=认领到货；仓储=只读+确认入库
+          meta: { roles: ['admin'], deptCodes: ['production', 'purchase', 'warehouse'] }
         },
         {
           path: "business/production",

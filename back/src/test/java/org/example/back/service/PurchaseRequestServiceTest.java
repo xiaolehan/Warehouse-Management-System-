@@ -6,9 +6,12 @@ import org.example.back.dto.LoginResponse;
 import org.example.back.dto.ProductionDraftCreateDTO;
 import org.example.back.dto.ProductionDraftItemDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
+import org.example.back.dto.PurchaseRequestDetailDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
+import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
@@ -39,6 +42,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -58,10 +62,15 @@ class PurchaseRequestServiceTest {
                 new org.apache.ibatis.builder.MapperBuilderAssistant(
                         new org.apache.ibatis.session.Configuration(), "test"),
                 BizPurchaseRequestDetail.class);
+        com.baomidou.mybatisplus.core.metadata.TableInfoHelper.initTableInfo(
+                new org.apache.ibatis.builder.MapperBuilderAssistant(
+                        new org.apache.ibatis.session.Configuration(), "test"),
+                BaseGoods.class);
     }
 
     @Mock private BizPurchaseRequestMapper bizPurchaseRequestMapper;
     @Mock private BizPurchaseRequestDetailMapper bizPurchaseRequestDetailMapper;
+    @Mock private org.example.back.mapper.BaseGoodsMapper baseGoodsMapper;
     @Mock private AuthService authService;
     @Mock private AuthzService authzService;
     @Mock private MessageService messageService;
@@ -1176,6 +1185,103 @@ class PurchaseRequestServiceTest {
         ArgumentCaptor<PurchaseSaveDTO> receiptCap = ArgumentCaptor.forClass(PurchaseSaveDTO.class);
         verify(purchaseService).createInternal(receiptCap.capture(), anyLong(), any());
         assertEquals(9L, receiptCap.getValue().getLines().get(0).getSupplierId());
+    }
+
+    // ============================== D130：采购申请创建权 仓储→生产 ==============================
+
+    private LoginResponse.UserInfoVO productionUser() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        return user;
+    }
+
+    @Test
+    void create_rejectsNonProductionAdmin() {
+        doThrow(new BusinessException("仅生产管理员可识别缺货并创建采购申请单"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.create(new PurchaseRequestSaveDTO()));
+        assertTrue(ex.getMessage().contains("仅生产管理员"), ex.getMessage());
+        verify(bizPurchaseRequestMapper, never()).insert(any(BizPurchaseRequest.class));
+    }
+
+    @Test
+    void create_productionAdmin_persistsNormalRequestAndNotifiesPurchase() {
+        when(authService.getUserInfo()).thenReturn(productionUser());
+        BaseGoods steel = new BaseGoods();
+        steel.setId(51L);
+        steel.setGoodsName("钢板");
+        steel.setStatus(1);
+        steel.setType(GoodsService.GOODS_TYPE_MATERIAL);
+        when(baseGoodsMapper.selectById(51L)).thenReturn(steel);
+
+        PurchaseRequestSaveDTO dto = new PurchaseRequestSaveDTO();
+        PurchaseRequestDetailDTO detail = new PurchaseRequestDetailDTO();
+        detail.setGoodsId(51L);
+        detail.setQuantity(5);
+        dto.setDetails(List.of(detail));
+
+        service.create(dto);
+
+        ArgumentCaptor<BizPurchaseRequest> headCap = ArgumentCaptor.forClass(BizPurchaseRequest.class);
+        verify(bizPurchaseRequestMapper).insert(headCap.capture());
+        assertEquals(PurchaseRequestService.STATUS_PENDING, headCap.getValue().getStatus());
+        // D130：sourceType 语义不变——普通申请仍为 null（仅补料申请为 production）
+        assertNull(headCap.getValue().getSourceType());
+        assertEquals(10L, headCap.getValue().getApplicantId());
+        verify(messageService).sendPurchaseRequestToPurchaseAdmins(anyString(), anyString(), any());
+    }
+
+    @Test
+    void listShortageGoods_rejectsNonProductionAdmin() {
+        doThrow(new BusinessException("仅生产管理员可识别缺货并创建采购申请单"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.listShortageGoods());
+        assertTrue(ex.getMessage().contains("仅生产管理员"), ex.getMessage());
+        verify(baseGoodsMapper, never()).selectList(any());
+    }
+
+    @Test
+    void listShortageGoods_productionAdmin_canQuery() {
+        when(baseGoodsMapper.selectList(any())).thenReturn(List.of());
+        assertNotNull(service.listShortageGoods());
+    }
+
+    @Test
+    void delete_applicantSelf_canWithdraw_includingProductionDraft() {
+        // D130 前死路场景：补料草稿申请人是生产管理员，旧守卫要求「仓储管理员+本人」→ 无人能撤
+        BizPurchaseRequest draft = new BizPurchaseRequest();
+        draft.setId(8L);
+        draft.setStatus(PurchaseRequestService.STATUS_PENDING);
+        draft.setApplicantId(10L);
+        draft.setSourceType(PurchaseRequestService.SOURCE_PRODUCTION);
+        when(bizPurchaseRequestMapper.selectById(8L)).thenReturn(draft);
+        when(authService.getUserInfo()).thenReturn(productionUser());
+
+        service.delete(8L);
+
+        verify(bizPurchaseRequestMapper).deleteById(8L);
+        verify(messageService).revokeUnreadByBiz("purchase_request", 8L);
+    }
+
+    @Test
+    void delete_otherUser_rejected() {
+        BizPurchaseRequest entity = new BizPurchaseRequest();
+        entity.setId(8L);
+        entity.setStatus(PurchaseRequestService.STATUS_PENDING);
+        entity.setApplicantId(10L);
+        when(bizPurchaseRequestMapper.selectById(8L)).thenReturn(entity);
+        LoginResponse.UserInfoVO other = new LoginResponse.UserInfoVO();
+        other.setId(99L);
+        other.setRealName("别人");
+        when(authService.getUserInfo()).thenReturn(other);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(8L));
+        assertTrue(ex.getMessage().contains("仅申请人本人"), ex.getMessage());
+        verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
     }
 
     @Test

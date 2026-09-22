@@ -145,10 +145,10 @@ public class PurchaseRequestService {
     // ============================== 缺货识别 ==============================
 
     /**
-     * 返回当前库存 ≤ 预警阈值的启用商品清单，供仓储勾选生成采购申请单（成品除外，D65：成品不参与缺货识别）。
+     * 返回当前库存 ≤ 预警阈值的启用商品清单，供生产勾选生成采购申请单（成品除外，D65：成品不参与缺货识别；D130 创建权仓储→生产）。
      */
     public List<BaseGoods> listShortageGoods() {
-        requireWarehouseAccess();
+        requireProductionAccess();
         LambdaQueryWrapper<BaseGoods> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BaseGoods::getStatus, 1)
                 .apply("stock <= warning_stock")
@@ -304,12 +304,12 @@ public class PurchaseRequestService {
         return bizPurchaseRequestMapper.selectList(w);
     }
 
-    // ============================== 仓储建单 ==============================
+    // ============================== 建单（D130：生产管理员） ==============================
 
     @Transactional(rollbackFor = Exception.class)
     public void create(PurchaseRequestSaveDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        requireWarehouseAccess();
+        requireProductionAccess();
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
         BizPurchaseRequest entity = new BizPurchaseRequest();
@@ -745,10 +745,11 @@ public class PurchaseRequestService {
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        requireWarehouseAccess();
+        // D130：申请人本人可撤（去部门条件）——普通申请（生产建）与补料草稿（生产建）统一，
+        // 修复补料草稿「仓储+本人」双条件无人能撤的死路
         BizPurchaseRequest entity = requireEntity(id);
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        if (!entity.getApplicantId().equals(loginUser.getId()) && !authzService.isSuperAdmin()) {
+        if (!entity.getApplicantId().equals(loginUser.getId())) {
             throw BusinessException.forbidden("仅申请人本人可撤销采购申请单");
         }
         if (entity.getStatus() != STATUS_PENDING) {
@@ -800,16 +801,18 @@ public class PurchaseRequestService {
     }
 
     /**
-     * 读权限：仓储 + 采购 均可查看采购申请单（仓储看自己建的，采购看流转来的）。
+     * 读权限：仓储 + 采购 + 生产 均可查看采购申请单（D130：生产创建普通申请，仓储只读+确认入库）。
      */
     private void requireModuleReadAccess() {
         authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅仓储/采购管理员可访问采购申请模块", AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE);
+                "仅仓储/采购/生产管理员可访问采购申请模块",
+                AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE, AuthzService.DEPT_PRODUCTION);
     }
 
-    private void requireWarehouseAccess() {
+    /** D130：普通采购申请创建权归生产管理员（仓储回归只管出入库）——建单与缺货识别同口径 */
+    private void requireProductionAccess() {
         authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可识别缺货并创建采购申请单");
+                AuthzService.DEPT_PRODUCTION, "仅生产管理员可识别缺货并创建采购申请单");
     }
 
     private void requirePurchaseAccess() {

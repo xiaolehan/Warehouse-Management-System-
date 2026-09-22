@@ -25,8 +25,9 @@
         <el-form-item>
           <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-          <el-button type="success" :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleManual">新建采购申请</el-button>
-          <el-button :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleShortage">缺货识别建单</el-button>
+          <!-- D130：创建权仓储→生产 -->
+          <el-button type="success" :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['production'] }" @click="handleManual">新建采购申请</el-button>
+          <el-button :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['production'] }" @click="handleShortage">缺货识别建单</el-button>
         </el-form-item>
       </el-form>
 
@@ -81,7 +82,7 @@
             <!-- 仓储：待入库确认 → 驳回入库 -->
             <el-button link size="small" type="danger" v-if="row.status === 5"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleArriveReject(row)">驳回入库</el-button>
-            <!-- 仓储：待采购且本人 → 撤销 -->
+            <!-- D130：待采购且本人申请 → 撤销（申请人本人可撤，含补料草稿；按 userId 比对） -->
             <el-button link size="small" type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
           </template>
         </el-table-column>
@@ -589,7 +590,8 @@ const formatArrivalRange = (details) => {
   return dates.length === 1 ? dates[0] : `${dates[0]} ~ ${dates[dates.length - 1]}`
 }
 
-const isApplicant = (row) => row.applicantName && row.applicantName === userStore.realName
+// D130：撤销按 userId 比对申请人（姓名可重名，id 唯一；D117 范式）——申请人本人可撤
+const isApplicant = (row) => row.applicantId != null && Number(row.applicantId) === Number(userStore.userId)
 
 const statusTagType = (status) => ({
   1: 'info', 2: 'warning', 3: 'success', 4: 'danger', 5: 'warning'
