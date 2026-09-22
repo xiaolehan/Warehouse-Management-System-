@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -217,6 +218,53 @@ class PurchaseServiceTest {
         ArgumentCaptor<BizPurchase> headCaptor = ArgumentCaptor.forClass(BizPurchase.class);
         verify(bizPurchaseMapper).insert(headCaptor.capture());
         assertEquals(11L, headCaptor.getValue().getSupplierId());
+    }
+
+    // ---------- D131：行级供应商（ADR-0018，明细行=权威口径） ----------
+
+    @Test
+    void create_headSupplierFillsEveryDetailLine() {
+        when(baseGoodsMapper.selectBatchIds(anyCollection()))
+                .thenReturn(List.of(material(29L, "钢板", 100, "50.00"), material(30L, "螺丝", 1000, "0.50")));
+        when(baseSupplierMapper.selectById(11L)).thenReturn(supplier(11L, "华东钢业"));
+        when(authService.getUserInfo()).thenReturn(operator());
+        when(bizPurchaseMapper.insert(any(BizPurchase.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizPurchase.class).setId(503L);
+            return 1;
+        });
+
+        service.create(dto(List.of(line(29L, 10, "50.00"), line(30L, 100, "0.50"))));
+
+        // 手动进货单一供应商：头级供应商统一填入每一行（行级=头级）
+        ArgumentCaptor<BizPurchaseDetail> lineCaptor = ArgumentCaptor.forClass(BizPurchaseDetail.class);
+        verify(bizPurchaseDetailMapper, times(2)).insert(lineCaptor.capture());
+        assertEquals(11L, lineCaptor.getAllValues().get(0).getSupplierId());
+        assertEquals(11L, lineCaptor.getAllValues().get(1).getSupplierId());
+    }
+
+    @Test
+    void createInternal_lineSuppliersCopiedPerLine_headStaysNull() {
+        when(baseGoodsMapper.selectBatchIds(anyCollection()))
+                .thenReturn(List.of(material(29L, "钢板", 0, "50.00"), material(30L, "螺丝", 0, "0.50")));
+        when(bizPurchaseMapper.insert(any(BizPurchase.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizPurchase.class).setId(504L);
+            return 1;
+        });
+        when(baseGoodsMapper.update(any(), any())).thenReturn(1);
+
+        // 采购申请渠道：行级供应商各自选定（一行可各不相同），头级不得回填
+        PurchaseSaveDTO internal = dto(List.of(line(29L, 10, "52.00"), line(30L, 100, "0.60")));
+        internal.getLines().get(0).setSupplierId(9L);
+        internal.getLines().get(1).setSupplierId(10L);
+        service.createInternal(internal, 9L, "仓储管理员");
+
+        ArgumentCaptor<BizPurchaseDetail> lineCaptor = ArgumentCaptor.forClass(BizPurchaseDetail.class);
+        verify(bizPurchaseDetailMapper, times(2)).insert(lineCaptor.capture());
+        assertEquals(9L, lineCaptor.getAllValues().get(0).getSupplierId());
+        assertEquals(10L, lineCaptor.getAllValues().get(1).getSupplierId());
+        ArgumentCaptor<BizPurchase> headCaptor = ArgumentCaptor.forClass(BizPurchase.class);
+        verify(bizPurchaseMapper).insert(headCaptor.capture());
+        assertNull(headCaptor.getValue().getSupplierId(), "申请渠道头级留空，行级权威");
     }
 
     // ---------- D124：批量最近成交价（到货提交预填） ----------

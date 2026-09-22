@@ -9,6 +9,9 @@ export const getReturnablePurchaseOptionsAPI = (params) => request.get('/busines
 // D124：批量「最近成交价」（已入库+正常最新明细价→标准进价→null），到货提交预填单价用。
 // silent：仓储管理员也能进到货弹窗（路由双部门）但无进价权限，预填静默降级为手填，不弹全局错误（ADR-0012 豁免）
 export const getLatestPurchasePricesAPI = (goodsIds) => request.get('/business/purchases/latest-prices', { params: { goodsIds: goodsIds.join(',') }, silent: true })
+
+// D129：批量查询物料「最新供应商」（采购申请全链参考列 + 到货提交预填绑定值）
+export const getLatestSuppliersAPI = (goodsIds) => request.get('/base/goods/latest-suppliers', { params: { ids: goodsIds.join(',') }, silent: true })
 export const createPurchaseAPI = (data) => request.post('/business/purchases', data)
 export const deletePurchaseAPI = (id) => request.delete(`/business/purchases/${id}`)
 export const voidPurchaseAPI = (id, data) => request.put(`/business/purchases/${id}/void`, data)

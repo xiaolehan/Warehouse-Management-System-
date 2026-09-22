@@ -57,15 +57,16 @@ public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 																										@Param("bizTime") LocalDateTime bizTime);
 
 		/**
-		 * D123：多物料「最新供应商」批量查询——最近一张 已入库+正常+供应商非空 进货单的头级供应商。
+		 * D123/D131：多物料「最新供应商」批量查询——最近一张 已入库+正常+记录了供应商 的进货明细行的
+		 * 行级供应商（COALESCE 行级→头级：头级覆盖存量手动单，行级承载申请渠道单）。
 		 * 口径同 latestValidUnitPrices（窗口函数按 operation_time 最新取一）；
-		 * supplier_id IS NOT NULL 过滤掉存量单与采购申请渠道单据（其 supplier 为空不参与最新性）。
+		 * COALESCE 非空过滤掉完全无供应商信息的单据（不参与最新性）。
 		 */
 		@Select("""
 				<script>
 				SELECT t.goods_id AS goodsId, t.supplier_id AS supplierId
 				FROM (
-					SELECT d.goods_id, p.supplier_id,
+					SELECT d.goods_id, COALESCE(d.supplier_id, p.supplier_id) AS supplier_id,
 					       ROW_NUMBER() OVER (PARTITION BY d.goods_id ORDER BY p.operation_time DESC, d.id DESC) AS rn
 					FROM biz_purchase_detail d
 					JOIN biz_purchase p ON p.id = d.purchase_id
@@ -73,7 +74,7 @@ public interface BizPurchaseMapper extends BaseMapper<BizPurchase> {
 						AND p.is_deleted = 0
 						AND p.biz_status = 1
 						AND p.confirm_status = 3
-						AND p.supplier_id IS NOT NULL
+						AND COALESCE(d.supplier_id, p.supplier_id) IS NOT NULL
 						AND d.goods_id IN
 						<foreach collection="goodsIds" item="gid" open="(" separator="," close=")">#{gid}</foreach>
 				) t

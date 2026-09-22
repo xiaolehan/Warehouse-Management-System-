@@ -28,5 +28,11 @@ public class PurchaseDetailVO {
 
     private BigDecimal totalPrice;
 
+    /** D131 行级供应商ID（手动单=头级统一值；申请单=各行选定值；存量行可空） */
+    private Long supplierId;
+
+    /** D131 行级供应商名（批量填充） */
+    private String supplierName;
+
     private Integer sortNo;
 }

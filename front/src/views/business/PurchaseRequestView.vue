@@ -107,6 +107,16 @@
           <el-table-column label="预警阈值" width="100">
             <template #default="{ row }">{{ row.warningStock }}</template>
           </el-table-column>
+          <!-- D129：上次供应商参考（口径同商品资料页，无进货记录回退绑定+「默认」标） -->
+          <el-table-column label="上次供应商" min-width="120">
+            <template #default="{ row }">
+              <template v-if="latestSupplierInfo(row.id)">
+                {{ latestSupplierInfo(row.id).supplierName || '—' }}
+                <el-tag v-if="latestSupplierInfo(row.id).isDefault" size="small" type="info">默认</el-tag>
+              </template>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="采购数量" width="140">
             <template #default="{ row }">
               <el-input-number v-model="row.quantity" :min="1" controls-position="right" style="width: 120px" />
@@ -132,9 +142,19 @@
         <el-table-column label="序号" width="60" type="index" />
         <el-table-column label="商品" min-width="220">
           <template #default="{ row }">
-            <el-select v-model="row.goodsId" placeholder="请选择商品" filterable style="width: 100%">
+            <el-select v-model="row.goodsId" placeholder="请选择商品" filterable style="width: 100%" @change="loadLatestSuppliers([row.goodsId])">
               <el-option v-for="g in goodsOptions" :key="g.id" :label="g.name" :value="g.id" />
             </el-select>
+          </template>
+        </el-table-column>
+        <!-- D129：上次供应商参考（选完商品即查出） -->
+        <el-table-column label="上次供应商" min-width="120">
+          <template #default="{ row }">
+            <template v-if="row.goodsId && latestSupplierInfo(row.goodsId)">
+              {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+              <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+            </template>
+            <span v-else>—</span>
           </template>
         </el-table-column>
         <el-table-column label="采购数量" width="150">
@@ -182,6 +202,16 @@
           <el-table :data="productionBoundDetails" border size="small">
             <el-table-column label="序号" width="60" type="index" />
             <el-table-column prop="goodsName" label="商品" min-width="130" />
+            <!-- D129：上次供应商参考 -->
+            <el-table-column label="上次供应商" min-width="110">
+              <template #default="{ row }">
+                <template v-if="latestSupplierInfo(row.goodsId)">
+                  {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+                  <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+                </template>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
             <el-table-column label="规格/材质" min-width="120">
               <template #default="{ row }">{{ [row.spec, row.material].filter(Boolean).join(' / ') || '—' }}</template>
             </el-table-column>
@@ -216,6 +246,16 @@
               <template #default="{ row }">
                 {{ row.goodsName }}
                 <el-tag type="info" size="small" style="margin-left: 4px">自动建档</el-tag>
+              </template>
+            </el-table-column>
+            <!-- D129：新物料无进货记录，回退绑定供应商（或显示「默认」） -->
+            <el-table-column label="上次供应商" min-width="110">
+              <template #default="{ row }">
+                <template v-if="latestSupplierInfo(row.goodsId)">
+                  {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+                  <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+                </template>
+                <span v-else>—</span>
               </template>
             </el-table-column>
             <el-table-column label="规格/材质" min-width="120">
@@ -257,6 +297,16 @@
           <el-table :data="group.rows" border size="small">
             <el-table-column label="序号" width="60" type="index" />
             <el-table-column prop="goodsName" label="商品" />
+            <!-- D129：上次供应商参考 -->
+            <el-table-column label="上次供应商" min-width="110">
+              <template #default="{ row }">
+                <template v-if="latestSupplierInfo(row.goodsId)">
+                  {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+                  <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+                </template>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="quantity" label="数量" width="100" />
             <el-table-column label="到货状态" width="105">
               <template #default="{ row }">
@@ -283,27 +333,45 @@
       />
     </el-dialog>
 
-    <!-- 到货提交对话框（D120：勾选待到货行按批提交，行内数量不拆） -->
-    <el-dialog v-model="receiveVisible" title="采购到货提交" width="720px" :close-on-click-modal="false">
-      <el-alert title="勾选本次实际到货的行并填写采购单价；提交后通知仓储确认入库，确认前不增加库存。" type="info" :closable="false" style="margin-bottom: 12px" />
+    <!-- 到货提交对话框（D120：勾选待到货行按批提交，行内数量不拆；D131：行级供应商必选） -->
+    <el-dialog v-model="receiveVisible" title="采购到货提交" width="960px" :close-on-click-modal="false">
+      <el-alert title="勾选本次实际到货的行，逐行选择供应商并填写采购单价；提交后通知仓储确认入库，确认前不增加库存。" type="info" :closable="false" style="margin-bottom: 12px" />
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
         title="按行整批到货：同一物料数量不支持分批，请等整行到齐后再勾选该行" />
       <el-table :data="receiveForm.items" border size="small" @selection-change="handleReceiveSelection">
         <el-table-column type="selection" width="45" />
-        <el-table-column label="商品" min-width="200">
+        <el-table-column label="商品" min-width="170">
           <template #default="{ row }">
             {{ row.goodsName }}<span v-if="row.spec">（{{ row.spec }}）</span>
           </template>
         </el-table-column>
-        <el-table-column label="申请数量(整行)" width="120">
+        <!-- D129：上次供应商参考 -->
+        <el-table-column label="上次供应商" min-width="110">
+          <template #default="{ row }">
+            <template v-if="latestSupplierInfo(row.goodsId)">
+              {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+              <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+            </template>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="申请数量(整行)" width="105">
           <template #default="{ row }">{{ row.quantity }}</template>
         </el-table-column>
-        <el-table-column label="预计到货" width="110">
+        <el-table-column label="预计到货" width="100">
           <template #default="{ row }">{{ formatDate(row.expectedArrivalTime) }}</template>
         </el-table-column>
-        <el-table-column label="采购单价" width="170">
+        <!-- D131：行级供应商（权威口径，随行进入货明细）；预填=物料绑定供应商，可改 -->
+        <el-table-column label="供应商" width="185">
           <template #default="{ row }">
-            <el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" style="width: 150px" />
+            <el-select v-model="row.supplierId" placeholder="请选择供应商" filterable style="width: 165px">
+              <el-option v-for="s in supplierOptions" :key="s.id" :label="s.name" :value="s.id" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购单价" width="160">
+          <template #default="{ row }">
+            <el-input-number v-model="row.unitPrice" :min="0.01" :precision="2" :step="0.1" controls-position="right" style="width: 140px" />
           </template>
         </el-table-column>
       </el-table>
@@ -332,6 +400,16 @@
       <el-table :data="processForm.items" border size="small">
         <el-table-column label="商品" min-width="150">
           <template #default="{ row }">{{ row.goodsName }}</template>
+        </el-table-column>
+        <!-- D129：上次供应商参考——写到货备注（供应商名字/其他信息）时直接对照 -->
+        <el-table-column label="上次供应商" min-width="110">
+          <template #default="{ row }">
+            <template v-if="row.goodsId && latestSupplierInfo(row.goodsId)">
+              {{ latestSupplierInfo(row.goodsId).supplierName || '—' }}
+              <el-tag v-if="latestSupplierInfo(row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+            </template>
+            <span v-else>—</span>
+          </template>
         </el-table-column>
         <el-table-column label="数量" width="70">
           <template #default="{ row }">{{ row.quantity }}</template>
@@ -394,8 +472,9 @@ import {
 } from '@/api/purchaseRequest'
 import { getPurchaseRequestTimelineAPI } from '@/api/purchaseRequest'
 import { getLatestPurchasePricesAPI } from '@/api/business' // D124：到货提交预填最近成交价
+import { getLatestSuppliersAPI } from '@/api/business' // D129：上次供应商参考列 + D131 到货预填绑定值
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
-import { getGoodsMaterialOptionsAPI } from '@/api/base'
+import { getGoodsMaterialOptionsAPI, getSupplierOptionsAPI } from '@/api/base'
 
 const userStore = useUserStore()
 
@@ -429,6 +508,33 @@ const productionNewDetails = computed(() => (viewData.value?.details || []).filt
 const receiveVisible = ref(false)
 const receiveForm = reactive({ id: null, items: [] })
 
+// D129：行级「上次供应商」参考——goodsId → {supplierId, supplierName, isDefault, bindingSupplierId}；
+// 各弹窗打开/选品时按当前行批量查一次（跨弹窗缓存合并，弹窗行数有限不清理）
+const latestSupplierMap = ref({})
+const loadLatestSuppliers = async (goodsIds) => {
+  const ids = [...new Set((goodsIds || []).filter(Boolean))]
+  if (!ids.length) return
+  try {
+    const res = await getLatestSuppliersAPI(ids)
+    latestSupplierMap.value = { ...latestSupplierMap.value, ...(res.data || {}) }
+  } catch {
+    // 静默降级：列显示「—」，不阻断弹窗
+  }
+}
+const latestSupplierInfo = (goodsId) => latestSupplierMap.value[goodsId] || null
+
+// D131：到货提交行级供应商下拉（活跃供应商；供应商 options 对四部门+超管开放）
+const supplierOptions = ref([])
+const loadSupplierOptions = async () => {
+  if (supplierOptions.value.length) return
+  try {
+    const res = await getSupplierOptionsAPI()
+    supplierOptions.value = res.data || []
+  } catch {
+    // 业务错误已由拦截器统一提示
+  }
+}
+
 const rejectVisible = ref(false)
 const rejectForm = reactive({ id: null, reason: '' })
 
@@ -445,6 +551,7 @@ const openArrivalPlanDialog = async (row, mode) => {
     processForm.mode = mode
     processForm.items = (res.data?.details || []).map(d => ({
       detailId: d.id,
+      goodsId: d.goodsId,
       goodsName: d.goodsName,
       quantity: d.quantity,
       expectedArrivalTime: d.expectedArrivalTime ? String(d.expectedArrivalTime).slice(0, 19) : null,
@@ -452,6 +559,7 @@ const openArrivalPlanDialog = async (row, mode) => {
     }))
     applyAllDate.value = null
     applyAllRemark.value = ''
+    loadLatestSuppliers(processForm.items.map(i => i.goodsId)) // D129：写备注时直接参考上次供应商
     processVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
@@ -564,6 +672,7 @@ const handleShortage = async () => {
     addForm.remark = ''
     addForm.details = shortageGoods.value
     selectedDetails.value = []
+    loadLatestSuppliers(addForm.details.map(d => d.id)) // D129：缺货行上次供应商参考
     addVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
@@ -649,6 +758,7 @@ const handleView = async (row) => {
   try {
     const res = await getPurchaseRequestDetailAPI(row.id)
     viewData.value = res.data
+    loadLatestSuppliers((viewData.value?.details || []).map(d => d.goodsId)) // D129：详情行上次供应商参考
     loadTimeline(row.id)
     viewVisible.value = true
   } catch {
@@ -701,6 +811,7 @@ const handleArrive = async (row) => {
         spec: d.spec,
         quantity: d.quantity,
         unitPrice: d.unitPrice ? Number(d.unitPrice) : null,
+        supplierId: null, // D131：行级供应商，预填见 prefillArrivalSuppliers
         expectedArrivalTime: d.expectedArrivalTime
       }))
     selectedReceiveRows.value = []
@@ -708,11 +819,22 @@ const handleArrive = async (row) => {
       ElMessage.warning('该申请单没有待到货行（全部已入库或存在待确认批次）')
       return
     }
+    await Promise.all([loadSupplierOptions(), loadLatestSuppliers(receiveForm.items.map(r => r.goodsId))])
+    prefillArrivalSuppliers()
     await prefillArrivalPrices()
     receiveVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
   }
+}
+
+// D131：行级供应商预填=物料绑定供应商（可改）；绑定=「系统默认供应商」锚点(1)时留空必选手选
+// （首次采购的未知物料货源采购知晓，D109 到货备注流程已兜过底）
+const prefillArrivalSuppliers = () => {
+  receiveForm.items.forEach(r => {
+    const binding = latestSupplierInfo(r.goodsId)?.bindingSupplierId
+    r.supplierId = binding && binding !== 1 ? binding : null
+  })
 }
 
 // D124：到货单价预填——最近成交价（后端已回退标准进价）；仅填空白行，
@@ -735,12 +857,16 @@ const prefillArrivalPrices = async () => {
 
 const submitArrive = async () => {
   if (!selectedReceiveRows.value.length) return ElMessage.warning('请勾选本次实际到货的明细行')
+  if (selectedReceiveRows.value.some(i => !i.supplierId)) {
+    return ElMessage.warning('请为勾选行选择供应商')
+  }
   if (selectedReceiveRows.value.some(i => !i.unitPrice || i.unitPrice <= 0)) {
     return ElMessage.warning('请为勾选行填写采购单价')
   }
   const payload = {
     items: selectedReceiveRows.value.map(i => ({
       detailId: i.detailId,
+      supplierId: i.supplierId,
       unitPrice: i.unitPrice
     }))
   }

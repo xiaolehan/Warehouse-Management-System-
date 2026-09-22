@@ -43,6 +43,13 @@ public class GoodsController {
         return Result.success(goodsService.getById(id));
     }
 
+    // D129：批量查询物料「最新供应商」——采购申请全链参考列 + 到货提交预填绑定值（口径同商品资料页）
+    @GetMapping("/latest-suppliers")
+    public Result<java.util.Map<Long, org.example.back.vo.GoodsLatestSupplierVO>> latestSuppliers(
+            @RequestParam java.util.List<Long> ids) {
+        return Result.success(goodsService.computeLatestSuppliers(ids));
+    }
+
     // D102：进价历史——该物料全部有效已入库采购记录（仅采购部门成员/超管，服务端把关）
     @GetMapping("/{id}/purchase-price-history")
     public Result<List<GoodsPurchaseHistoryVO>> purchasePriceHistory(@PathVariable Long id) {

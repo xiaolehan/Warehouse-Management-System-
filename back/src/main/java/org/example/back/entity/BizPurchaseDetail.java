@@ -52,6 +52,12 @@ public class BizPurchaseDetail {
     private BigDecimal unitPrice;
 
     /**
+     * D131 行级供应商ID（权威口径）：手动进货=头级供应商统一填入；
+     * 采购申请渠道=到货提交逐行选定（一行可各不相同），头级留空。
+     */
+    private Long supplierId;
+
+    /**
      * 行总金额
      */
     private BigDecimal totalPrice;

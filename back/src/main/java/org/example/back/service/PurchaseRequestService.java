@@ -17,11 +17,13 @@ import org.example.back.dto.PurchaseRequestRejectDTO;
 import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.entity.BaseGoods;
+import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizProductionOrder;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BaseGoodsMapper;
+import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
@@ -70,6 +72,9 @@ public class PurchaseRequestService {
 
     @Autowired
     private BaseGoodsMapper baseGoodsMapper;
+
+    @Autowired
+    private BaseSupplierMapper baseSupplierMapper;
 
     @Autowired
     private AuthService authService;
@@ -452,6 +457,24 @@ public class PurchaseRequestService {
                 throw BusinessException.validateFail(
                         "明细[" + detail.getGoodsName() + "]采购单价必须大于0");
             }
+            // D131：行级供应商必选（预填物料绑定供应商可改），不得为「系统默认供应商」锚点
+            if (item.getSupplierId() == null) {
+                throw BusinessException.validateFail(
+                        "明细[" + detail.getGoodsName() + "]请选择供应商");
+            }
+            if (GoodsService.DEFAULT_SUPPLIER_ID.equals(item.getSupplierId())) {
+                throw BusinessException.validateFail(
+                        "明细[" + detail.getGoodsName() + "]不能选择系统默认供应商");
+            }
+            BaseSupplier supplier = baseSupplierMapper.selectById(item.getSupplierId());
+            if (supplier == null) {
+                throw BusinessException.validateFail(
+                        "明细[" + detail.getGoodsName() + "]供应商不存在");
+            }
+            if (!Integer.valueOf(1).equals(supplier.getStatus())) {
+                throw BusinessException.validateFail(
+                        "明细[" + detail.getGoodsName() + "]供应商已停用，请重新选择");
+            }
             batchLines.add(detail);
         }
 
@@ -467,7 +490,8 @@ public class PurchaseRequestService {
                     .set(BizPurchaseRequestDetail::getArriveBatchNo, batchNo)
                     .set(BizPurchaseRequestDetail::getArriveBatchTime, now)
                     .set(BizPurchaseRequestDetail::getArriveQuantity, detail.getQuantity())
-                    .set(BizPurchaseRequestDetail::getUnitPrice, item.getUnitPrice());
+                    .set(BizPurchaseRequestDetail::getUnitPrice, item.getUnitPrice())
+                    .set(BizPurchaseRequestDetail::getSupplierId, item.getSupplierId());
             bizPurchaseRequestDetailMapper.update(null, detailUpdate);
         }
 
@@ -534,10 +558,14 @@ public class PurchaseRequestService {
             if (detail.getUnitPrice() == null) {
                 throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少采购单价");
             }
+            if (detail.getSupplierId() == null) {
+                throw BusinessException.validateFail("明细[" + detail.getGoodsName() + "]缺少供应商，请重新到货提交");
+            }
             PurchaseSaveDTO.LineDTO line = new PurchaseSaveDTO.LineDTO();
             line.setGoodsId(detail.getGoodsId());
             line.setQuantity(detail.getQuantity());
             line.setUnitPrice(detail.getUnitPrice());
+            line.setSupplierId(detail.getSupplierId()); // D131 行级供应商随行复制
             receiptLines.add(line);
         }
         String batchNo = batchLines.get(0).getArriveBatchNo();
@@ -872,6 +900,7 @@ public class PurchaseRequestService {
         vo.setArrivalRemark(detail.getArrivalRemark());
         vo.setArriveQuantity(detail.getArriveQuantity());
         vo.setUnitPrice(detail.getUnitPrice());
+        vo.setSupplierId(detail.getSupplierId());
         vo.setReceiveStatus(detail.getReceiveStatus());
         vo.setArriveBatchNo(detail.getArriveBatchNo());
         vo.setArriveBatchTime(detail.getArriveBatchTime());

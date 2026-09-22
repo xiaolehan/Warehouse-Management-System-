@@ -40,5 +40,11 @@ public class PurchaseSaveDTO {
 
         @DecimalMin(value = "0.01", message = "单价必须大于0")
         private BigDecimal unitPrice;
+
+        /**
+         * D131 行级供应商ID：手动进货由 Service 统一填入头级供应商；
+         * 采购申请渠道（createInternal）按到货提交选定的行级供应商传入。可空（存量语义）。
+         */
+        private Long supplierId;
     }
 }

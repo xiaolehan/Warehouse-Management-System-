@@ -58,6 +58,11 @@ public class BizPurchaseRequestDetail {
     private BigDecimal unitPrice;
 
     /**
+     * D131 行级供应商ID(到货提交时选定,预填物料绑定供应商;确认入库复制到进货明细行)
+     */
+    private Long supplierId;
+
+    /**
      * D120：行级接收状态: 1-待到货, 2-本批待入库确认, 3-已入库。
      * 分批粒度=明细行，行内数量不拆；驳回/撤回到货只回置本批行。
      */

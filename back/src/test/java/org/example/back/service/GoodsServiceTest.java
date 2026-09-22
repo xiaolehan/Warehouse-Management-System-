@@ -683,6 +683,53 @@ class GoodsServiceTest {
         verify(bizPurchaseMapper, never()).latestValidSuppliers(any());
     }
 
+    // ---------- D129：批量最新供应商端点（采购申请全链参考列 + 到货预填绑定值） ----------
+
+    @Test
+    void computeLatestSuppliers_latestWinsAndExposesBinding() {
+        when(baseGoodsMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(materialWithSupplier(29L, "钢板", 5L)));
+        when(baseSupplierMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(supplier(9L, "北方特钢"), supplier(5L, "华东钢业")));
+        BizPurchaseMapper.LatestPurchaseSupplier latest = new BizPurchaseMapper.LatestPurchaseSupplier();
+        latest.setGoodsId(29L);
+        latest.setSupplierId(9L);
+        when(bizPurchaseMapper.latestValidSuppliers(any())).thenReturn(java.util.List.of(latest));
+
+        java.util.Map<Long, org.example.back.vo.GoodsLatestSupplierVO> result =
+                service.computeLatestSuppliers(java.util.List.of(29L, 40L));
+
+        org.example.back.vo.GoodsLatestSupplierVO info = result.get(29L);
+        assertEquals(9L, info.getSupplierId());
+        assertEquals("北方特钢", info.getSupplierName());
+        assertEquals(Boolean.FALSE, info.getIsDefault());
+        assertEquals(5L, info.getBindingSupplierId());
+        assertFalse(result.containsKey(40L), "未知/成品 id 不入结果");
+    }
+
+    @Test
+    void computeLatestSuppliers_fallsBackToBindingWithDefaultTag() {
+        when(baseGoodsMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(materialWithSupplier(29L, "钢板", 5L)));
+        when(baseSupplierMapper.selectBatchIds(any()))
+                .thenReturn(java.util.List.of(supplier(5L, "华东钢业")));
+        when(bizPurchaseMapper.latestValidSuppliers(any())).thenReturn(java.util.List.of());
+
+        java.util.Map<Long, org.example.back.vo.GoodsLatestSupplierVO> result =
+                service.computeLatestSuppliers(java.util.List.of(29L));
+
+        org.example.back.vo.GoodsLatestSupplierVO info = result.get(29L);
+        assertEquals(5L, info.getSupplierId());
+        assertEquals("华东钢业", info.getSupplierName());
+        assertEquals(Boolean.TRUE, info.getIsDefault());
+        assertEquals(5L, info.getBindingSupplierId());
+    }
+
+    @Test
+    void computeLatestSuppliers_emptyInputReturnsEmptyMap() {
+        assertTrue(service.computeLatestSuppliers(java.util.List.of()).isEmpty());
+    }
+
     @Test
     void quickCreate_appliesProductDefaultsAndTrims() {
         when(baseGoodsMapper.selectList(any())).thenReturn(java.util.List.of()); // 无同名成品

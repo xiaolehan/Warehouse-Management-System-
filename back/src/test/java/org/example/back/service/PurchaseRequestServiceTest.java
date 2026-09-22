@@ -8,6 +8,7 @@ import org.example.back.dto.ProductionDraftItemDTO;
 import org.example.back.dto.PurchaseRequestProcessDTO;
 import org.example.back.dto.PurchaseRequestReceiveDTO;
 import org.example.back.dto.PurchaseSaveDTO;
+import org.example.back.entity.BaseSupplier;
 import org.example.back.entity.BizBomDetail;
 import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
@@ -68,6 +69,7 @@ class PurchaseRequestServiceTest {
     @Mock private ProductionOrderService productionOrderService;
     @Mock private GoodsService goodsService;
     @Mock private org.example.back.mapper.BizBomDetailMapper bizBomDetailMapper;
+    @Mock private org.example.back.mapper.BaseSupplierMapper baseSupplierMapper;
     @Mock private BizProductionOrderMapper bizProductionOrderMapper;
 
     @InjectMocks private PurchaseRequestService service;
@@ -732,10 +734,22 @@ class PurchaseRequestServiceTest {
     }
 
     private static PurchaseRequestReceiveDTO.ReceiveItemDTO arriveItem(Long detailId, String unitPrice) {
+        return arriveItem(detailId, unitPrice, 2L);
+    }
+
+    private static PurchaseRequestReceiveDTO.ReceiveItemDTO arriveItem(Long detailId, String unitPrice, Long supplierId) {
         PurchaseRequestReceiveDTO.ReceiveItemDTO item = new PurchaseRequestReceiveDTO.ReceiveItemDTO();
         item.setDetailId(detailId);
         item.setUnitPrice(new BigDecimal(unitPrice));
+        item.setSupplierId(supplierId);
         return item;
+    }
+
+    private static BaseSupplier supplier(long id, int status) {
+        BaseSupplier s = new BaseSupplier();
+        s.setId(id);
+        s.setStatus(status);
+        return s;
     }
 
     private LoginResponse.UserInfoVO purchaseUser() {
@@ -753,6 +767,7 @@ class PurchaseRequestServiceTest {
         when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(line1, line2));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
         when(authService.getUserInfo()).thenReturn(purchaseUser());
+        when(baseSupplierMapper.selectById(2L)).thenReturn(supplier(2L, 1));
 
         PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
         // 只勾选 101 一行（模拟 19 个先到，1 个未到）
@@ -813,6 +828,7 @@ class PurchaseRequestServiceTest {
         BizPurchaseRequestDetail batchLine = requestDetail(101L, 2, "钢板", 19);
         batchLine.setArriveBatchNo("B1");
         batchLine.setUnitPrice(new BigDecimal("50.00"));
+        batchLine.setSupplierId(2L);
         BizPurchaseRequestDetail pendingLine = requestDetail(102L, 1, "螺丝", 1);
         when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(batchLine, pendingLine));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
@@ -849,13 +865,14 @@ class PurchaseRequestServiceTest {
         when(bizPurchaseRequestDetailMapper.selectList(any())).thenAnswer(inv -> new ArrayList<>(store));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
         when(authService.getUserInfo()).thenReturn(warehouseUser());
+        when(baseSupplierMapper.selectById(2L)).thenReturn(supplier(2L, 1));
 
         // ---- 第 1 批：勾选 101 到货并确认入库 ----
         PurchaseRequestReceiveDTO arrive1 = new PurchaseRequestReceiveDTO();
         arrive1.setItems(List.of(arriveItem(101L, "50.00")));
         service.arrive(5L, arrive1);
         line1.setReceiveStatus(2); line1.setArriveBatchNo("B1");
-        line1.setUnitPrice(new BigDecimal("50.00")); head.setStatus(5); // 模拟DB
+        line1.setUnitPrice(new BigDecimal("50.00")); line1.setSupplierId(2L); head.setStatus(5); // 模拟DB
 
         service.confirmReceive(5L);
         line1.setReceiveStatus(3); head.setStatus(2); // 部分入库回到采购中
@@ -865,7 +882,7 @@ class PurchaseRequestServiceTest {
         arrive2.setItems(List.of(arriveItem(102L, "0.50")));
         service.arrive(5L, arrive2);
         line2.setReceiveStatus(2); line2.setArriveBatchNo("B2");
-        line2.setUnitPrice(new BigDecimal("0.50")); head.setStatus(5);
+        line2.setUnitPrice(new BigDecimal("0.50")); line2.setSupplierId(2L); head.setStatus(5);
 
         service.confirmReceive(5L);
         line2.setReceiveStatus(3); head.setStatus(3);
@@ -907,6 +924,7 @@ class PurchaseRequestServiceTest {
         detail.setQuantity(10);
         detail.setArriveQuantity(10);
         detail.setUnitPrice(BigDecimal.ONE);
+        detail.setSupplierId(2L);
         // D120：本批待入库确认
         detail.setReceiveStatus(PurchaseRequestService.RECEIVE_AWAITING);
         detail.setArriveBatchNo("B1");
@@ -1047,6 +1065,7 @@ class PurchaseRequestServiceTest {
         BizPurchaseRequestDetail batchLine = requestDetail(101L, 2, "钢板", 19);
         batchLine.setArriveBatchNo("B1");
         batchLine.setUnitPrice(new BigDecimal("50.00"));
+        batchLine.setSupplierId(2L);
         BizPurchaseRequestDetail pendingLine = requestDetail(102L, 1, "螺丝", 1);
         when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(batchLine, pendingLine));
         when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
@@ -1059,10 +1078,113 @@ class PurchaseRequestServiceTest {
                 anyString(), anyString(), any(), anyString(), anyLong());
     }
 
+    // ============================== D131：行级供应商 ==============================
+
+    @Test
+    void arrive_rejectsMissingSupplier() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 1, "钢板", 19)));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00", null)));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("请选择供应商"), ex.getMessage());
+        verify(bizPurchaseRequestDetailMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void arrive_rejectsDefaultSupplierAnchor() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 1, "钢板", 19)));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00", 1L)));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("不能选择系统默认供应商"), ex.getMessage());
+        verify(baseSupplierMapper, never()).selectById(any());
+    }
+
+    @Test
+    void arrive_rejectsUnknownSupplier() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 1, "钢板", 19)));
+        when(baseSupplierMapper.selectById(99L)).thenReturn(null);
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00", 99L)));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("供应商不存在"), ex.getMessage());
+        verify(bizPurchaseRequestDetailMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void arrive_rejectsStoppedSupplier() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        when(bizPurchaseRequestDetailMapper.selectList(any()))
+                .thenReturn(List.of(requestDetail(101L, 1, "钢板", 19)));
+        when(baseSupplierMapper.selectById(3L)).thenReturn(supplier(3L, 0));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00", 3L)));
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.arrive(5L, dto));
+        assertTrue(ex.getMessage().contains("供应商已停用"), ex.getMessage());
+        verify(bizPurchaseRequestDetailMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void arrive_persistsLineSupplier_toDetailRow() {
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(purchasingHead(5L));
+        BizPurchaseRequestDetail line1 = requestDetail(101L, 1, "钢板", 19);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(line1));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(purchaseUser());
+        when(baseSupplierMapper.selectById(9L)).thenReturn(supplier(9L, 1));
+
+        PurchaseRequestReceiveDTO dto = new PurchaseRequestReceiveDTO();
+        dto.setItems(List.of(arriveItem(101L, "50.00", 9L)));
+        service.arrive(5L, dto);
+
+        // 行级供应商随 receiveStatus/批次一同回写到明细行
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizPurchaseRequestDetail>> cap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(bizPurchaseRequestDetailMapper).update(isNull(), cap.capture());
+        String sqlSet = String.valueOf(cap.getValue().getSqlSet());
+        assertTrue(sqlSet.contains("supplierId="), sqlSet);
+        assertTrue(cap.getValue().getParamNameValuePairs().containsValue(9L), "supplierId=9 应写入明细行: " + sqlSet);
+    }
+
+    @Test
+    void confirmReceive_copiesLineSupplierToReceiptLines() {
+        BizPurchaseRequest head = purchasingHead(5L);
+        head.setStatus(PurchaseRequestService.STATUS_AWAITING_CONFIRM);
+        when(bizPurchaseRequestMapper.selectById(5L)).thenReturn(head);
+        BizPurchaseRequestDetail batchLine = requestDetail(101L, 2, "钢板", 19);
+        batchLine.setArriveBatchNo("B1");
+        batchLine.setUnitPrice(new BigDecimal("50.00"));
+        batchLine.setSupplierId(9L);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(batchLine));
+        when(bizPurchaseRequestMapper.update(any(), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(warehouseUser());
+
+        service.confirmReceive(5L);
+
+        // 行级供应商随行复制到进货明细（权威口径，ADR-0018）
+        ArgumentCaptor<PurchaseSaveDTO> receiptCap = ArgumentCaptor.forClass(PurchaseSaveDTO.class);
+        verify(purchaseService).createInternal(receiptCap.capture(), anyLong(), any());
+        assertEquals(9L, receiptCap.getValue().getLines().get(0).getSupplierId());
+    }
+
     @Test
     void receiveItemDTO_hasNoQuantityField_splitByConstruction() {
         // D120/spec：接收 DTO 不含数量字段——「行内拆量」在契约上不可表达，整行按申请量到货
         assertThrows(NoSuchFieldException.class,
                 () -> PurchaseRequestReceiveDTO.ReceiveItemDTO.class.getDeclaredField("quantity"));
+        // D131/spec：接收 DTO 必含行级供应商字段——「无供应商到货」在契约上不可表达
+        assertDoesNotThrow(
+                () -> PurchaseRequestReceiveDTO.ReceiveItemDTO.class.getDeclaredField("supplierId"));
     }
 }

@@ -335,6 +335,7 @@ CREATE TABLE `biz_purchase_detail` (
     `quantity` INT NOT NULL COMMENT '行进货数量',
     `unit_price` DECIMAL(10,2) NOT NULL COMMENT '行进货单价',
     `total_price` DECIMAL(10,2) NOT NULL COMMENT '行总金额',
+    `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(手动单=头级统一填入;申请单=到货提交逐行选定)',
     `sort_no` INT NOT NULL DEFAULT 1 COMMENT '行序号(同单从1递增)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -1352,6 +1353,7 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_request_detail` (
     `quantity` INT NOT NULL COMMENT '申请采购数量(行内数量不拆,整行到货)',
     `arrive_quantity` INT DEFAULT NULL COMMENT '到货数量(=申请量;到货提交时写,确认入库按此数量加库存)',
     `unit_price` DECIMAL(10,2) DEFAULT NULL COMMENT '采购单价(到货时填写)',
+    `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(到货提交时选定,确认入库复制到进货明细行)',
     `receive_status` TINYINT NOT NULL DEFAULT 1 COMMENT 'D120 行级接收状态: 1-待到货, 2-本批待入库确认, 3-已入库',
     `arrive_batch_no` VARCHAR(20) DEFAULT NULL COMMENT 'D120 到货批次号(同批同号,如B1/B2;驳回/撤回按批)',
     `arrive_batch_time` DATETIME DEFAULT NULL COMMENT 'D120 本批到货提交时间(时间线按批展示)',
@@ -1939,6 +1941,7 @@ CREATE TABLE IF NOT EXISTS `biz_purchase_detail` (
     `quantity` INT NOT NULL COMMENT '行进货数量',
     `unit_price` DECIMAL(10,2) NOT NULL COMMENT '行进货单价',
     `total_price` DECIMAL(10,2) NOT NULL COMMENT '行总金额',
+    `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(手动单=头级统一填入;申请单=到货提交逐行选定)',
     `sort_no` INT NOT NULL DEFAULT 1 COMMENT '行序号(同单从1递增)',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -2098,3 +2101,14 @@ WHERE r.`status` = 5;
 -- 1) 列（列增删不可重复执行）
 ALTER TABLE `biz_purchase`
     ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT '供应商ID(D123头级:手动进货必填,存量/采购申请渠道单据可空)' AFTER `remark`;
+
+-- =============================================
+-- 二十五、D131 进货单供应商行级化（ADR-0018）
+-- =============================================
+-- 明细行 supplier_id 为权威口径：手动进货=头级统一填入；申请渠道=到货提交逐行选定、头级留空。
+-- 物料「最新供应商」= 最近一张 已入库+正常+记录了供应商(COALESCE(行级,头级) 非空) 进货明细行的行级供应商。
+-- 1) 列（列增删不可重复执行）
+ALTER TABLE `biz_purchase_detail`
+    ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(手动单=头级统一填入;申请单=到货提交逐行选定)' AFTER `total_price`;
+ALTER TABLE `biz_purchase_request_detail`
+    ADD COLUMN `supplier_id` BIGINT DEFAULT NULL COMMENT 'D131 行级供应商ID(到货提交时选定,确认入库复制到进货明细行)' AFTER `unit_price`;

@@ -152,6 +152,10 @@
             <el-table-column type="index" label="#" width="50" align="center" />
             <el-table-column prop="goodsName" label="物料" min-width="140" />
             <el-table-column prop="spec" label="规格" min-width="100" />
+            <!-- D131：行级供应商（权威口径）；存量/手动单行为头级值，内部单头级空时看行 -->
+            <el-table-column prop="supplierName" label="供应商" min-width="120">
+              <template #default="scope">{{ scope.row.supplierName || '—' }}</template>
+            </el-table-column>
             <el-table-column prop="quantity" label="数量" width="80" align="center" />
             <el-table-column v-if="showPrice" prop="unitPrice" label="进货单价(元)" width="110" />
             <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />

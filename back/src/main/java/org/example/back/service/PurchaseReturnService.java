@@ -580,7 +580,7 @@ public class PurchaseReturnService {
         Map<Long, List<BizPurchaseReturnDetail>> byReturn = details.stream()
                 .collect(Collectors.groupingBy(BizPurchaseReturnDetail::getReturnId));
         // D123：退货单供应商 = 来源进货单头级供应商（create 限定单来源，故一一对应）；
-        // 存量来源单无头级供应商时留空。批量预取防 N+1。
+        // D131：来源单头级为空（申请渠道生成的进货单）时，回退来源明细行的行级供应商归并展示。
         List<Long> sourcePurchaseIds = records.stream().map(PurchaseReturnVO::getSourcePurchaseId)
                 .filter(Objects::nonNull).distinct().toList();
         Map<Long, BizPurchase> sourceMap = sourcePurchaseIds.isEmpty() ? Map.of()
@@ -591,6 +591,17 @@ public class PurchaseReturnService {
         Map<Long, BaseSupplier> sourceSupplierMap = sourceSupplierIds.isEmpty() ? Map.of()
                 : baseSupplierMapper.selectBatchIds(sourceSupplierIds).stream()
                         .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
+        // 行级回退：退货明细行 → 来源进货明细行 supplier_id
+        List<Long> sourceDetailIds = details.stream().map(BizPurchaseReturnDetail::getSourceDetailId)
+                .filter(Objects::nonNull).distinct().toList();
+        Map<Long, BizPurchaseDetail> sourceDetailMap = sourceDetailIds.isEmpty() ? Map.of()
+                : bizPurchaseDetailMapper.selectBatchIds(sourceDetailIds).stream()
+                        .collect(Collectors.toMap(BizPurchaseDetail::getId, d -> d));
+        Set<Long> lineSupplierIds = sourceDetailMap.values().stream()
+                .map(BizPurchaseDetail::getSupplierId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, BaseSupplier> lineSupplierMap = lineSupplierIds.isEmpty() ? Map.of()
+                : baseSupplierMapper.selectBatchIds(lineSupplierIds).stream()
+                        .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
         for (PurchaseReturnVO vo : records) {
             List<PurchaseReturnDetailVO> lineVOs = byReturn.getOrDefault(vo.getId(), List.of()).stream()
                     .map(this::toDetailVO).toList();
@@ -600,6 +611,22 @@ public class PurchaseReturnService {
             if (sourcePurchase != null && sourcePurchase.getSupplierId() != null) {
                 BaseSupplier sourceSupplier = sourceSupplierMap.get(sourcePurchase.getSupplierId());
                 vo.setSupplierName(sourceSupplier == null ? null : sourceSupplier.getSupplierName());
+            } else if (sourcePurchase != null) {
+                // D131：来源单头级空 → 按退货行对应的来源明细行供应商归并（同单语义：一行各 supplier 或「多个供应商」）
+                Set<String> lineNames = new HashSet<>();
+                for (PurchaseReturnDetailVO lineVO : lineVOs) {
+                    BizPurchaseDetail sourceDetail = sourceDetailMap.get(lineVO.getSourceDetailId());
+                    Long lineSupplierId = sourceDetail == null ? null : sourceDetail.getSupplierId();
+                    BaseSupplier lineSupplier = lineSupplierId == null ? null : lineSupplierMap.get(lineSupplierId);
+                    if (lineSupplier != null) {
+                        lineNames.add(lineSupplier.getSupplierName());
+                    }
+                }
+                if (lineNames.size() == 1) {
+                    vo.setSupplierName(lineNames.iterator().next());
+                } else if (lineNames.size() > 1) {
+                    vo.setSupplierName("多个供应商");
+                }
             }
         }
     }

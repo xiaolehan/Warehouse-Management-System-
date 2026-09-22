@@ -41,6 +41,9 @@ public class PurchaseRequestDetailVO {
 
     private BigDecimal unitPrice;
 
+    /** D131 行级供应商ID（到货提交时选定；前端按供应商 options 映射名称展示） */
+    private Long supplierId;
+
     /** D120 行级接收状态：1-待到货, 2-本批待入库确认, 3-已入库 */
     private Integer receiveStatus;
 

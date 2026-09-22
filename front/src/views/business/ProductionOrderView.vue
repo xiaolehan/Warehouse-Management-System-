@@ -478,6 +478,16 @@
           <el-table-column label="规格/材质" min-width="110">
             <template #default="s">{{ [s.row.spec, s.row.material].filter(Boolean).join(' / ') || '—' }}</template>
           </el-table-column>
+          <!-- D129：上次供应商参考——写补料备注时知道该找谁 -->
+          <el-table-column label="上次供应商" min-width="110">
+            <template #default="s">
+              <template v-if="latestSupplierInfo(s.row.goodsId)">
+                {{ latestSupplierInfo(s.row.goodsId).supplierName || '—' }}
+                <el-tag v-if="latestSupplierInfo(s.row.goodsId).isDefault" size="small" type="info">默认</el-tag>
+              </template>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="备注" min-width="100">
             <template #default="s">{{ s.row.remark || '—' }}</template>
           </el-table-column>
@@ -663,6 +673,7 @@ import {
   updateExpectedCompletionAPI,
   voidProductionOrderAPI
 } from '@/api/business'
+import { getLatestSuppliersAPI } from '@/api/business' // D129：补料缺口行上次供应商参考
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
@@ -1268,6 +1279,20 @@ const materialOptions = ref([])
 // D87：在途补料单号（详情 VO 透出；非空时弹窗提示并禁提交）
 const draftInFlightNo = ref('')
 
+// D129：缺口行「上次供应商」参考——goodsId → {supplierName, isDefault, ...}；写备注前知道该找谁
+const latestSupplierMap = ref({})
+const loadLatestSuppliers = async (goodsIds) => {
+  const ids = [...new Set((goodsIds || []).filter(Boolean))]
+  if (!ids.length) return
+  try {
+    const res = await getLatestSuppliersAPI(ids)
+    latestSupplierMap.value = { ...latestSupplierMap.value, ...(res.data || {}) }
+  } catch {
+    // 静默降级：列显示「—」
+  }
+}
+const latestSupplierInfo = (goodsId) => latestSupplierMap.value[goodsId] || null
+
 // D60：按未知物料拆两组——已有物料缺口 / 未知物料（新物料）
 const boundDraftLines = computed(() => draftLines.value.filter((l) => l.lineStatus !== 'unknown'))
 const unknownDraftLines = computed(() => draftLines.value.filter((l) => l.lineStatus === 'unknown'))
@@ -1311,6 +1336,7 @@ function openDraftDialog(row) {
         remark: l.remark || '',
         unit: ''
       }))
+    loadLatestSuppliers(draftLines.value.filter((l) => l.goodsId).map((l) => l.goodsId)) // D129
   }).catch(() => {}) // 业务错误已由拦截器统一提示
 }
 

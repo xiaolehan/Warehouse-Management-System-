@@ -268,6 +268,7 @@ public class PurchaseService {
             detail.setUnitPrice(unitPrice);
             detail.setTotalPrice(lineTotal);
             detail.setSortNo(sortNo);
+            detail.setSupplierId(dto.getSupplierId()); // D131 行级供应商=头级统一填入（手动单一供应商）
             detailEntities.add(detail);
 
             totalQuantity += line.getQuantity();
@@ -297,7 +298,8 @@ public class PurchaseService {
     /**
      * 内部创建进货单（不校验权限，供采购申请仓储确认入库等内部流程复用）。
      * 一次调用生成一张多行已入库单；operator 由调用方传入（如仓储确认入库人）。
-     * D123：supplierId 保持 null（采购申请渠道无供应商来源），不参与「最新供应商」口径。
+     * D131：行级供应商取各行 supplierId（到货提交逐行选定，可各不相同）；头级保持 null，
+     * 「最新供应商」口径读明细行（COALESCE 行级→头级）。
      */
     @Transactional(rollbackFor = Exception.class)
     public void createInternal(PurchaseSaveDTO dto, Long operatorId, String operatorName) {
@@ -337,6 +339,7 @@ public class PurchaseService {
             detail.setUnitPrice(unitPrice);
             detail.setTotalPrice(lineTotal);
             detail.setSortNo(sortNo);
+            detail.setSupplierId(line.getSupplierId()); // D131 行级供应商（到货提交选定）
             detailEntities.add(detail);
 
             totalQuantity += line.getQuantity();
@@ -711,15 +714,21 @@ public class PurchaseService {
         Map<Long, BaseSupplier> headSupplierMap = headSupplierIds.isEmpty() ? Map.of()
                 : baseSupplierMapper.selectBatchIds(headSupplierIds).stream()
                         .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
+        // D131：行级供应商批量预取（明细行 supplier_id 为权威口径）
+        Set<Long> lineSupplierIds = details.stream().map(BizPurchaseDetail::getSupplierId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, BaseSupplier> lineSupplierMap = lineSupplierIds.isEmpty() ? Map.of()
+                : baseSupplierMapper.selectBatchIds(lineSupplierIds).stream()
+                        .collect(Collectors.toMap(BaseSupplier::getId, s -> s));
         Map<Long, List<BizPurchaseDetail>> byPurchase = details.stream()
                 .collect(Collectors.groupingBy(BizPurchaseDetail::getPurchaseId));
 
         for (PurchaseVO vo : records) {
             List<PurchaseDetailVO> lineVOs = byPurchase.getOrDefault(vo.getId(), List.of()).stream()
-                    .map(this::toDetailVO).toList();
+                    .map(d -> toDetailVO(d, lineSupplierMap)).toList();
             vo.setDetails(lineVOs);
             vo.setGoodsSummary(buildGoodsSummary(lineVOs));
-            // D123：头级供应商优先展示；无头级（存量/采购申请渠道单据）回退旧口径（行物料绑定供应商汇总）
+            // D123：头级供应商优先展示；无头级（存量/采购申请渠道单据）回退行级供应商汇总
             BaseSupplier headSupplier = vo.getSupplierId() == null ? null : headSupplierMap.get(vo.getSupplierId());
             vo.setSupplierName(headSupplier == null ? null : headSupplier.getSupplierName());
             vo.setSupplierSummary(headSupplier != null ? headSupplier.getSupplierName()
@@ -728,7 +737,7 @@ public class PurchaseService {
         }
     }
 
-    private PurchaseDetailVO toDetailVO(BizPurchaseDetail d) {
+    private PurchaseDetailVO toDetailVO(BizPurchaseDetail d, Map<Long, BaseSupplier> lineSupplierMap) {
         PurchaseDetailVO line = new PurchaseDetailVO();
         line.setId(d.getId());
         line.setPurchaseId(d.getPurchaseId());
@@ -740,6 +749,10 @@ public class PurchaseService {
         line.setUnitPrice(d.getUnitPrice());
         line.setTotalPrice(d.getTotalPrice());
         line.setSortNo(d.getSortNo());
+        // D131：行级供应商（手动单=头级统一值；申请单=各行选定值）
+        line.setSupplierId(d.getSupplierId());
+        BaseSupplier lineSupplier = d.getSupplierId() == null ? null : lineSupplierMap.get(d.getSupplierId());
+        line.setSupplierName(lineSupplier == null ? null : lineSupplier.getSupplierName());
         return line;
     }
 
@@ -755,12 +768,16 @@ public class PurchaseService {
         return firstName + "等" + lines.size() + "种";
     }
 
-    /** 供应商汇总：全部行同一供应商为其名称，跨供应商为「多个供应商」 */
+    /** 供应商汇总：优先按行级供应商归并（D131），行级为空回退物料绑定供应商；跨供应商为「多个供应商」 */
     private String buildSupplierSummary(List<PurchaseDetailVO> lines,
                                         Map<Long, BaseGoods> goodsMap,
                                         Map<Long, BaseSupplier> supplierMap) {
         Set<String> names = new HashSet<>();
         for (PurchaseDetailVO line : lines) {
+            if (line.getSupplierName() != null) {
+                names.add(line.getSupplierName());
+                continue;
+            }
             BaseGoods goods = goodsMap.get(line.getGoodsId());
             if (goods == null || goods.getSupplierId() == null) {
                 continue;
