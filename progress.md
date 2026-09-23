@@ -5,6 +5,17 @@
 
 ---
 
+## 会话 54 — 2026-09-23
+
+### 本机打包部署 + 测试轮数据重置（grilling 四决策）
+
+- **本机打包部署**：后端 `./mvnw clean package` → `java -jar target/back-0.0.1-SNAPSHOT.jar`（**工作目录必须 back/**，`app.upload.base-path=../uploads` 相对解析）；前端 `npm run build` + `vite preview --host --port 4173`（vite.config 已带 `/api→8080` 代理）。入口 http://localhost:4173；重启命令见会话记录尾部（`fuser -k 8080/tcp 4173/tcp` 停）。AI 助手无 env 不可用（同 README 演示站）。
+- **数据重置（/grill-with-docs 四决策，全部按推荐执行）**：①主数据保留（74 商品/5 供应商/3 BOM）仅**库存归零**；②sys_employee 6 条员工档案保留（userId 关联账号）；③日志三类+公告全清、sys_config/sys_ip_policy 保留；④重置脚本入库。
+- **执行与验证**：先全库备份 `~/wms-backups/wms-full-20260923-132110.sql`（40 表+数据，用户库外不进 git）；`reset-test-data.sql`（仓库根，与 db.sql 并列）TRUNCATE 全部业务单据/消息/日志/公告/AI/工作要求 + `UPDATE base_goods SET stock=0`，FOREIGN_KEY_CHECKS 包裹；验证：业务表/消息/日志/公告全 0、库存合计 0、主数据与账号档案原数保留；4173 登录+销售分页空列表+可退选项空全链正常。
+- **说明**：财务端无独立表（毛利分析由销售/进货派生），单据清空后自动归零，无需单独操作；单号为时间戳+随机生成，清空无序列冲突。
+
+---
+
 ## 会话 53 — 2026-09-22
 
 ### 第三轮手测四票（D128-D131）全部实施 + 评审修复 + 全链 E2E，待用户复测
