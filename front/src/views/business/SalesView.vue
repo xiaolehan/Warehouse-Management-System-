@@ -37,7 +37,13 @@
         </el-form>
       </div>
 
-      <el-table :data="tableData" border style="width: 100%" v-loading="loading" :row-class-name="shortageRowClass">
+      <div style="margin-bottom: 12px;">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }">
+          批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
+        </el-button>
+      </div>
+      <el-table :data="tableData" border style="width: 100%" v-loading="loading" :row-class-name="shortageRowClass" @selection-change="handleBatchSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="salesNo" label="销售单号" width="150" />
         <!-- D110：一单 N 个成品行，列表汇总展示「首品名 等 N 种」，明细进详情 -->
@@ -366,6 +372,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled, Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { createApprovalOrderAPI, getPendingVoidBizIdsAPI } from '@/api/system'
+import { batchDeleteSalesAPI } from '@/api/business.js'
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
@@ -709,6 +716,29 @@ const handleView = async (row) => {
     dialogVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
+  }
+}
+
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const batchSelectedRows = ref([])
+const handleBatchSelectionChange = (val) => {
+  batchSelectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认批量删除选中的 ${batchSelectedRows.value.length} 张单据吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeleteSalesAPI(batchSelectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功删除 ${data.successCount} 条`)
+    }
+    batchSelectedRows.value = []
+    await loadList()
+  } catch {
+    // 用户取消或业务错误已由拦截器统一提示
   }
 }
 

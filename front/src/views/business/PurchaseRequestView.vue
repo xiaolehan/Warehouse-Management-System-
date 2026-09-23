@@ -32,7 +32,13 @@
       </el-form>
 
       <!-- 列表 -->
-      <el-table v-loading="loading" :data="tableData" border stripe>
+      <div style="margin-bottom: 12px;">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['production'] }">
+          批量撤销{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
+        </el-button>
+      </div>
+      <el-table v-loading="loading" :data="tableData" border stripe @selection-change="handleBatchSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column label="单号" width="200">
           <template #default="{ row }">
             <div>{{ row.requestNo }}</div>
@@ -471,6 +477,7 @@ import {
   confirmReceivePurchaseRequestAPI, arriveCancelPurchaseRequestAPI, arriveRejectPurchaseRequestAPI,
   rejectPurchaseRequestAPI, deletePurchaseRequestAPI
 } from '@/api/purchaseRequest'
+import { batchDeletePurchaseRequestsAPI } from '@/api/purchaseRequest.js'
 import { getPurchaseRequestTimelineAPI } from '@/api/purchaseRequest'
 import { getLatestPurchasePricesAPI } from '@/api/business' // D124：到货提交预填最近成交价
 import { getLatestSuppliersAPI } from '@/api/business' // D129：上次供应商参考列 + D131 到货预填绑定值
@@ -930,6 +937,29 @@ const submitReject = async () => {
     // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
+  }
+}
+
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const batchSelectedRows = ref([])
+const handleBatchSelectionChange = (val) => {
+  batchSelectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认批量撤销选中的 ${batchSelectedRows.value.length} 张采购申请单吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeletePurchaseRequestsAPI(batchSelectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功撤销 ${data.successCount} 条`)
+    }
+    batchSelectedRows.value = []
+    await loadList()
+  } catch {
+    // 用户取消或业务错误已由拦截器统一提示
   }
 }
 

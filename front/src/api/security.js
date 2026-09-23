@@ -6,6 +6,7 @@ export const getIpPolicyDetailAPI = (id) => request.get(`/system/security/ip-pol
 export const createIpPolicyAPI = (data) => request.post('/system/security/ip-policies', data)
 export const updateIpPolicyAPI = (id, data) => request.put(`/system/security/ip-policies/${id}`, data)
 export const deleteIpPolicyAPI = (id) => request.delete(`/system/security/ip-policies/${id}`)
+export const batchDeleteIpPoliciesAPI = (ids) => request.post('/system/security/ip-policies/batch-delete', ids)
 
 // 启停策略（enabled: true/false）
 export const updateIpPolicyStatusAPI = (id, enabled) => request.put(`/system/security/ip-policies/${id}/status`, { enabled })

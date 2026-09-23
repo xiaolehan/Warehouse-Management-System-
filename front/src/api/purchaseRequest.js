@@ -14,6 +14,7 @@ export const arriveCancelPurchaseRequestAPI = (id) => request.put(`/business/pur
 export const arriveRejectPurchaseRequestAPI = (id) => request.put(`/business/purchase-requests/${id}/arrive-reject`)
 export const rejectPurchaseRequestAPI = (id, data) => request.put(`/business/purchase-requests/${id}/reject`, data)
 export const deletePurchaseRequestAPI = (id) => request.delete(`/business/purchase-requests/${id}`)
+export const batchDeletePurchaseRequestsAPI = (ids) => request.post('/business/purchase-requests/batch-delete', ids)
 
 // 生产缺料补料草稿
 export const createDraftPurchaseRequestAPI = (data) => request.post('/business/purchase-requests/draft', data)

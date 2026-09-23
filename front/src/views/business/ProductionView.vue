@@ -38,7 +38,13 @@
         </el-form>
       </div>
 
-      <el-table :data="tableData" border style="width: 100%" v-loading="loading">
+      <div style="margin-bottom: 12px;">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+          批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
+        </el-button>
+      </div>
+      <el-table :data="tableData" border style="width: 100%" v-loading="loading" @selection-change="handleBatchSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="orderNo" label="入库单号" width="150" />
         <el-table-column prop="goodsName" label="成品名称" />
@@ -214,6 +220,7 @@ import {
   rejectProductionInboundAPI,
   voidProductionAPI
 } from '@/api/business'
+import { batchDeleteProductionsAPI } from '@/api/business.js'
 
 // D107：确认/驳回入库申请 = 仓储管理员专属（与后端 requireInboundConfirmAccess 对齐）
 const userRole = getRole()
@@ -419,6 +426,29 @@ const handleView = async (row) => {
     dialogVisible.value = true
   } catch {
     // 业务错误已由拦截器统一提示
+  }
+}
+
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const batchSelectedRows = ref([])
+const handleBatchSelectionChange = (val) => {
+  batchSelectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认批量删除选中的 ${batchSelectedRows.value.length} 张单据吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeleteProductionsAPI(batchSelectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功删除 ${data.successCount} 条`)
+    }
+    batchSelectedRows.value = []
+    await loadList()
+  } catch {
+    // 用户取消或业务错误已由拦截器统一提示
   }
 }
 

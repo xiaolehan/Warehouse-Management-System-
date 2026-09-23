@@ -6,6 +6,7 @@ export const getAdminHomeLatestNoticeAPI = (limit = 4) => request.get('/system/n
 export const createNoticeAPI = (data) => request.post('/system/notices', data)
 export const updateNoticeAPI = (id, data) => request.put(`/system/notices/${id}`, data)
 export const deleteNoticeAPI = (id) => request.delete(`/system/notices/${id}`)
+export const batchDeleteNoticesAPI = (ids) => request.post('/system/notices/batch-delete', ids)
 
 export const getUserPageAPI = (params) => request.get('/system/users/page', { params })
 export const getUserDetailAPI = (id) => request.get(`/system/users/${id}`)
@@ -13,6 +14,7 @@ export const createUserAPI = (data) => request.post('/system/users', data)
 export const updateUserAPI = (id, data) => request.put(`/system/users/${id}`, data)
 export const updateUserStatusAPI = (id, data) => request.put(`/system/users/${id}/status`, data)
 export const deleteUserAPI = (id) => request.delete(`/system/users/${id}`)
+export const batchDeleteUsersAPI = (ids) => request.post('/system/users/batch-delete', ids)
 export const resetUserPasswordAPI = (id, data) => request.put(`/system/users/${id}/password`, data)
 
 export const getDeptPageAPI = (params) => request.get('/system/depts/page', { params })
@@ -29,6 +31,7 @@ export const getEmployeeDetailAPI = (id) => request.get(`/system/employees/${id}
 export const createEmployeeAPI = (data) => request.post('/system/employees', data)
 export const updateEmployeeAPI = (id, data) => request.put(`/system/employees/${id}`, data)
 export const deleteEmployeeAPI = (id) => request.delete(`/system/employees/${id}`)
+export const batchDeleteEmployeesAPI = (ids) => request.post('/system/employees/batch-delete', ids)
 
 export const getApprovalOrderPageAPI = (params) => request.get('/system/approval-orders/page', { params })
 export const getApprovalPendingCountAPI = () => request.get('/system/approval-orders/pending-count')

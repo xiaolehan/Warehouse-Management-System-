@@ -7,6 +7,7 @@ export const getWorkRequirementPendingReviewReminderAPI = () => request.get('/sy
 export const getWorkRequirementOverdueReminderAPI = () => request.get('/system/work-requirements/overdue-reminder')
 export const createWorkRequirementAPI = (data) => request.post('/system/work-requirements', data)
 export const deleteWorkRequirementAPI = (id) => request.delete(`/system/work-requirements/${id}`)
+export const batchDeleteWorkRequirementsAPI = (ids) => request.post('/system/work-requirements/batch-delete', ids)
 export const reviewWorkRequirementAPI = (assignId, data) => request.put(`/system/work-requirements/assign/${assignId}/review`, data)
 export const getDeptEmployeesAPI = () => request.get('/system/work-requirements/dept-employees')
 

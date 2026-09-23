@@ -35,7 +35,13 @@
       </el-form>
 
       <!-- 列表 -->
-      <el-table v-loading="loading" :data="tableData" border stripe>
+      <div style="margin-bottom: 12px;">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+          批量撤销{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
+        </el-button>
+      </div>
+      <el-table v-loading="loading" :data="tableData" border stripe @selection-change="handleBatchSelectionChange">
+        <el-table-column type="selection" width="46" />
         <el-table-column prop="pickNo" label="单号" width="180" />
         <el-table-column label="类型" width="80">
           <template #default="{ row }">{{ row.pickTypeText }}</template>
@@ -130,6 +136,7 @@ import {
   getPickListPageAPI, getPickListDetailAPI,
   issuePickListAPI, confirmPickListAPI, rejectPickListAPI, deletePickListAPI
 } from '@/api/pickList'
+import { batchDeletePickListsAPI } from '@/api/pickList.js'
 
 const userStore = useUserStore()
 
@@ -248,6 +255,29 @@ const submitReject = async () => {
     // 业务错误已由拦截器统一提示
   } finally {
     submitting.value = false
+  }
+}
+
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const batchSelectedRows = ref([])
+const handleBatchSelectionChange = (val) => {
+  batchSelectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认批量撤销选中的 ${batchSelectedRows.value.length} 张领料单吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeletePickListsAPI(batchSelectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功撤销 ${data.successCount} 条`)
+    }
+    batchSelectedRows.value = []
+    await loadList()
+  } catch {
+    // 用户取消或业务错误已由拦截器统一提示
   }
 }
 

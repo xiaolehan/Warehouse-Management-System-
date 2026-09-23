@@ -22,10 +22,15 @@
         <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
         <el-button v-if="isWarehouse" type="success" :icon="Plus" @click="handleAdd"
           v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">{{ isProduct ? '新增成品' : '新增物料' }}</el-button>
+        <el-button v-if="isWarehouse" type="danger" :icon="Delete" :disabled="selectedRows.length === 0" @click="handleBatchDelete"
+          v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+          批量删除{{ selectedRows.length > 0 ? `（${selectedRows.length}）` : '' }}
+        </el-button>
       </el-form-item>
     </el-form>
 
-    <el-table :data="tableData" border style="width: 100%" v-loading="loading">
+    <el-table :data="tableData" border style="width: 100%" v-loading="loading" @selection-change="handleSelectionChange">
+      <el-table-column type="selection" width="46" />
       <el-table-column type="index" label="序号" width="60" />
       <el-table-column prop="goodsName" :label="isProduct ? '成品名称' : '物料名称'" min-width="130" />
       <!-- D65 成品管理页：名称/单位/规格/库存/备注/创建来源；物料页维持原字段 -->
@@ -203,6 +208,7 @@ import { DEFAULT_SUPPLIER_ID } from '@/utils/constants'
 import {
   createGoodsAPI,
   deleteGoodsAPI,
+  batchDeleteGoodsAPI,
   getGoodsDetailAPI,
   getGoodsPageAPI,
   getGoodsPurchasePriceHistoryAPI,
@@ -447,6 +453,29 @@ const handleDelete = async (row) => {
     await ElMessageBox.confirm(`确认删除该${goodsNoun.value}资料?`, '警告', { type: 'warning' })
     await deleteGoodsAPI(row.id)
     ElMessage.success('删除成功')
+    await loadList()
+  } catch {
+    // 用户取消删除或业务错误已由拦截器统一提示
+  }
+}
+
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const selectedRows = ref([])
+const handleSelectionChange = (val) => {
+  selectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 条${goodsNoun.value}资料吗？有库存/被引用的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeleteGoodsAPI(selectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功删除 ${data.successCount} 条`)
+    }
+    selectedRows.value = []
     await loadList()
   } catch {
     // 用户取消删除或业务错误已由拦截器统一提示

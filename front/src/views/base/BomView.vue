@@ -21,7 +21,13 @@
       </el-form-item>
     </el-form>
 
-    <el-table :data="tableData" border style="width: 100%" v-loading="loading">
+    <div style="margin-bottom: 12px;">
+      <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['production'] }">
+        批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
+      </el-button>
+    </div>
+    <el-table :data="tableData" border style="width: 100%" v-loading="loading" @selection-change="handleBatchSelectionChange">
+      <el-table-column type="selection" width="46" />
       <el-table-column type="index" label="序号" width="60" />
       <el-table-column prop="bomCode" label="BOM编码" min-width="120" />
       <el-table-column prop="goodsName" label="成品名称" min-width="160" />
@@ -259,6 +265,7 @@ import {
   getGoodsMaterialOptionsAPI,
   updateBomAPI
 } from '@/api/base'
+import { batchDeleteBomsAPI } from '@/api/base.js'
 
 const searchForm = reactive({ bomCode: '', goodsName: '' })
 const tableData = ref([])
@@ -502,6 +509,29 @@ const handleEdit = async (row) => {
 
 // D66：删除前先查 delete-check——成品有未完结生产任务单时软保护二次确认，确认后 force 放行；
 // 成功提示用后端返回的级联结果说明（成品主档清理/保留）
+// 手测问题 1（2026-09-23）：批量删除——尽力而为，能删的删，失败明细弹出
+const batchSelectedRows = ref([])
+const handleBatchSelectionChange = (val) => {
+  batchSelectedRows.value = val
+}
+const handleBatchDelete = async () => {
+  try {
+    await ElMessageBox.confirm(`确认批量删除选中的 ${batchSelectedRows.value.length} 条 BOM吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    const res = await batchDeleteBomsAPI(batchSelectedRows.value.map((r) => r.id))
+    const data = res.data || {}
+    if (data.failureCount > 0) {
+      const detail = (data.failures || []).map((f) => `${f.name || f.id}：${f.reason}`).join('；')
+      ElMessage.warning(`成功 ${data.successCount} 条，失败 ${data.failureCount} 条：${detail}`)
+    } else {
+      ElMessage.success(`成功删除 ${data.successCount} 条`)
+    }
+    batchSelectedRows.value = []
+    await loadList()
+  } catch {
+    // 用户取消或业务错误已由拦截器统一提示
+  }
+}
+
 const handleDelete = async (row) => {
   try {
     const check = await getBomDeleteCheckAPI(row.id)

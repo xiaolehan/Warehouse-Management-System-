@@ -6,6 +6,7 @@ export const getSupplierDetailAPI = (id) => request.get(`/base/suppliers/${id}`)
 export const createSupplierAPI = (data) => request.post('/base/suppliers', data)
 export const updateSupplierAPI = (id, data) => request.put(`/base/suppliers/${id}`, data)
 export const deleteSupplierAPI = (id) => request.delete(`/base/suppliers/${id}`)
+export const batchDeleteSuppliersAPI = (ids) => request.post('/base/suppliers/batch-delete', ids)
 
 export const getGoodsPageAPI = (params) => request.get('/base/goods/page', { params })
 export const getStockWarningPageAPI = (params) => request.get('/base/goods/page', {
@@ -20,6 +21,7 @@ export const getGoodsDetailAPI = (id) => request.get(`/base/goods/${id}`)
 export const createGoodsAPI = (data) => request.post('/base/goods', data)
 export const updateGoodsAPI = (id, data) => request.put(`/base/goods/${id}`, data)
 export const deleteGoodsAPI = (id) => request.delete(`/base/goods/${id}`)
+export const batchDeleteGoodsAPI = (ids) => request.post('/base/goods/batch-delete', ids)
 // D102：物料进价历史（仅采购/超管可见；弹窗展示该物料全部有效已入库采购记录，最近在上）
 export const getGoodsPurchasePriceHistoryAPI = (id) => request.get(`/base/goods/${id}/purchase-price-history`)
 // D109：未知物料匹配供应商（仓储管理员触发；按最新采购申请明细到货备注斜杠前的供应商名回绑）
@@ -32,6 +34,7 @@ export const getBomDetailAPI = (id) => request.get(`/base/bom/${id}`)
 export const createBomAPI = (data) => request.post('/base/bom', data)
 export const updateBomAPI = (id, data) => request.put(`/base/bom/${id}`, data)
 export const deleteBomAPI = (id, force = false) => request.delete(`/base/bom/${id}`, { params: force ? { force: true } : {} })
+export const batchDeleteBomsAPI = (ids) => request.post('/base/bom/batch-delete', ids)
 // D66：删除前检查——返回 unfinishedOrderCount/goodsName，供前端软保护二次确认
 export const getBomDeleteCheckAPI = (id) => request.get(`/base/bom/${id}/delete-check`)
 export const getBomExportAPI = (id) => request.get(`/base/bom/${id}/export`, { responseType: 'blob' })
