@@ -20,6 +20,7 @@ import org.example.back.mapper.BaseSupplierMapper;
 import org.example.back.mapper.BizApprovalOrderMapper;
 import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.PurchaseDetailVO;
 import org.example.back.vo.PurchaseSourceOptionLineVO;
 import org.example.back.vo.PurchaseSourceOptionVO;
@@ -439,6 +440,31 @@ public class PurchaseService {
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseAdminOrSuperAdmin();
+        deleteInternal(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requirePurchaseAdminOrSuperAdmin();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizPurchase head = bizPurchaseMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getPurchaseNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private void deleteInternal(Long id) {
         BizPurchase purchase = requirePurchase(id);
         ensureNormalStatus(purchase.getBizStatus(), "进货单");
         validateDeleteWindow(purchase.getOperationTime(), "进货单");

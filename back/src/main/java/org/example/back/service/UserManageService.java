@@ -17,6 +17,7 @@ import org.example.back.entity.SysUser;
 import org.example.back.mapper.SysDeptMapper;
 import org.example.back.mapper.SysEmployeeMapper;
 import org.example.back.mapper.SysUserMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.UserVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -174,6 +175,25 @@ public class UserManageService {
         if (employeeUser && authzService.isSuperAdmin()) {
             messageService.sendEmployeeDeletedReminder(user.getRealName(), user.getDeptId(), authzService.currentOperatorLabel());
         }
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——逐行调用单删（可管性/超管保护逐行生效），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                SysUser user = sysUserMapper.selectById(id);
+                result.addFailure(id, user != null ? user.getRealName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     public void resetPassword(Long targetUserId, String newPassword) {

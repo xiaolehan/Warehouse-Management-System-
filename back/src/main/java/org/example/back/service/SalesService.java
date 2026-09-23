@@ -23,6 +23,7 @@ import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.SalesDetailVO;
 import org.example.back.vo.SalesSourceOptionLineVO;
 import org.example.back.vo.SalesSourceOptionVO;
@@ -558,6 +559,30 @@ public class SalesService {
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
+        deleteInternal(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizSales head = bizSalesMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getSalesNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private void deleteInternal(Long id) {
         BizSales entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "销售单");
         validateDeleteWindow(entity.getOperationTime(), "销售单");

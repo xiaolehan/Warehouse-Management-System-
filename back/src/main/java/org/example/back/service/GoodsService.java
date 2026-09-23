@@ -23,6 +23,7 @@ import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.GoodsLatestSupplierVO;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
@@ -466,6 +467,30 @@ public class GoodsService {
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
         authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
+        deleteInternal(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BaseGoods goods = baseGoodsMapper.selectById(id);
+                result.addFailure(id, goods != null ? goods.getGoodsName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private void deleteInternal(Long id) {
         BaseGoods goods = requireGoods(id);
         // D65/Q11：成品主数据有库存、存在有效 BOM 或被任何单据引用时不允许删除（与 BOM 删除级联同一口径）
         if (GOODS_TYPE_PRODUCT.equals(goods.getType()) && !goodsReferenceService.isProductDeletable(id, goods.getStock())) {

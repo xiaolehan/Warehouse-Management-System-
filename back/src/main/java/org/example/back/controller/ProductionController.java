@@ -11,9 +11,12 @@ import org.example.back.dto.InboundRejectDTO;
 import org.example.back.dto.ProductionQueryDTO;
 import org.example.back.dto.ProductionSaveDTO;
 import org.example.back.service.ProductionService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.ProductionVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/business/production")
@@ -45,6 +48,12 @@ public class ProductionController {
     public Result<Void> delete(@PathVariable Long id) {
         productionService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(productionService.batchDelete(ids));
     }
 
     @PutMapping("/{id}/void")

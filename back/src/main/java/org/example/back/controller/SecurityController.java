@@ -9,6 +9,7 @@ import org.example.back.dto.IpPolicySaveDTO;
 import org.example.back.dto.IpPolicyStatusDTO;
 import org.example.back.entity.SysIpPolicy;
 import org.example.back.service.SecurityService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -50,6 +51,12 @@ public class SecurityController {
     public Result<Void> delete(@PathVariable Long id) {
         securityService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(securityService.batchDelete(ids));
     }
 
     @PutMapping("/{id}/status")

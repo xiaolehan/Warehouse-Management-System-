@@ -15,6 +15,7 @@ import org.example.back.entity.BizBomDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.BomDeleteCheckVO;
 import org.example.back.vo.BomDetailVO;
 import org.example.back.vo.BomVO;
@@ -193,6 +194,33 @@ public class BomService {
     public String delete(Long id, boolean force) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireBomWriteAccess();
+        return deleteInternal(id, force);
+    }
+
+    /**
+     * 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验（非强制：有未完结任务单的行进失败明细），尽力而为。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireBomWriteAccess();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id, false);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizBom bom = bizBomMapper.selectById(id);
+                result.addFailure(id, bom != null ? bom.getGoodsName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private String deleteInternal(Long id, boolean force) {
         BizBom bom = requireBom(id);
         BaseGoods product = baseGoodsMapper.selectById(bom.getGoodsId());
         long unfinished = goodsReferenceService.countUnfinishedOrders(bom.getGoodsId());

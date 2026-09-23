@@ -9,6 +9,7 @@ import org.example.back.entity.SysUser;
 import org.example.back.mapper.SysDeptMapper;
 import org.example.back.mapper.SysEmployeeMapper;
 import org.example.back.mapper.SysUserMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -18,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -114,6 +116,41 @@ class UserManageServiceTest {
         verify(sysEmployeeMapper, times(1)).delete(any());
         verify(sysUserMapper, times(1)).deleteById(77L);
         verify(messageService, times(1)).sendEmployeeDeletedReminder("待删除员工", 4L, "超级管理员");
+    }
+
+    // ---------- 手测问题 1（2026-09-23）：批量删除（尽力而为聚合） ----------
+
+    @Test
+    void batchDelete_superAdminRowBlocked_employeeRowDeleted() {
+        SysUser superRow = new SysUser();
+        superRow.setId(1L);
+        superRow.setRealName("超管");
+        superRow.setRole("superadmin");
+        when(sysUserMapper.selectById(1L)).thenReturn(superRow);
+
+        SysUser empRow = new SysUser();
+        empRow.setId(77L);
+        empRow.setRealName("待删除员工");
+        empRow.setRole("employee");
+        empRow.setDeptId(4L);
+        when(sysUserMapper.selectById(77L)).thenReturn(empRow);
+
+        when(authzService.isSuperAdmin()).thenReturn(true);
+        when(authzService.currentOperatorLabel()).thenReturn("超级管理员");
+        when(authzService.normalizeRole(any())).thenAnswer(invocation -> {
+            Object value = invocation.getArgument(0);
+            return value == null ? "" : String.valueOf(value).trim().toLowerCase();
+        });
+
+        BatchDeleteResultVO result = userManageService.batchDelete(java.util.List.of(1L, 77L));
+
+        assertEquals(1, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        assertEquals(1L, result.getFailures().get(0).getId());
+        assertTrue(result.getFailures().get(0).getReason().contains("超级管理员账号不允许删除"),
+                "实际: " + result.getFailures().get(0).getReason());
+        verify(sysUserMapper, never()).deleteById(1L);
+        verify(sysUserMapper).deleteById(77L);
     }
 
     @Test

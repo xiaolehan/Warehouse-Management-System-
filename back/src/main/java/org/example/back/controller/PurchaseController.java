@@ -11,6 +11,7 @@ import org.example.back.dto.PurchaseSaveDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.PurchaseService;
 import org.example.back.service.DocumentTimelineService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.PurchaseSourceOptionVO;
 import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.PurchaseVO;
@@ -71,6 +72,12 @@ public class PurchaseController {
     public Result<Void> delete(@PathVariable Long id) {
         purchaseService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(purchaseService.batchDelete(ids));
     }
 
     @PutMapping("/{id}/void")

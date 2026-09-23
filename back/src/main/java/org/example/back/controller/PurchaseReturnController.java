@@ -11,10 +11,13 @@ import org.example.back.dto.PurchaseReturnSaveDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.PurchaseReturnService;
 import org.example.back.service.DocumentTimelineService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.PurchaseReturnVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/business/purchase-returns")
@@ -55,6 +58,13 @@ public class PurchaseReturnController {
     public Result<Void> delete(@PathVariable Long id) {
         purchaseReturnService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @AuditLog(module = "进货退货管理", action = "批量删除", targetType = "进货退货单")
+    @PreventDuplicateSubmit(intervalMs = 1200, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(purchaseReturnService.batchDelete(ids));
     }
 
     @PutMapping("/{id}/void")

@@ -16,6 +16,7 @@ import org.example.back.entity.BizProductionOrder;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizProductionMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.ProductionVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -245,6 +246,27 @@ public class ProductionService {
         validateDeleteWindow(production.getOperationTime(), "生产入库单");
         decreaseStock(production.getGoodsId(), production.getQuantity(), "当前库存不足，无法删除该生产入库单");
         bizProductionMapper.deleteById(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireProductionWriteAccess();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizProduction head = bizProductionMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getProductionNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     @Transactional(rollbackFor = Exception.class)

@@ -9,6 +9,7 @@ import org.example.back.dto.GoodsQueryDTO;
 import org.example.back.dto.GoodsSaveDTO;
 import org.example.back.dto.QuickProductDTO;
 import org.example.back.service.GoodsService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsPurchaseHistoryVO;
 import org.example.back.vo.GoodsVO;
@@ -93,5 +94,11 @@ public class GoodsController {
     public Result<Void> delete(@PathVariable Long id) {
         goodsService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(goodsService.batchDelete(ids));
     }
 }

@@ -15,6 +15,7 @@ import org.example.back.mapper.SysUserMapper;
 import org.example.back.mapper.WorkRequirementAssignMapper;
 import org.example.back.mapper.WorkRequirementAttachmentMapper;
 import org.example.back.mapper.WorkRequirementMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.ReminderSummaryVO;
 import org.example.back.vo.WorkRequirementAssignVO;
 import org.example.back.vo.WorkRequirementDetailVO;
@@ -365,6 +366,27 @@ public class WorkRequirementService {
         for (WorkRequirementAssign assign : assigns) {
             assignMapper.deleteById(assign.getId());
         }
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——逐行调用单删（本人创建校验逐行生效），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        authzService.requireAdminOrSuperAdmin("仅管理员可删除工作要求");
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                WorkRequirement head = workRequirementMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getContent() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     @Transactional(rollbackFor = Exception.class)

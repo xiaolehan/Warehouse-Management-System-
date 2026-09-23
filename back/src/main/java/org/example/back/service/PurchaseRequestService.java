@@ -28,6 +28,7 @@ import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.PurchaseRequestDetailVO;
 import org.example.back.vo.PurchaseRequestVO;
@@ -761,6 +762,26 @@ public class PurchaseRequestService {
         LambdaQueryWrapper<BizPurchaseRequestDetail> detailWrapper = new LambdaQueryWrapper<>();
         detailWrapper.eq(BizPurchaseRequestDetail::getRequestId, id);
         bizPurchaseRequestDetailMapper.delete(detailWrapper);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizPurchaseRequest head = bizPurchaseRequestMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getRequestNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     // ============================== 私有辅助 ==============================

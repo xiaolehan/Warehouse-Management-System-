@@ -9,6 +9,7 @@ import org.example.back.dto.BomQueryDTO;
 import org.example.back.dto.BomSaveDTO;
 import org.example.back.service.BomService;
 import org.example.back.service.WorkRequirementAttachmentStorageService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.BomDeleteCheckVO;
 import org.example.back.vo.BomVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,6 +78,13 @@ public class BomController {
     public Result<String> delete(@PathVariable Long id,
                                  @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
         return Result.success(bomService.delete(id, force));
+    }
+
+    /** 手测问题 1：批量删除（非强制——有未完结任务单的行进失败明细） */
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(bomService.batchDelete(ids));
     }
 
     // ============================== 组件图片 ==============================

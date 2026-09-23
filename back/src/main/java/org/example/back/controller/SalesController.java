@@ -11,6 +11,7 @@ import org.example.back.dto.SalesSaveDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.SalesService;
 import org.example.back.service.SalesTimelineService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.SalesSourceOptionVO;
 import org.example.back.vo.SalesTimelineVO;
 import org.example.back.vo.SalesVO;
@@ -69,6 +70,12 @@ public class SalesController {
     public Result<Void> delete(@PathVariable Long id) {
         salesService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(salesService.batchDelete(ids));
     }
 
     @PutMapping("/{id}/void")

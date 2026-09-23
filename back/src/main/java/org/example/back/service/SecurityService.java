@@ -8,6 +8,7 @@ import org.example.back.dto.IpPolicyQueryDTO;
 import org.example.back.dto.IpPolicySaveDTO;
 import org.example.back.dto.LoginResponse;
 import org.example.back.entity.SysIpPolicy;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.mapper.SysIpPolicyMapper;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -73,6 +74,25 @@ public class SecurityService {
         requireSuperAdmin();
         requirePolicy(id);
         sysIpPolicyMapper.deleteById(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——仅超管，逐行调用单删，尽力而为聚合明细 */
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        requireSuperAdmin();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                SysIpPolicy policy = sysIpPolicyMapper.selectById(id);
+                result.addFailure(id, policy != null ? policy.getPolicyName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     public void updateStatus(Long id, Integer status) {

@@ -12,9 +12,11 @@ import org.example.back.entity.SysDept;
 import org.example.back.entity.SysNotice;
 import org.example.back.mapper.SysDeptMapper;
 import org.example.back.mapper.SysNoticeMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.NoticeVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -137,6 +139,25 @@ public class NoticeService {
         SysNotice notice = requireNotice(id);
         ensureCanManage(notice, authzService.currentUser());
         sysNoticeMapper.physicalDeleteById(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——逐行调用单删（可管性逐行生效），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                SysNotice notice = sysNoticeMapper.selectById(id);
+                result.addFailure(id, notice != null ? notice.getTitle() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     private SysNotice requireNotice(Long id) {

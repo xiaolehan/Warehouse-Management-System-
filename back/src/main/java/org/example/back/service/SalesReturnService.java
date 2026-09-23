@@ -23,6 +23,7 @@ import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
 import org.example.back.mapper.BizSalesReturnDetailMapper;
 import org.example.back.mapper.BizSalesReturnMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.SalesReturnDetailVO;
 import org.example.back.vo.SalesReturnVO;
 import org.springframework.beans.BeanUtils;
@@ -304,6 +305,31 @@ public class SalesReturnService {
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireSalesReturnAdminOrSuperAdmin();
+        deleteInternal(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireSalesReturnAdminOrSuperAdmin();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizSalesReturn head = bizSalesReturnMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getReturnNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private void deleteInternal(Long id) {
         BizSalesReturn entity = requireEntity(id);
         ensureNormalStatus(entity.getBizStatus(), "客退单");
         validateDeleteWindow(entity.getOperationTime(), "客退单");

@@ -16,6 +16,7 @@ import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.PickListDetailVO;
 import org.example.back.vo.PickListVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -262,6 +263,26 @@ public class PickListService {
         LambdaQueryWrapper<BizPickListDetail> detailWrapper = new LambdaQueryWrapper<>();
         detailWrapper.eq(BizPickListDetail::getPickListId, id);
         bizPickListDetailMapper.delete(detailWrapper);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizPickList head = bizPickListMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getPickNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     // ============================== 私有辅助 ==============================

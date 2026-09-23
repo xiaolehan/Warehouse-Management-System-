@@ -10,6 +10,7 @@ import org.example.back.entity.BizBomDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomDetailMapper;
 import org.example.back.mapper.BizBomMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.BomDeleteCheckVO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -131,5 +133,39 @@ class BomServiceTest {
         verify(bizBomMapper).deleteById(1L);
         verify(baseGoodsMapper, never()).deleteById(5L);
         assertTrue(msg.contains("保留"), "实际: " + msg);
+    }
+
+    // ---------- 手测问题 1（2026-09-23）：批量删除（非强制，尽力而为聚合） ----------
+
+    @Test
+    void batchDelete_unfinishedOrderRowFails_othersDeleted() {
+        when(bizBomMapper.selectById(1L)).thenReturn(bom(1, 5, "PTO200"));
+        when(baseGoodsMapper.selectById(5L)).thenReturn(product(5, "PTO200", 0));
+        when(goodsReferenceService.countUnfinishedOrders(5L)).thenReturn(3L);
+
+        when(bizBomMapper.selectById(2L)).thenReturn(bom(2, 6, "PTO300"));
+        when(goodsReferenceService.countUnfinishedOrders(6L)).thenReturn(0L);
+        when(baseGoodsMapper.selectById(6L)).thenReturn(null);
+
+        BatchDeleteResultVO result = service.batchDelete(java.util.List.of(1L, 2L));
+
+        assertEquals(1, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        assertEquals("PTO200", result.getFailures().get(0).getName());
+        assertTrue(result.getFailures().get(0).getReason().contains("未完结生产任务单"),
+                "实际: " + result.getFailures().get(0).getReason());
+        verify(bizBomMapper, never()).deleteById(1L);
+        verify(bizBomMapper).deleteById(2L);
+    }
+
+    @Test
+    void batchDelete_missingRowReportedAsFailure() {
+        when(bizBomMapper.selectById(404L)).thenReturn(null);
+
+        BatchDeleteResultVO result = service.batchDelete(java.util.List.of(404L));
+
+        assertEquals(0, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        verify(bizBomMapper, never()).deleteById(anyLong());
     }
 }

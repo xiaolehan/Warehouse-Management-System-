@@ -1,5 +1,6 @@
 package org.example.back.service;
 
+import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.entity.BaseGoods;
@@ -15,6 +16,7 @@ import org.example.back.mapper.BizProductionOrderMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.SalesDetailVO;
 import org.example.back.vo.SalesSourceOptionVO;
 import org.example.back.vo.SalesVO;
@@ -34,10 +36,12 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -467,6 +471,40 @@ class SalesServiceTest {
 
         verify(messageService, never()).sendSalesCancelledToProductionAdmins(
                 any(), any(), any(), any(), any());
+    }
+
+    // ---------- 手测问题 1（2026-09-23）：批量删除（尽力而为聚合） ----------
+
+    @Test
+    void batchDelete_voidedRowFails_pendingRowDeleted() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+
+        BizSales voided = pendingSales();
+        voided.setId(502L);
+        voided.setSalesNo("XS260910002");
+        voided.setBizStatus(2); // 已作废
+        when(bizSalesMapper.selectById(502L)).thenReturn(voided);
+
+        BatchDeleteResultVO result = service.batchDelete(List.of(501L, 502L));
+
+        assertEquals(1, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        assertEquals("XS260910002", result.getFailures().get(0).getName());
+        assertTrue(result.getFailures().get(0).getReason().contains("已作废"),
+                "实际: " + result.getFailures().get(0).getReason());
+        verify(bizSalesMapper).deleteById(501L);
+        verify(bizSalesMapper, never()).deleteById(502L);
+    }
+
+    @Test
+    void batchDelete_superAdminBlockedWholeRequest() {
+        doThrow(new BusinessException("超级管理员不可执行业务写操作"))
+                .when(authzService).requireNotSuperAdminForBusinessWrite();
+
+        assertThrows(BusinessException.class, () -> service.batchDelete(List.of(501L)));
+        verify(bizSalesMapper, never()).deleteById(anyLong());
     }
 
     // ---------- D110：生产建单关联下拉（(头单,成品) 唯一解析，顶层 quantity=行数量） ----------

@@ -18,6 +18,7 @@ import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.PurchaseRequestVO;
 import org.example.back.entity.BizProductionOrder;
@@ -1340,5 +1341,45 @@ class PurchaseRequestServiceTest {
         // D131/spec：接收 DTO 必含行级供应商字段——「无供应商到货」在契约上不可表达
         assertDoesNotThrow(
                 () -> PurchaseRequestReceiveDTO.ReceiveItemDTO.class.getDeclaredField("supplierId"));
+    }
+
+    // ---------- 手测问题 1（2026-09-23）：批量删除（尽力而为聚合） ----------
+
+    @Test
+    void batchDelete_mixed_bestEffortAggregatesFailures() {
+        when(authService.getUserInfo()).thenReturn(productionUser());
+
+        BizPurchaseRequest okRow = new BizPurchaseRequest();
+        okRow.setId(8L);
+        okRow.setStatus(PurchaseRequestService.STATUS_PENDING);
+        okRow.setApplicantId(10L);
+        okRow.setRequestNo("PR001");
+        when(bizPurchaseRequestMapper.selectById(8L)).thenReturn(okRow);
+
+        BizPurchaseRequest othersRow = new BizPurchaseRequest();
+        othersRow.setId(9L);
+        othersRow.setStatus(PurchaseRequestService.STATUS_PENDING);
+        othersRow.setApplicantId(99L);
+        othersRow.setRequestNo("PR002");
+        when(bizPurchaseRequestMapper.selectById(9L)).thenReturn(othersRow);
+
+        BatchDeleteResultVO result = service.batchDelete(List.of(8L, 9L));
+
+        assertEquals(1, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        assertEquals(9L, result.getFailures().get(0).getId());
+        assertEquals("PR002", result.getFailures().get(0).getName());
+        assertTrue(result.getFailures().get(0).getReason().contains("仅申请人本人"), "实际: " + result.getFailures().get(0).getReason());
+        verify(bizPurchaseRequestMapper).deleteById(8L);
+        verify(bizPurchaseRequestMapper, never()).deleteById(9L);
+    }
+
+    @Test
+    void batchDelete_superAdmin_blockedWholeRequest() {
+        doThrow(new BusinessException("超级管理员不可执行业务写操作"))
+                .when(authzService).requireNotSuperAdminForBusinessWrite();
+
+        assertThrows(BusinessException.class, () -> service.batchDelete(List.of(8L, 9L)));
+        verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
     }
 }

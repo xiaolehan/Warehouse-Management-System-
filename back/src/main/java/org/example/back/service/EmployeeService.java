@@ -13,6 +13,7 @@ import org.example.back.entity.SysUser;
 import org.example.back.mapper.SysDeptMapper;
 import org.example.back.mapper.SysEmployeeMapper;
 import org.example.back.mapper.SysUserMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.EmployeeVO;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -165,6 +166,27 @@ public class EmployeeService {
         if (userId != null) {
             sysUserMapper.deleteById(userId);
         }
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireEmployeeModuleAccess();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                SysEmployee head = sysEmployeeMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getEmpName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     private List<EmployeeVO> listManagementUserRecords(EmployeeQueryDTO queryDTO, SysDept systemDept) {

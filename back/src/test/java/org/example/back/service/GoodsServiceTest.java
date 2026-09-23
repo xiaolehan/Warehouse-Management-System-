@@ -8,6 +8,7 @@ import org.example.back.dto.QuickProductDTO;
 import org.example.back.vo.QuickProductVO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BaseSupplier;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.GoodsOptionVO;
 import org.example.back.vo.GoodsVO;
 import org.example.back.entity.BizPurchaseRequest;
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -250,6 +252,44 @@ class GoodsServiceTest {
         service.delete(9L);
 
         verify(baseGoodsMapper).deleteById(9L);
+    }
+
+    // ---------- 手测问题 1（2026-09-23）：批量删除（尽力而为聚合） ----------
+
+    @Test
+    void batchDelete_mixed_blockedProductGoesToFailures() {
+        BaseGoods material = new BaseGoods();
+        material.setId(1L);
+        material.setType("material");
+        material.setGoodsName("物料A");
+        when(baseGoodsMapper.selectById(1L)).thenReturn(material);
+
+        BaseGoods blockedProduct = new BaseGoods();
+        blockedProduct.setId(2L);
+        blockedProduct.setType("product");
+        blockedProduct.setStock(0);
+        blockedProduct.setGoodsName("成品B");
+        when(baseGoodsMapper.selectById(2L)).thenReturn(blockedProduct);
+        when(goodsReferenceService.isProductDeletable(2L, 0)).thenReturn(false);
+
+        BatchDeleteResultVO result = service.batchDelete(java.util.List.of(1L, 2L));
+
+        assertEquals(1, result.getSuccessCount());
+        assertEquals(1, result.getFailureCount());
+        assertEquals(2L, result.getFailures().get(0).getId());
+        assertEquals("成品B", result.getFailures().get(0).getName());
+        assertTrue(result.getFailures().get(0).getReason().contains("不能删除"), "实际: " + result.getFailures().get(0).getReason());
+        verify(baseGoodsMapper).deleteById(1L);
+        verify(baseGoodsMapper, never()).deleteById(2L);
+    }
+
+    @Test
+    void batchDelete_warehouseGuardBlockedWholeRequest() {
+        doThrow(new BusinessException("仅仓储部门管理员可删除物料/成品"))
+                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+
+        assertThrows(BusinessException.class, () -> service.batchDelete(java.util.List.of(1L, 2L)));
+        verify(baseGoodsMapper, never()).selectById(anyLong());
     }
 
     // ---------- D67：业务单据形态校验——类型不符抛错；type 为 null 按物料兜底（历史数据兼容） ----------

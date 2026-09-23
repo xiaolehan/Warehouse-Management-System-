@@ -8,6 +8,7 @@ import org.example.back.common.result.Result;
 import org.example.back.dto.NoticeQueryDTO;
 import org.example.back.dto.NoticeSaveDTO;
 import org.example.back.service.NoticeService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.NoticeVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -58,5 +59,12 @@ public class NoticeController {
     public Result<Void> delete(@PathVariable Long id) {
         noticeService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @RequireAdmin("仅管理员可删除公告")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(noticeService.batchDelete(ids));
     }
 }

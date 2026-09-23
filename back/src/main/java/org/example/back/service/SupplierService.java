@@ -15,6 +15,7 @@ import org.example.back.entity.BaseSupplierContact;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BaseSupplierContactMapper;
 import org.example.back.mapper.BaseSupplierMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.OptionVO;
 import org.example.back.vo.SupplierContactVO;
 import org.example.back.vo.SupplierVO;
@@ -122,6 +123,30 @@ public class SupplierService {
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireSupplierModuleAccess();
+        deleteInternal(id);
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireSupplierModuleAccess();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                deleteInternal(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BaseSupplier supplier = baseSupplierMapper.selectById(id);
+                result.addFailure(id, supplier != null ? supplier.getSupplierName() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
+    }
+
+    private void deleteInternal(Long id) {
         // D100：缺省供应商是成品建档/未知物料自动建档的系统锚点（GoodsService.DEFAULT_SUPPLIER_ID），不可删除
         if (GoodsService.DEFAULT_SUPPLIER_ID.equals(id)) {
             throw BusinessException.validateFail("系统默认供应商是成品建档与自动建档的系统依赖，不可删除");

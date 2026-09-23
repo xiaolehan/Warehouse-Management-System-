@@ -15,6 +15,7 @@ import org.example.back.dto.PurchaseRequestSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.service.PurchaseRequestService;
 import org.example.back.service.DocumentTimelineService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.DocumentTimelineVO;
 import org.example.back.vo.PurchaseRequestVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -155,5 +156,12 @@ public class PurchaseRequestController {
     public Result<Void> delete(@PathVariable Long id) {
         purchaseRequestService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @AuditLog(module = "采购申请", action = "批量撤销", targetType = "采购申请单")
+    @PreventDuplicateSubmit(intervalMs = 1200, message = "撤销请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(purchaseRequestService.batchDelete(ids));
     }
 }

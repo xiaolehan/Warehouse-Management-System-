@@ -10,6 +10,7 @@ import org.example.back.dto.WorkRequirementExecuteDTO;
 import org.example.back.dto.WorkRequirementQueryDTO;
 import org.example.back.dto.WorkRequirementReviewDTO;
 import org.example.back.service.WorkRequirementService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.ReminderSummaryVO;
 import org.example.back.vo.WorkRequirementAssignVO;
 import org.example.back.vo.WorkRequirementDetailVO;
@@ -65,6 +66,13 @@ public class WorkRequirementController {
     public Result<Void> delete(@PathVariable Long id) {
         workRequirementService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/system/work-requirements/batch-delete")
+    @RequireAdmin("仅管理员可删除工作要求")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(workRequirementService.batchDelete(ids));
     }
 
     @PutMapping("/system/work-requirements/assign/{assignId}/review")

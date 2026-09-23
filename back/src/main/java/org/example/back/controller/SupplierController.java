@@ -7,6 +7,7 @@ import org.example.back.common.result.Result;
 import org.example.back.dto.SupplierQueryDTO;
 import org.example.back.dto.SupplierSaveDTO;
 import org.example.back.service.SupplierService;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.OptionVO;
 import org.example.back.vo.SupplierVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,5 +56,11 @@ public class SupplierController {
     public Result<Void> delete(@PathVariable Long id) {
         supplierService.delete(id);
         return Result.success();
+    }
+
+    @PostMapping("/batch-delete")
+    @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
+    public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
+        return Result.success(supplierService.batchDelete(ids));
     }
 }

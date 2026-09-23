@@ -24,6 +24,7 @@ import org.example.back.mapper.BizPurchaseDetailMapper;
 import org.example.back.mapper.BizPurchaseMapper;
 import org.example.back.mapper.BizPurchaseReturnDetailMapper;
 import org.example.back.mapper.BizPurchaseReturnMapper;
+import org.example.back.vo.BatchDeleteResultVO;
 import org.example.back.vo.PurchaseReturnDetailVO;
 import org.example.back.vo.PurchaseReturnVO;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -332,6 +333,27 @@ public class PurchaseReturnService {
         // D111：级联软删明细行
         bizPurchaseReturnDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseReturnDetail>()
                 .eq(BizPurchaseReturnDetail::getReturnId, id));
+    }
+
+    /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
+    @Transactional(rollbackFor = Exception.class)
+    public BatchDeleteResultVO batchDelete(List<Long> ids) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requirePurchaseReturnAdminOrSuperAdmin();
+        BatchDeleteResultVO result = new BatchDeleteResultVO();
+        if (ids == null || ids.isEmpty()) {
+            return result;
+        }
+        for (Long id : ids) {
+            try {
+                delete(id);
+                result.addSuccess();
+            } catch (BusinessException e) {
+                BizPurchaseReturn head = bizPurchaseReturnMapper.selectById(id);
+                result.addFailure(id, head != null ? head.getReturnNo() : String.valueOf(id), e.getMessage());
+            }
+        }
+        return result;
     }
 
     @Transactional(rollbackFor = Exception.class)
