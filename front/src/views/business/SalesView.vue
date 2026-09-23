@@ -13,8 +13,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="出库商品">
-            <el-input v-model="searchForm.keywords" placeholder="请输入出库商品" clearable></el-input>
+          <el-form-item label="出库成品">
+            <el-input v-model="searchForm.keywords" placeholder="请输入出库成品" clearable></el-input>
           </el-form-item>
           <el-form-item label="客户公司名">
             <el-input v-model="searchForm.customerName" placeholder="请输入客户公司名" clearable></el-input>
@@ -41,7 +41,7 @@
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="salesNo" label="销售单号" width="150" />
         <!-- D110：一单 N 个成品行，列表汇总展示「首品名 等 N 种」，明细进详情 -->
-        <el-table-column prop="goodsSummary" label="出库商品" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="goodsSummary" label="出库成品" min-width="160" show-overflow-tooltip />
         <el-table-column prop="customerName" label="客户公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
         <el-table-column prop="totalQuantity" label="销售数量" width="100" />

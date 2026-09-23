@@ -5,8 +5,8 @@
         <el-input v-model="searchForm.goodsName" :placeholder="isProduct ? '请输入成品名称' : '请输入物料名称'" clearable />
       </el-form-item>
       <template v-if="!isProduct">
-        <el-form-item label="产品名称">
-          <el-input v-model="searchForm.productName" placeholder="请输入产品名称" clearable />
+        <el-form-item label="成品名称">
+          <el-input v-model="searchForm.productName" placeholder="请输入成品名称" clearable />
         </el-form-item>
         <el-form-item label="物料种类">
           <el-input v-model="searchForm.category" placeholder="请输入物料种类" clearable />
@@ -38,7 +38,7 @@
       <el-table-column v-if="!isProduct" prop="material" label="材质" min-width="100">
         <template #default="scope">{{ scope.row.material || '—' }}</template>
       </el-table-column>
-      <el-table-column v-if="!isProduct" prop="productName" label="产品名称" min-width="110" />
+      <el-table-column v-if="!isProduct" prop="productName" label="成品名称" min-width="110" />
       <el-table-column v-if="!isProduct" prop="category" label="物料种类" min-width="90" />
       <el-table-column prop="description" label="备注" min-width="110">
         <template #default="scope">{{ scope.row.description || '—' }}</template>
@@ -118,7 +118,7 @@
           <el-input v-model="form.goodsName" :disabled="isView || (!isProduct && isPurchase) || isSalesPriceMode"></el-input>
         </el-form-item>
         <template v-if="!isProduct">
-          <el-form-item label="产品名称">
+          <el-form-item label="成品名称">
             <el-input v-model="form.productName" :disabled="isView || isPurchase"></el-input>
           </el-form-item>
           <el-form-item label="物料种类" required>

@@ -13,8 +13,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="退回商品">
-            <el-input v-model="searchForm.keywords" placeholder="请输入退回商品" clearable></el-input>
+          <el-form-item label="退回成品">
+            <el-input v-model="searchForm.keywords" placeholder="请输入退回成品" clearable></el-input>
           </el-form-item>
           <el-form-item label="退货公司名">
             <el-input v-model="searchForm.customerName" placeholder="请输入退货公司名" clearable></el-input>
@@ -42,7 +42,7 @@
         <el-table-column prop="returnNo" label="销售退货单号" width="150" />
         <el-table-column prop="orderNo" label="原销售单" width="150" />
         <!-- D110：一单 N 个退货行，列表汇总展示「首品名 等 N 种」，明细进详情 -->
-        <el-table-column prop="goodsSummary" label="退回商品" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="goodsSummary" label="退回成品" min-width="160" show-overflow-tooltip />
         <el-table-column prop="customerName" label="退货公司名" width="140" show-overflow-tooltip />
         <el-table-column prop="reason" label="退货原因" show-overflow-tooltip />
         <el-table-column prop="totalQuantity" label="退货数量" width="100" />

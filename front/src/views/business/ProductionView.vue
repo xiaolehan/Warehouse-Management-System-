@@ -9,8 +9,8 @@
           </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
-          <el-form-item label="入库单号">
-            <el-input v-model="searchForm.keywords" placeholder="请输入生产入库单号" clearable></el-input>
+          <el-form-item label="成品名称">
+            <el-input v-model="searchForm.keywords" placeholder="请输入成品名称" clearable></el-input>
           </el-form-item>
           <!-- D107：确认状态筛选（待确认=生产端提交的入库申请） -->
           <el-form-item label="确认状态">
@@ -41,7 +41,7 @@
       <el-table :data="tableData" border style="width: 100%" v-loading="loading">
         <el-table-column type="index" label="序号" width="60" align="center" />
         <el-table-column prop="orderNo" label="入库单号" width="150" />
-        <el-table-column prop="goodsName" label="商品名称" />
+        <el-table-column prop="goodsName" label="成品名称" />
         <!-- D107：生产端提交的入库申请展示来源任务单 -->
         <el-table-column label="来源任务单" width="140">
           <template #default="scope">
@@ -133,7 +133,7 @@
 
     <el-dialog :title="dialogType === 'view' ? '查看生产入库信息' : '新增生产入库'" v-model="dialogVisible" width="500px">
       <el-form ref="dialogFormRef" :model="dialogForm" :rules="dialogRules" label-width="100px" :disabled="dialogType === 'view'">
-        <el-form-item label="商品名称" prop="goodsId">
+        <el-form-item label="成品名称" prop="goodsId">
           <el-select v-model="dialogForm.goodsId" placeholder="请选择商品" style="width: 100%">
             <el-option v-for="item in goodsOptions" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
@@ -349,7 +349,7 @@ const loadList = async () => {
     const params = {
       pageNum: currentPage.value,
       pageSize: pageSize.value,
-      productionNo: searchForm.keywords || undefined,
+      goodsName: searchForm.keywords || undefined,
       confirmStatus: searchForm.confirmStatus ?? undefined,
       startDate: hasDateRange ? searchForm.dateRange[0] : undefined,
       endDate: hasDateRange ? searchForm.dateRange[1] : undefined

@@ -15,8 +15,8 @@
           <el-option label="零库存" value="zero" />
         </el-select>
       </el-form-item>
-      <el-form-item label="商品名称">
-        <el-input v-model="searchForm.goodsName" placeholder="请输入商品名称" clearable />
+      <el-form-item label="物料名称">
+        <el-input v-model="searchForm.goodsName" placeholder="请输入物料名称" clearable />
       </el-form-item>
       <el-form-item v-if="canUseSupplierFilter" label="供应商">
         <el-select v-model="searchForm.supplierId" style="width: 180px;" clearable filterable>
@@ -31,7 +31,7 @@
 
     <el-table :data="tableData" border v-loading="loading" style="width: 100%; margin-top: 10px;">
       <el-table-column type="index" label="序号" width="60" />
-      <el-table-column prop="goodsName" label="商品名称" min-width="180" />
+      <el-table-column prop="goodsName" label="物料名称" min-width="180" />
       <el-table-column prop="supplierName" label="供应商" min-width="140" />
       <el-table-column prop="category" label="分类" width="120" />
       <el-table-column prop="stock" label="当前库存" width="100">
