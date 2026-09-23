@@ -1,7 +1,7 @@
 # 02 · 批量删除—主数据（商品/物料、BOM、供应商）
 
 Type: task
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 无
 
 用户手测（2026-09-23）问题 1：所有有「删除」的界面都加「批量删除」。grilling 定案：

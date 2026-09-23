@@ -1,7 +1,7 @@
 # 03 · 批量删除—业务单据（销售/销售退货/进货/进货退货/采购申请/生产入库/领料）
 
 Type: task
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02（共用 BatchDeleteResultVO 与前端范式）
 
 同 02 号票定案（范围/权限/尽力而为/UI 范式），本票覆盖业务单据 7 页。单据页「撤销/作废」按钮不动。

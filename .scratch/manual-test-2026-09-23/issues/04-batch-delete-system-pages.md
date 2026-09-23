@@ -1,7 +1,7 @@
 # 04 · 批量删除—系统页（用户/员工/公告/工作要求/IP 管控）
 
 Type: task
-Status: ready-for-agent
+Status: ready-for-human
 Blocked by: 02（共用 BatchDeleteResultVO 与前端范式）
 
 同 02 号票定案，本票覆盖系统页 5 页。各页 disabled 逻辑（如 UserView canManageRow、NoticeView canManage）在批量场景的口径：批量删除按钮显隐沿用页面编辑权；已选中但不可管的行进失败明细（尽力而为）。
