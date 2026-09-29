@@ -5,6 +5,34 @@
 
 ---
 
+## 会话 57 — 2026-09-29
+
+### 拉取 db-dump 快照基建 + 两机库分叉裁决（旧机富数据为准）
+
+- **背景**：新机重启 dev 双服务（MySQL 常驻，前后端 nohup 拉起，登录 200）；拉取另一会话当日提交 679fbb2（db-dump.sql 全库快照 + sync-db-dump.sh 幂等同步脚本），确认该提交仅根目录新增两文件、不碰 front/back，服务运行中安全 ff-merge。
+- **重要发现：两台开发机数据库已分叉**——仓库快照=旧机（MySQL 8.0.46）多周积累富数据（78 商品/5 供应商/3 BOM，含 PTO153 全套物料与业务单据），本机（8.4.11）=会话 56 的 db.sql 种子（16 商品）。用户在本机跑 sync 脚本实际走「有变化」分支（整库差异已暂存）但 commit 未完成，输出被误读为「数据库无变化」。
+- **决策（用户拍板）**：旧机富数据为准。git restore 回 HEAD 版 → `mysql < db-dump.sql` 恢复进本机库（恢复前 fuser -k 8080 停后端）→ 核验：78/5/3 行数与 HEAD 快照逐一吻合 + PTO153 成品在场（id=9）+ 登录 200。
+- **归档**：本机种子快照存于 `/tmp/seed-backup.sql`（原暂存区版本，git restore 后仅此一份；确认不需要可删）。
+- **坑（sync 脚本幂等性边界）**：mysqldump 头两行含 server version（8.0 vs 8.4），换机器跑 sync 首次必产生 2 行 header diff 提交；**快照正本只能认定一台机器**——本机首次 sync 后 header 变 8.4，此后旧机不要再跑 sync（其 8.0 header + 日志漂移会来回打架）。本机首次 sync 预期提交 = 2 行版本 header + 恢复后新增登录日志行，属正常。
+- **环境坑**：本会话 bash 安全分类器长时间间歇宕机（教训 #5 场景），写类命令反复被拦；git fetch/ff-merge、/tmp 存档在窗口缝隙完成，停服务/恢复库由用户终端执行。
+- **待办**：浏览器硬刷新 + 重新登录；本机跑一次 `bash sync-db-dump.sh` 收口（此后本机为快照正本机）。
+
+---
+
+## 会话 56 — 2026-09-25
+
+### 新机器全栈部署（WSL2 Ubuntu 26.04 / MySQL 8.4）
+
+- **背景**：开发机迁移到新机器（原 55 个会话在旧机），全新环境无 Java/Node/MySQL；用户自跑 sudo 安装（OpenJDK 17.0.20 / Node 22.22.1 / MySQL 8.4.11），其余全栈搭起。
+- **MySQL 8.4 兼容性**：db.sql 无 `mysql_native_password`、JDBC URL 已带 `allowPublicKeyRetrieval=true`，直接可用；`wms_user` 走 caching_sha2_password + 远程无限制。
+- **db.sql 一把梭不可行（重要发现）**：append 式脚本，基础建表带 `DROP TABLE IF EXISTS`（L257 会抹掉预加列）、种子 JOIN 后加的 ALTER 列、还有一次性迁移语句（D110 存量迁移引用已不存在的 `p.goods_id`），全新库直接导入会在 L705 `Unknown column 'g.spec'` 中断。**可复现导入序**：① DDL 段（1–582）→ ② ALTER 段（1153–2130 中含 `ADD COLUMN type/spec/material` 的行，`--force`）→ ③ 种子段（589–1027）→ ④ 视图/存储过程（1028–1146）→ 再对 1153–2130 `--force` 过一遍收掉后续 DDL/种子（预期 7 处 fail：4×D110 迁移（新库无存量可迁，正确跳过）+ 3×幂等重放 1060/1091，其余 ERROR 都是有害的——若 43 表数不对按此排查）。
+- **结果**：43 表 + 种子（sys_user 13 / base_goods 13 / biz_purchase_detail 17）+ 3 视图 + 1 存储过程全就位；种子自带一致性检查 missing_count=0。
+- **启动**：按 CLAUDE.md 惯例 `nohup ./mvnw spring-boot:run`（8080）+ `nohup npm run dev`（5173）；`uploads/` 已建。
+- **E2E（Vite 代理）**：登录 `/api/auth/login`（token 下发）→ userinfo（warehouse_admin/仓储部）→ 商品分页 13 条 / options 13 → 领料单分页空 → 站内信分页空 → 未登录 401（Sa-Token 拦截）→ 权限负测 warehouse_employee 建商品 **403 仅仓储部门管理员可创建物料/成品** —— 全绿。
+- **坑**：登录端点是 `/auth/login` 不是 `/user/login`；消息端点在 `/system/messages/page`。探错路径会得到 Sa-Token 401 或 NoResourceFoundException 500，别误判为系统故障。
+
+---
+
 ## 会话 55 — 2026-09-23
 
 ### 六项手测问题落地：五处改名 + 15 页批量删除（grilling 四决策）
