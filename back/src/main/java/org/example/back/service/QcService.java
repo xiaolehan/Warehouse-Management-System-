@@ -59,6 +59,9 @@ public class QcService {
     @Autowired
     private MessageService messageService;
 
+    @Autowired
+    private SalesTerminateGuard salesTerminateGuard;
+
     // D107/review：@Lazy 打破与 ProductionOrderService 的字段注入循环（后者注入本服务做质检校验）
     @Autowired
     @Lazy
@@ -80,6 +83,8 @@ public class QcService {
         requireQcAccess();
         BizProductionOrder order = requireOrder(dto.getOrderId());
         ensureTestable(order);
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（质检记录）
+        salesTerminateGuard.ensureSalesLineActive(order);
         String point = normalizePoint(dto.getTestPoint());
         // D125 工序-质检顺序门禁：首测需工序 1-5 全打卡，成品测需工序 7 打卡（质检页提交同样被拦）
         validatePointGate(order.getId(), point);
@@ -116,6 +121,8 @@ public class QcService {
         requireQcAccess();
         BizProductionOrder order = requireOrder(dto.getOrderId());
         ensureTestable(order);
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（质检处置）
+        salesTerminateGuard.ensureSalesLineActive(order);
         String point = normalizePoint(dto.getTestPoint());
         String disp = normalizeDispose(dto.getDisposition());
 

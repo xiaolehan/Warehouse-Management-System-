@@ -9,10 +9,13 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.entity.BizSales;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.ProductionPickItemVO;
 import org.example.back.vo.ProductionReturnableVO;
 import org.junit.jupiter.api.BeforeAll;
@@ -31,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -62,6 +66,10 @@ class ProductionPickServiceTest {
     @Mock private AuthzService authzService;
     @Mock private MessageService messageService;
     @Mock private ProductionOrderService productionOrderService;
+
+    @Mock private SalesTerminateGuard salesTerminateGuard;
+    @Mock private BizSalesMapper bizSalesMapper;
+    @Mock private PurchaseRequestService purchaseRequestService;
 
     @InjectMocks private ProductionPickService service;
 
@@ -450,7 +458,7 @@ class ProductionPickServiceTest {
 
         // review 修复后：终止走条件更新（仅未完结态可终止）
         when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
-        service.terminate(7L, terminateDTO("销售交易单 SAL-1 已取消", 50L, 4));
+        service.terminate(7L, terminateDTO("销售交易单 SAL-1 已取消", 50L, 6));
 
         @SuppressWarnings("rawtypes")
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper> termCap =
@@ -468,7 +476,7 @@ class ProductionPickServiceTest {
 
         ArgumentCaptor<BizPickListDetail> detCap = ArgumentCaptor.forClass(BizPickListDetail.class);
         verify(pickListDetailMapper).insert(detCap.capture());
-        assertEquals(4, detCap.getValue().getQuantity());
+        assertEquals(6, detCap.getValue().getQuantity());
 
         verify(messageService).revokeUnreadByBiz("production_order", 7L);
         verify(messageService).sendPickReturnPendingToWarehouseAdmins(any(), eq("PRO-X"), any());
@@ -509,6 +517,58 @@ class ProductionPickServiceTest {
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.terminate(7L, terminateDTO("x", 50L, 7)));
         assertTrue(ex.getMessage().contains("超过已领未退"));
+    }
+
+    @Test
+    void terminate_zeroQtyRow_withoutDiffReason_throws() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        // F2/code-review：qty=0 行放行到差异守卫——0 < 已领未退（6）→ 差异备注必填，防静默丢料
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(7L, terminateDTO("x", 50L, 0)));
+        assertTrue(ex.getMessage().contains("差异备注"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void terminate_zeroQtyRow_withDiffReason_createsZeroQtyReturnRow() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        when(pickListMapper.selectOne(any())).thenReturn(null); // 无进行中退料单
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(g);
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(3L);
+        user.setRealName("生产管理员");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // 全部损耗场景：qty=0 + 差异备注 → 0 数量退料行落库，仓储确认时可见
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(0);
+        item.setDiffReason("全部损耗于装配试装");
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("物料全部损耗，零退料终止");
+        dto.setItems(List.of(item));
+
+        service.terminate(7L, dto);
+
+        ArgumentCaptor<BizPickListDetail> detCap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(detCap.capture());
+        assertEquals(0, detCap.getValue().getQuantity());
+        assertEquals("全部损耗于装配试装", detCap.getValue().getDiffReason());
+    }
+
+    @Test
+    void terminate_junkZeroQtyRow_notInReturnableList_throws() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        // 净额 map 只含净额>0——不在清单内的 qty=0 垃圾行同样拒绝，防脏数据入退料单
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(7L, terminateDTO("x", 99L, 0)));
+        assertTrue(ex.getMessage().contains("不在该任务单已领未退清单内"), "实际: " + ex.getMessage());
     }
 
     @Test
@@ -658,5 +718,201 @@ class ProductionPickServiceTest {
         verify(productionOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), termCap.capture());
         assertTrue(termCap.getValue().getParamNameValuePairs().containsValue("终止原因: 销售单取消"),
                 "应留痕终止原因");
+    }
+
+
+    // ==================== 需求二：现货履约（Q10a/Q11/Q13/Q15/Q16/Q17） ====================
+
+    private BizSales salesOf(long id, long operatorId, Integer confirmStatus) {
+        BizSales s = new BizSales();
+        s.setId(id);
+        s.setSalesNo("XS-88");
+        s.setOperatorId(operatorId);
+        s.setConfirmStatus(confirmStatus);
+        return s;
+    }
+
+    private BizSalesDetail salesLineOf(int quantity) {
+        BizSalesDetail line = new BizSalesDetail();
+        line.setId(501L);
+        line.setSalesId(88L);
+        line.setGoodsId(29L);
+        line.setQuantity(quantity);
+        return line;
+    }
+
+    private BaseGoods goodsWithStock(long id, int stock) {
+        BaseGoods g = new BaseGoods();
+        g.setId(id);
+        g.setGoodsName("PTO153");
+        g.setStock(stock);
+        return g;
+    }
+
+    private void stubOperator() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(3L);
+        user.setRealName("Test Operator");
+        when(authService.getUserInfo()).thenReturn(user);
+    }
+
+    @Test
+    void computeReturnablePreview_fillsSalesStockInfo_whenLinkedAndActive() {
+        BizProductionOrder order = terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS);
+        order.setSalesOrderId(88L);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+        when(pickListMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(pickListDetailMapper.selectList(any())).thenReturn(List.of());
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(salesTerminateGuard.resolveLinkedLine(order)).thenReturn(salesLineOf(5));
+        when(bizSalesMapper.selectById(88L)).thenReturn(salesOf(88L, 9L, SalesService.CONFIRM_PENDING));
+        when(baseGoodsMapper.selectById(29L)).thenReturn(goodsWithStock(29L, 10));
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(10, vo.getGoodsStock());
+        assertEquals(5, vo.getSalesLineQuantity());
+        assertEquals(Boolean.TRUE, vo.getStockSufficient());
+        assertEquals("XS-88", vo.getSalesOrderNo());
+    }
+
+    @Test
+    void computeReturnablePreview_skipsStockInfoForNonSalesOrder() {
+        // Q14: stock-fulfillment semantics only apply to sales-linked orders
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(pickListMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(pickListDetailMapper.selectList(any())).thenReturn(List.of());
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(null, vo.getGoodsStock());
+        assertEquals(null, vo.getSalesOrderNo());
+    }
+
+    @Test
+    void computeReturnablePreview_fillsInFlightPurchaseNos() {
+        // Q17: in-flight production purchase request nos are surfaced in the preview
+        when(productionOrderMapper.selectById(7L)).thenReturn(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(pickListMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(pickListDetailMapper.selectList(any())).thenReturn(List.of());
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(purchaseRequestService.inFlightProductionRequestNos(7L)).thenReturn(List.of("CGSQ-1"));
+
+        ProductionReturnableVO vo = service.computeReturnablePreview(7L);
+
+        assertEquals(List.of("CGSQ-1"), vo.getInFlightPurchaseNos());
+    }
+
+    @Test
+    void terminate_sufficientStock_sendsStockNoticeToSalesUser() {
+        BizProductionOrder order = terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS);
+        order.setSalesOrderId(88L);
+        mockTerminateBase(order);
+        mockReturnableData(6);
+        stubOperator();
+        BaseGoods returnedGoods = new BaseGoods();
+        returnedGoods.setId(50L);
+        returnedGoods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(returnedGoods); // insertReturnList 明细快照
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(salesTerminateGuard.resolveLinkedLine(order)).thenReturn(salesLineOf(5));
+        when(bizSalesMapper.selectById(88L)).thenReturn(salesOf(88L, 9L, SalesService.CONFIRM_PENDING));
+        when(baseGoodsMapper.selectById(29L)).thenReturn(goodsWithStock(29L, 10));
+
+        service.terminate(7L, terminateDTO("stock ok", 50L, 6));
+
+        verify(messageService).sendProductionTerminatedStockNoticeToSalesUser(9L, "PRO-X", "PTO153", "XS-88", 88L, 10, 5);
+        verify(messageService, never()).sendProductionTerminatedReceiptToSalesUser(any(), anyString(), any(), any(), any());
+    }
+
+    @Test
+    void terminate_insufficientStock_sendsGapNotice() {
+        BizProductionOrder order = terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS);
+        order.setSalesOrderId(88L);
+        mockTerminateBase(order);
+        mockReturnableData(6);
+        stubOperator();
+        BaseGoods returnedGoods = new BaseGoods();
+        returnedGoods.setId(50L);
+        returnedGoods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(returnedGoods); // insertReturnList 明细快照
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(salesTerminateGuard.resolveLinkedLine(order)).thenReturn(salesLineOf(5));
+        when(bizSalesMapper.selectById(88L)).thenReturn(salesOf(88L, 9L, SalesService.CONFIRM_PENDING));
+        when(baseGoodsMapper.selectById(29L)).thenReturn(goodsWithStock(29L, 3));
+
+        service.terminate(7L, terminateDTO("stock short", 50L, 6));
+
+        verify(messageService).sendProductionTerminatedStockNoticeToSalesUser(9L, "PRO-X", "PTO153", "XS-88", 88L, 3, 5);
+    }
+
+    @Test
+    void terminate_shippedSales_skipsStockNotice() {
+        BizProductionOrder order = terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS);
+        order.setSalesOrderId(88L);
+        mockTerminateBase(order);
+        mockReturnableData(6);
+        stubOperator();
+        BaseGoods returnedGoods = new BaseGoods();
+        returnedGoods.setId(50L);
+        returnedGoods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(returnedGoods); // insertReturnList 明细快照
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        lenient().when(salesTerminateGuard.resolveLinkedLine(order)).thenReturn(salesLineOf(5)); // shipped 短路后不消费
+        when(bizSalesMapper.selectById(88L)).thenReturn(salesOf(88L, 9L, SalesService.CONFIRM_SHIPPED));
+
+        service.terminate(7L, terminateDTO("shipped", 50L, 6));
+
+        verify(messageService, never()).sendProductionTerminatedStockNoticeToSalesUser(any(), anyString(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void terminate_diffRow_withoutDiffReason_rejected() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(4); // < max 6 => diff 2
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("diff case");
+        dto.setItems(List.of(item));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.terminate(7L, dto));
+        assertTrue(ex.getMessage().contains("差异备注"));
+    }
+
+    @Test
+    void terminate_diffRow_withDiffReason_persistsDiffReason() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
+        mockReturnableData(6);
+        stubOperator();
+        when(pickListMapper.selectOne(any())).thenReturn(null);
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        BaseGoods g = new BaseGoods();
+        g.setId(50L);
+        g.setGoodsName("PTO153");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(g);
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(4); // < max 6 => diff 2
+        item.setDiffReason("loss-reason-marker");
+        ProductionTerminateDTO dto = withDiffReason(item);
+        service.terminate(7L, dto);
+
+        @SuppressWarnings("rawtypes")
+        ArgumentCaptor<BizPickListDetail> detCap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(detCap.capture());
+        assertEquals("loss-reason-marker", detCap.getValue().getDiffReason());
+    }
+
+    private ProductionTerminateDTO withDiffReason(ProductionReturnItemDTO item) {
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("diff case");
+        dto.setItems(List.of(item));
+        return dto;
     }
 }

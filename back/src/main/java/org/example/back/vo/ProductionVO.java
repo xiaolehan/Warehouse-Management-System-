@@ -46,6 +46,12 @@ public class ProductionVO {
     /** D107：来源生产任务单号（列表/详情批量填充） */
     private String productionOrderNo;
 
+    /** 会话 58：来源任务单被销售取消冻结（仓储确认入库按钮禁用提示用） */
+    private Boolean salesFrozen;
+
+    /** 会话 58：冻结原因短文案 */
+    private String salesFrozenReason;
+
     /** D107 确认状态: 1-待仓库确认, 2-已确认入库, 3-已驳回 */
     private Integer confirmStatus;
 

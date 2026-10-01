@@ -20,6 +20,9 @@ public class PickListDetailVO {
 
     private String remark;
 
+    /** 差异备注（需求二 Q16：RETURN 行退料量<已领未退时的损耗/丢失等原因，仓储确认收料时展示；其余行为空） */
+    private String diffReason;
+
     private Integer quantity;
 
     private Integer sortNo;

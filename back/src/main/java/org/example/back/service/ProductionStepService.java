@@ -67,6 +67,9 @@ public class ProductionStepService {
     @Autowired
     private AuthService authService;
 
+    @Autowired
+    private SalesTerminateGuard salesTerminateGuard;
+
     private void requireStepAccess() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
                 "仅生产研发部可操作工序打卡",
@@ -98,6 +101,8 @@ public class ProductionStepService {
         requireStepAccess();
         BizProductionOrder order = requireOrder(orderId);
         ensureOperableStatus(order);
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（工序打卡）
+        salesTerminateGuard.ensureSalesLineActive(order);
         BizProductionOrderStep step = requireManualStep(orderId, stepNo);
         if (step.getStatus() != null && step.getStatus() == BizProductionOrderStep.STATUS_DONE) {
             throw BusinessException.validateFail("该工序已完成打卡，无需重复操作");
@@ -119,6 +124,8 @@ public class ProductionStepService {
         requireStepAccess();
         BizProductionOrder order = requireOrder(orderId);
         ensureOperableStatus(order);
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（撤销打卡——防重开后资质失真）
+        salesTerminateGuard.ensureSalesLineActive(order);
         BizProductionOrderStep step = requireManualStep(orderId, stepNo);
         if (step.getStatus() == null || step.getStatus() != BizProductionOrderStep.STATUS_DONE) {
             throw BusinessException.validateFail("该工序未打卡，无需撤销");

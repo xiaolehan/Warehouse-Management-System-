@@ -18,3 +18,6 @@ export const batchDeletePurchaseRequestsAPI = (ids) => request.post('/business/p
 
 // 生产缺料补料草稿
 export const createDraftPurchaseRequestAPI = (data) => request.post('/business/purchase-requests/draft', data)
+
+// 会话 58：生产终止场景一键撤销该任务单下在途补料采购申请（权限=申请人本人或生产管理员）
+export const revokeByProductionOrderAPI = (productionOrderId) => request.post(`/business/purchase-requests/revoke-by-production-order/${productionOrderId}`)

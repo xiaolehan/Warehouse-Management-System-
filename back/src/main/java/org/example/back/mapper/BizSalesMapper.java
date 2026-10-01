@@ -31,6 +31,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
@@ -45,6 +46,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
@@ -59,6 +61,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -74,6 +77,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -89,6 +93,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -104,6 +109,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
@@ -123,6 +129,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			JOIN biz_sales s ON d.sales_id = s.id
 			LEFT JOIN base_goods bg ON d.goods_id = bg.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.confirm_status = 2
 			  AND (bg.is_deleted = 0 OR bg.id IS NULL)
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -141,6 +148,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
 			  AND s.operation_time <![CDATA[<]]> #{endTime}
@@ -159,6 +167,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			JOIN biz_sales s ON d.sales_id = s.id
 			LEFT JOIN base_goods bg ON d.goods_id = bg.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -176,6 +185,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -194,6 +204,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			  AND s.operation_time <![CDATA[>=]]> #{startTime}
@@ -212,6 +223,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			GROUP BY YEAR(s.operation_time)
@@ -223,6 +235,7 @@ public interface BizSalesMapper extends BaseMapper<BizSales> {
 			FROM biz_sales_detail d
 			JOIN biz_sales s ON d.sales_id = s.id
 			WHERE s.is_deleted = 0 AND d.is_deleted = 0
+			  AND d.terminate_status != 2
 			  AND s.biz_status = 1
 			  AND s.confirm_status = 2
 			GROUP BY YEAR(s.operation_time)

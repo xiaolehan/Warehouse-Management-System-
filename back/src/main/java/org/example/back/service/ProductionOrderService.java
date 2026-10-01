@@ -107,6 +107,9 @@ public class ProductionOrderService {
     @Autowired
     private MessageService messageService;
 
+    @Autowired
+    private SalesTerminateGuard salesTerminateGuard;
+
     // D64：10 道生产工序定稿文案与人工工序实例见 ProductionStepService.PROCESS_STEPS
     //（原 D40 8 道通用装配 SOP 常量已废弃；第 6/8 道由质检驱动、第 10 道由入库驱动）
 
@@ -174,6 +177,7 @@ public class ProductionOrderService {
         // D107：列表批量回填待确认入库申请 id（行内「撤销申请」入口据此显隐，与详情同口径）
         fillPendingInboundIdBatch(records, page.getRecords());
         fillSalesOrderNoBatch(records);
+        fillSalesFrozenBatch(records, page.getRecords());
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -218,6 +222,7 @@ public class ProductionOrderService {
         // D87：在途补料单号（补料弹窗"已有在途补料单"提示用；同一生产单至多一张，D86 守卫保证）
         vo.setInFlightRequestNo(findInFlightDraftRequestNo(order.getId()));
         fillSalesOrderNoBatch(List.of(vo));
+        fillSalesFrozenBatch(List.of(vo), List.of(order));
         return vo;
     }
 
@@ -334,6 +339,11 @@ public class ProductionOrderService {
             List<BizProductionOrder> orders = anchored.getOrDefault(line.getId(), List.of());
             pl.setInFlightOrderNo(inFlightOrderNos(orders));
             pl.setDoneQuantity(doneQuantity(orders));
+            // 需求一：已终止行标注（前端禁选+原因展示）
+            pl.setTerminated(salesTerminateGuard.isLineTerminated(line));
+            if (Boolean.TRUE.equals(pl.getTerminated())) {
+                pl.setTerminateReason(line.getTerminateReason());
+            }
             previewLines.add(pl);
         }
         vo.setLines(previewLines);
@@ -372,6 +382,12 @@ public class ProductionOrderService {
                 continue;
             }
             result.setGoodsName(line.getGoodsName());
+            if (salesTerminateGuard.isLineTerminated(line)) {
+                result.setSuccess(false);
+                result.setSkipReason("明细行已终止，不可再下达生产");
+                results.add(result);
+                continue;
+            }
             List<BizProductionOrder> lineOrders = anchored.getOrDefault(line.getId(), List.of());
             String inFlightNos = inFlightOrderNos(lineOrders);
             if (!inFlightNos.isEmpty()) {
@@ -423,7 +439,7 @@ public class ProductionOrderService {
             throw BusinessException.notFound("销售单不存在");
         }
         if (sales.getBizStatus() == null || sales.getBizStatus() != 1) {
-            throw BusinessException.validateFail("关联销售单已作废，无法下达");
+            throw BusinessException.validateFail("关联销售单已作废或已终止，无法下达");
         }
         if (sales.getConfirmStatus() == null || sales.getConfirmStatus() != SalesService.CONFIRM_PENDING) {
             throw BusinessException.validateFail("关联销售单已确认出库，无需排产");
@@ -470,6 +486,8 @@ public class ProductionOrderService {
         requireOrderExecuteAccess();
         BizProductionOrder order = requireOrder(id);
         ensureStatus(order, BizProductionOrder.STATUS_PENDING, "仅待生产状态可开工");
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（开工）
+        salesTerminateGuard.ensureSalesLineActive(order);
 
         // D59：开工前置 = 该生产单已申请领料且领料单已全额出库
         if (!isPickAllIssued(id)) {
@@ -491,6 +509,8 @@ public class ProductionOrderService {
         if (order.getStatus() != BizProductionOrder.STATUS_IN_PROGRESS) {
             throw BusinessException.validateFail("仅生产中状态可完工");
         }
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（完工报工）
+        salesTerminateGuard.ensureSalesLineActive(order);
         // D40：首测与成品测均合格后才允许完工/入库
         QcStateVO qc = qcService.buildState(order);
         if (Boolean.TRUE.equals(qc.getScrapped())) {
@@ -516,6 +536,8 @@ public class ProductionOrderService {
         if (order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
             throw BusinessException.validateFail("仅待入库状态可提交成品入库申请，请先完成质检");
         }
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（成品入库申请）
+        salesTerminateGuard.ensureSalesLineActive(order);
         // 质检前置校验：首测+成品测最新均 OK 且未报废
         qcService.ensurePassedForReceipt(id);
         // D107：同一生产单至多一笔待确认入库申请
@@ -942,10 +964,39 @@ public class ProductionOrderService {
             BizSales sales = salesMap.get(vo.getSalesOrderId());
             if (sales == null) {
                 vo.setSalesOrderNo("已取消的销售单");
-            } else if (sales.getBizStatus() == null || sales.getBizStatus() != 1) {
+            } else if (sales.getBizStatus() == null) {
                 vo.setSalesOrderNo(sales.getSalesNo() + "（已作废）");
             } else {
-                vo.setSalesOrderNo(sales.getSalesNo());
+                switch (sales.getBizStatus()) {
+                    case BizSales.BIZ_STATUS_NORMAL -> vo.setSalesOrderNo(sales.getSalesNo());
+                    case BizSales.BIZ_STATUS_RED_FLUSH -> vo.setSalesOrderNo(sales.getSalesNo() + "（已冲抵）");
+                    case BizSales.BIZ_STATUS_TERMINATED -> vo.setSalesOrderNo(sales.getSalesNo() + "（已终止）");
+                    default -> vo.setSalesOrderNo(sales.getSalesNo() + "（已作废）");
+                }
+            }
+        }
+    }
+
+    /**
+     * 会话 58：批量填充销售取消冻结标志与原因（行终止/作废/删除三通道同口径，SalesTerminateGuard.freezeInfo）。
+     * 仅对未完结任务单（待生产/生产中/待入库）计算——已完结单自身状态已表达，不重复标注。
+     */
+    private void fillSalesFrozenBatch(List<ProductionOrderVO> records, List<BizProductionOrder> orders) {
+        for (int i = 0; i < records.size(); i++) {
+            BizProductionOrder order = orders.get(i);
+            ProductionOrderVO vo = records.get(i);
+            if (order.getStatus() == null || (order.getStatus() != BizProductionOrder.STATUS_PENDING
+                    && order.getStatus() != BizProductionOrder.STATUS_IN_PROGRESS
+                    && order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC)) {
+                continue;
+            }
+            SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(order);
+            if (info.isFrozen()) {
+                vo.setSalesFrozen(true);
+                vo.setSalesFrozenReason(info.getReason());
+                vo.setSalesLineTerminateReason(info.getTerminateReason());
+                vo.setSalesLineTerminateTime(info.getTerminateTime());
+                vo.setSalesLineTerminatorName(info.getTerminatorName());
             }
         }
     }

@@ -25,7 +25,17 @@ public class PickListVO {
     private Long sourceSalesId;
 
     /**
-     * 状态: 1-待发料, 2-已发料, 3-已完成, 4-已驳回
+     * 关联生产任务单ID（生产来源单据有值）
+     */
+    private Long productionOrderId;
+
+    /**
+     * 关联生产任务单状态（1-待生产…7-已终止；终止退料单前端据此隐藏驳回/撤销）
+     */
+    private Integer productionOrderStatus;
+
+    /**
+     * 状态: 1-待发料/待收料, 2-已发料/已收料, 3-已完成, 4-已驳回（RETURN 类型按收料口径显示）
      */
     private Integer status;
 

@@ -85,6 +85,8 @@ class ProductionOrderServiceTest {
     @Mock private org.example.back.mapper.BizSalesDetailMapper bizSalesDetailMapper;
     @Mock private org.example.back.mapper.BizPurchaseRequestMapper bizPurchaseRequestMapper;
 
+    @Mock private SalesTerminateGuard salesTerminateGuard;
+
     @InjectMocks private ProductionOrderService service;
 
     @Test
@@ -342,6 +344,9 @@ class ProductionOrderServiceTest {
         state.setFirstStatus("ok");
         state.setFirstPassed(true);
         when(qcService.buildStateBatch(any())).thenReturn(Map.of(7L, state));
+        // 会话 58：page() 现会对未完结单调用守卫 freezeInfo，未冻结时返回 NOT_FROZEN
+        when(salesTerminateGuard.freezeInfo(any())).thenAnswer(inv ->
+                new SalesTerminateGuard.FreezeInfo(false, null, null, null, null));
 
         PageResult<ProductionOrderVO> result = service.page(dto);
 

@@ -164,4 +164,16 @@ public class PurchaseRequestController {
     public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
         return Result.success(purchaseRequestService.batchDelete(ids));
     }
+
+    /**
+     * 会话 58 一键撤销：生产终止场景一键撤销该任务单下在途补料采购申请（status 1/2），
+     * 权限=申请人本人或生产管理员，前置=任务单已被销售取消冻结。
+     */
+    @PostMapping("/revoke-by-production-order/{productionOrderId}")
+    @AuditLog(module = "采购申请", action = "一键撤销在途补料申请", targetType = "采购申请单",
+            detail = "'一键撤销生产任务单 #' + #productionOrderId + ' 的在途补料采购申请'")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交一键撤销请求")
+    public Result<List<String>> revokeByProductionOrder(@PathVariable Long productionOrderId) {
+        return Result.success(purchaseRequestService.revokeByProductionOrder(productionOrderId));
+    }
 }

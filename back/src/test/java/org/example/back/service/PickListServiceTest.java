@@ -292,11 +292,11 @@ class PickListServiceTest {
 
         // 库存增加：baseGoodsMapper.update 被调用
         verify(baseGoodsMapper).update(eq(null), any());
-        // 状态更新为已发料
+        // 状态更新：RETURN 收料入库即完成（1→3 已完成）
         verify(bizPickListMapper).update(eq(null), any());
-        // 撤销未读 + 生产通知
+        // 撤销未读 + 生产回执（收料入库通知，替代原"领料已出库可开工"）
         verify(messageService).revokeUnreadByBiz("pick_list", 7L);
-        verify(messageService).sendPickIssuedToProductionAdmins(eq("PK-007"), eq("SC-001"), eq(7L));
+        verify(messageService).sendPickReturnReceivedToProductionAdmins(eq("PK-007"), eq("SC-001"), eq(7L));
     }
 
     // ========================== reject - 生产来源路由到生产端 ==========================

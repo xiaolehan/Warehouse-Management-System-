@@ -8,6 +8,7 @@ import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.SalesQueryDTO;
 import org.example.back.dto.SalesSaveDTO;
+import org.example.back.dto.SalesTerminateDTO;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.service.SalesService;
 import org.example.back.service.SalesTimelineService;
@@ -94,6 +95,16 @@ public class SalesController {
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认请求")
     public Result<Void> confirm(@PathVariable Long id) {
         salesService.confirm(id);
+        return Result.success();
+    }
+
+    /** 需求一 Q3/Q21：行级终止（免审批立即生效，与作废/删除三通道分工）；权限：建单人本人或销售管理员（service 校验） */
+    @PutMapping("/{id}/terminate")
+    @AuditLog(module = "销售管理", action = "终止", targetType = "销售单",
+            detail = "'终止 销售单 #' + #id + '，行数：' + #dto.lines.size()")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交终止请求")
+    public Result<Void> terminate(@PathVariable Long id, @Valid @RequestBody SalesTerminateDTO dto) {
+        salesService.terminate(id, dto);
         return Result.success();
     }
 }

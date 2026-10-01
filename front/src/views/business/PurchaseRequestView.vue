@@ -55,6 +55,10 @@
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)">{{ row.statusText }}</el-tag>
+            <!-- 会话 58：关联任务单被销售取消冻结 -->
+            <el-tooltip v-if="row.salesFrozen" :content="row.salesFrozenReason ? `关联生产任务单${row.salesFrozenReason}，认领/到货提交已禁用` : '关联销售已取消，认领/到货提交已禁用'" placement="top">
+              <el-tag type="danger" size="small" style="margin-left:4px">冻结</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column prop="applicantName" label="申请人" width="100" />
@@ -68,13 +72,19 @@
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button link size="small" type="primary" @click="handleView(row)">详情</el-button>
-            <!-- 采购：待采购 → 认领 / 驳回 -->
-            <el-button link size="small" type="primary" v-if="row.status === 1"
+            <!-- 采购：待采购 → 认领 / 驳回（会话 58：任务单被销售取消冻结时禁用认领） -->
+            <el-tooltip v-if="row.status === 1 && row.salesFrozen" content="关联销售已取消，该补料申请已冻结，禁止认领；可在任务单终止时一并撤销" placement="top">
+              <span style="cursor:not-allowed"><el-button link size="small" type="primary" disabled>认领</el-button></span>
+            </el-tooltip>
+            <el-button link size="small" type="primary" v-if="row.status === 1 && !row.salesFrozen"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleProcess(row)">认领</el-button>
             <el-button link size="small" type="warning" v-if="row.status === 1"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleReject(row)">驳回</el-button>
-            <!-- 采购：采购中 → 到货提交 -->
-            <el-button link size="small" type="success" v-if="row.status === 2"
+            <!-- 采购：采购中 → 到货提交（会话 58：任务单被销售取消冻结时禁用） -->
+            <el-tooltip v-if="row.status === 2 && row.salesFrozen" content="关联销售已取消，该补料申请已冻结，禁止提交到货；可在任务单终止时一并撤销" placement="top">
+              <span style="cursor:not-allowed"><el-button link size="small" type="success" disabled>到货提交</el-button></span>
+            </el-tooltip>
+            <el-button link size="small" type="success" v-if="row.status === 2 && !row.salesFrozen"
               v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArrive(row)">到货提交</el-button>
             <!-- 采购：采购中 → 修改到货计划（D61） -->
             <el-button link size="small" type="primary" v-if="row.status === 2"

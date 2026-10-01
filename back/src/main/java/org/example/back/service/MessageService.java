@@ -485,6 +485,23 @@ public class MessageService {
                 ROUTE_PICK_LIST);
     }
 
+    /** 仓储确认退料收料入库 → 通知生产端闭环（RETURN 单不发"领料已出库可开工"，避免误导）。 */
+    public void sendPickReturnReceivedToProductionAdmins(String pickNo, String orderNo, Long pickId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "生产退料已收料入库",
+                String.format(Locale.ROOT,
+                        "退料单 %s（生产任务单 %s）已由仓储确认收料入库。",
+                        pickNo, orderNo == null ? "-" : orderNo),
+                "pick_list",
+                pickId,
+                ROUTE_PICK_LIST);
+    }
+
     /** D87：齐套类通知标题——confirmReceive 重算时按标题白名单撤旧发新，保证互斥不堆积。 */
     public static final String TITLE_KIT_COMPLETE = "物料已齐套可领料";
     public static final String TITLE_KIT_INCOMPLETE = "补料部分到货仍缺料";
@@ -718,7 +735,98 @@ public class MessageService {
                         orderNo == null ? "-" : orderNo),
                 "production_order",
                 orderId,
-                ROUTE_PRODUCTION_ORDER);
+                ROUTE_PRODUCTION_ORDER + "?orderId=" + orderId);
+    }
+
+
+    /**
+     * 需求一（行级终止）：销售明细行终止后，其锚定的未完结生产任务单 → 通知生产管理员手动终止并退料。
+     * 绑 biz_type=production_order + biz_id=生产单id（D21 范式），生产终止/终态时撤未读。
+     */
+    public void sendSalesLineTerminatedToProductionAdmins(String salesNo, String goodsDesc, String reason,
+                                                          String orderNo, Long orderId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "关联销售明细行已终止",
+                String.format(Locale.ROOT,
+                        "销售单 %s 的明细行（成品 %s）已终止（原因：%s），其关联的生产任务单 %s 仍未完结且已被冻结（领料/补料/开工/完工/质检/打卡/成品入库暂停，退料不受影响）。请评估后手动终止该任务单完成退料。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsDesc == null ? "-" : goodsDesc,
+                        reason == null || reason.isBlank() ? "-" : reason,
+                        orderNo == null ? "-" : orderNo),
+                "production_order",
+                orderId,
+                ROUTE_PRODUCTION_ORDER + "?orderId=" + orderId);
+    }
+
+    /**
+     * 会话 58：生产终止场景一键撤销在途补料采购申请后 → 通知采购管理员。
+     * 绑 biz_type=production_order + biz_id=任务单id（D21 范式）。
+     */
+    public void sendPurchaseRequestRevokedToPurchaseAdmins(String orderNo, java.util.List<String> requestNos, Long orderId) {
+        Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
+        if (purchaseDeptId == null || requestNos == null || requestNos.isEmpty()) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                purchaseDeptId,
+                "关联补料采购申请已撤销",
+                String.format(Locale.ROOT,
+                        "生产任务单 %s 关联销售已取消，其在途补料采购申请 %s 已由生产侧一键撤销，无需继续采购。",
+                        orderNo == null ? "-" : orderNo,
+                        String.join("、", requestNos)),
+                "production_order",
+                orderId,
+                ROUTE_PURCHASE_REQUEST);
+    }
+
+    /**
+     * 需求一（行级终止）回执：生产端终止关联任务单后 → 通知建单销售本人（Q6）。
+     * 绑 biz_type=sales + biz_id=销售单id（D21 范式），销售单删除/作废时撤未读。
+     */
+    public void sendProductionTerminatedReceiptToSalesUser(Long salesOperatorId, String orderNo,
+                                                           String goodsName, String salesNo, Long salesId) {
+        sendToUserWithBiz(
+                salesOperatorId,
+                "关联生产任务单已终止",
+                String.format(Locale.ROOT,
+                        "您终止的销售单 %s 的明细行（成品 %s）所关联的生产任务单 %s 已由生产端终止并完成退料，该行订单取消闭环。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        orderNo == null ? "-" : orderNo),
+                "sales",
+                salesId,
+                ROUTE_SALES);
+    }
+
+    /**
+     * 需求二（现货履约）Q11/Q13 回执：生产自发终止关联销售单的任务单后 → 通知建单销售本人。
+     * 现货足（stock >= need）→ 文案 B「可现货出库，请安排出库」；现货不足 → 文案 C 缺口告知（Q13a：允许终止+警告）。
+     * 与需求一 Q6 文案 A（行已终止场景）互斥；绑 biz_type=sales + biz_id=销售单id（D21 范式），targetRoute 直达销售单。
+     */
+    public void sendProductionTerminatedStockNoticeToSalesUser(Long salesOperatorId, String orderNo,
+                                                               String goodsName, String salesNo, Long salesId,
+                                                               int stock, int need) {
+        boolean sufficient = stock >= need;
+        String title = sufficient ? "关联生产任务已终止，可现货出库" : "关联生产任务已终止，现货不足";
+        String content = sufficient
+                ? String.format(Locale.ROOT,
+                        "您的销售单 %s 的明细行（成品 %s）关联的生产任务单 %s 已由生产端终止。该成品现货库存 %d 可满足订单量 %d，请安排出库（仓储确认出库后库存扣减）。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        orderNo == null ? "-" : orderNo,
+                        stock, need)
+                : String.format(Locale.ROOT,
+                        "您的销售单 %s 的明细行（成品 %s）关联的生产任务单 %s 已由生产端终止。该成品现货库存 %d 不足订单量 %d（缺 %d），订单仍待出库：可等现货补充后直接出库，或重新排产。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        orderNo == null ? "-" : orderNo,
+                        stock, need, need - stock);
+        sendToUserWithBiz(salesOperatorId, title, content, "sales", salesId, ROUTE_SALES);
     }
 
     /**

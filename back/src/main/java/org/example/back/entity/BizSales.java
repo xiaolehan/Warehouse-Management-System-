@@ -16,6 +16,15 @@ import java.time.LocalDateTime;
 @TableName("biz_sales")
 public class BizSales {
 
+    /** 业务状态：正常 */
+    public static final int BIZ_STATUS_NORMAL = 1;
+    /** 业务状态：已作废 */
+    public static final int BIZ_STATUS_VOIDED = 2;
+    /** 业务状态：红冲单(停用) */
+    public static final int BIZ_STATUS_RED_FLUSH = 3;
+    /** 业务状态：已终止（全部明细行终止派生，需求一 Q21/ADR-0019） */
+    public static final int BIZ_STATUS_TERMINATED = 4;
+
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
@@ -40,7 +49,7 @@ public class BizSales {
     private String remark;
 
     /**
-     * 1-正常, 2-已作废, 3-红冲单
+     * 1-正常, 2-已作废, 3-红冲单, 4-已终止(全部明细行终止派生)
      */
     private Integer bizStatus;
 

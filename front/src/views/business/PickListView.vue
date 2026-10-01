@@ -15,10 +15,7 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="searchForm.status" placeholder="全部" clearable style="width: 120px">
-            <el-option label="待发料" :value="1" />
-            <el-option label="已发料" :value="2" />
-            <el-option label="已完成" :value="3" />
-            <el-option label="已驳回" :value="4" />
+            <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="商品名">
@@ -59,7 +56,7 @@
           </template>
         </el-table-column>
         <el-table-column prop="applicantName" label="申请人" width="100" />
-        <el-table-column prop="operatorName" label="发料人" width="100" />
+        <el-table-column prop="operatorName" label="发料/收料人" width="110" />
         <el-table-column label="申请时间" width="160">
           <template #default="{ row }">{{ formatTime(row.createTime) }}</template>
         </el-table-column>
@@ -67,11 +64,14 @@
           <template #default="{ row }">
             <el-button link size="small" type="primary" @click="handleView(row)">详情</el-button>
             <el-button link size="small" type="success" v-if="row.status === 1"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleIssue(row)">发料</el-button>
-            <el-button link size="small" type="warning" v-if="row.status === 1"
+              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleIssue(row)">
+              {{ row.pickType === 'RETURN' ? '收料' : '发料' }}</el-button>
+            <el-button link size="small" type="warning" v-if="row.status === 1 && !isTerminatedReturn(row)"
               v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleReject(row)">驳回</el-button>
-            <el-button link size="small" type="success" v-if="row.status === 2 && isApplicant(row)" @click="handleConfirm(row)">确认收货</el-button>
-            <el-button link size="small" type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
+            <el-button link size="small" type="success" v-if="row.status === 2 && row.pickType !== 'RETURN' && isApplicant(row)"
+              @click="handleConfirm(row)">确认收货</el-button>
+            <el-button link size="small" type="danger" v-if="row.status === 1 && !isTerminatedReturn(row) && isApplicant(row)"
+              @click="handleDelete(row)">撤销</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -89,10 +89,10 @@
         <el-descriptions-item label="状态">{{ viewData.statusText }}</el-descriptions-item>
         <el-descriptions-item label="关联销售单">{{ viewData.sourceSalesId || '—' }}</el-descriptions-item>
         <el-descriptions-item label="申请人">{{ viewData.applicantName }}</el-descriptions-item>
-        <el-descriptions-item label="发料人">{{ viewData.operatorName || '—' }}</el-descriptions-item>
+        <el-descriptions-item :label="viewData.pickType === 'RETURN' ? '收料人' : '发料人'">{{ viewData.operatorName || '—' }}</el-descriptions-item>
         <el-descriptions-item label="申请时间">{{ formatTime(viewData.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="发料时间">{{ formatTime(viewData.operationTime) }}</el-descriptions-item>
-        <el-descriptions-item label="确认时间">{{ formatTime(viewData.confirmTime) }}</el-descriptions-item>
+        <el-descriptions-item :label="viewData.pickType === 'RETURN' ? '收料时间' : '发料时间'">{{ formatTime(viewData.operationTime) }}</el-descriptions-item>
+        <el-descriptions-item label="确认时间" v-if="viewData.pickType !== 'RETURN'">{{ formatTime(viewData.confirmTime) }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ viewData.remark || '—' }}</el-descriptions-item>
         <el-descriptions-item label="驳回原因" :span="2" v-if="viewData.rejectReason">{{ viewData.rejectReason }}</el-descriptions-item>
       </el-descriptions>
@@ -107,6 +107,9 @@
         </el-table-column>
         <el-table-column label="备注" min-width="150">
           <template #default="{ row }">{{ row.remark || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="差异备注" min-width="140">
+          <template #default="{ row }">{{ row.diffReason || '—' }}</template>
         </el-table-column>
         <el-table-column prop="quantity" label="数量" width="70" />
       </el-table>
@@ -128,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, onMounted, computed, h } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
@@ -161,6 +164,24 @@ const isApplicant = (row) => row.applicantName && row.applicantName === userStor
 const statusTagType = (status) => ({
   1: 'info', 2: 'warning', 3: 'success', 4: 'danger'
 }[status] || 'info')
+
+// 退料单按「收料」口径显示状态选项；其余类型按「发料」口径
+const statusOptions = computed(() => searchForm.pickType === 'RETURN'
+  ? [
+      { label: '待收料', value: 1 },
+      { label: '已收料', value: 2 },
+      { label: '已完成', value: 3 },
+      { label: '已驳回', value: 4 }
+    ]
+  : [
+      { label: '待发料', value: 1 },
+      { label: '已发料', value: 2 },
+      { label: '已完成', value: 3 },
+      { label: '已驳回', value: 4 }
+    ])
+
+// 已终止任务单的终止退料单：不可驳回/撤销（后端同守卫），只能由仓储收料入库
+const isTerminatedReturn = (row) => row.pickType === 'RETURN' && row.productionOrderStatus === 7
 
 const formatTime = (t) => t ? String(t).replace('T', ' ').slice(0, 19) : '—'
 
@@ -213,17 +234,18 @@ const issueDetailLines = (details) => (details || []).map(d => {
 })
 
 const handleIssue = (row) => {
-  const tip = row.pickTypeText === '退料' ? '确认退料入库？退料将回流入库。' : '确认发料？将扣减库存。'
+  const isReturn = row.pickType === 'RETURN'
+  const tip = isReturn ? '确认收料入库？退料物料将回流入库。' : '确认发料？将扣减库存。'
   const hasLines = (row.details || []).length > 0
   ElMessageBox.confirm(
     hasLines
       ? h('div', null, [h('div', { style: 'margin-bottom: 8px' }, tip), ...issueDetailLines(row.details)])
       : tip,
-    '发料确认', { type: 'warning' }
+    isReturn ? '收料确认' : '发料确认', { type: 'warning' }
   )
     .then(async () => {
       await issuePickListAPI(row.id)
-      ElMessage.success('发料成功')
+      ElMessage.success(isReturn ? '收料成功，物料已回流入库' : '发料成功')
       loadList()
     }).catch(() => {}) // 取消或业务错误已统一提示
 }

@@ -41,9 +41,12 @@
           <span v-else style="color:#909399">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100" align="center">
+      <el-table-column label="状态" width="130" align="center">
         <template #default="scope">
           <el-tag :type="statusTagType(scope.row.status)" size="small">{{ scope.row.statusText }}</el-tag>
+          <el-tooltip v-if="scope.row.salesFrozen" :content="frozenTip(scope.row)" placement="top">
+            <el-tag type="danger" size="small" style="margin-left:4px">冻结</el-tag>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="关联销售单" width="140">
@@ -56,14 +59,14 @@
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="scope">
           <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
-          <el-button v-if="scope.row.status === 1" link size="small" type="success" @click="handleStart(scope.row)">开工</el-button>
+          <el-button v-if="scope.row.status === 1" link size="small" type="success" :disabled="scope.row.salesFrozen" @click="handleStart(scope.row)">开工</el-button>
           <el-button
             v-if="(scope.row.status === 1) && (scope.row.kitStatus === 'partial' || scope.row.kitStatus === 'block')"
-            link size="small" type="warning" @click="openDraftDialog(scope.row)"
+            link size="small" type="warning" :disabled="scope.row.salesFrozen" @click="openDraftDialog(scope.row)"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
           >补料</el-button>
           <!-- D107 两段式：待入库状态下提交入库申请（不加库存），仓储确认后本单才完成；已提交可撤销 -->
-          <el-button v-if="scope.row.status === 3 && !scope.row.pendingInboundId" link size="small" type="success" @click="handleReceipt(scope.row)">提交入库申请</el-button>
+          <el-button v-if="scope.row.status === 3 && !scope.row.pendingInboundId" link size="small" type="success" :disabled="scope.row.salesFrozen" @click="handleReceipt(scope.row)">提交入库申请</el-button>
           <el-button
             v-if="scope.row.status === 3 && scope.row.pendingInboundId" link size="small" type="warning"
             @click="handleCancelReceipt(scope.row)"
@@ -281,6 +284,9 @@
           <el-descriptions-item label="数量">{{ detail.quantity }} {{ detail.unit }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <el-tag :type="statusTagType(detail.status)" size="small">{{ detail.statusText }}</el-tag>
+            <el-tooltip v-if="detail.salesFrozen" :content="frozenTip(detail)" placement="top">
+              <el-tag type="danger" size="small" style="margin-left:4px">冻结</el-tag>
+            </el-tooltip>
           </el-descriptions-item>
           <el-descriptions-item label="齐套状态">
             <el-tag v-if="detail.kitStatus" :type="kitTagType(detail.kitStatus)" size="small">{{ detail.kitStatusText }}</el-tag>
@@ -304,6 +310,22 @@
           </el-descriptions-item>
         </el-descriptions>
 
+        <!-- 会话 58：销售取消冻结提示（行终止/作废/删除三通道同口径；终止/退料不受限）。
+             会话 61+：横幅内联「立即终止」——动作必须落在指引出现的地方；
+             判定与 v-permission 同口径（超管只读、admin 角色 + production 部门），
+             无权限者文案角色化，避免指向不可达的动作。 -->
+        <el-alert
+          v-if="detail.salesFrozen"
+          type="error" :closable="false" style="margin-top: 12px"
+          :title="`关联销售已取消，本任务单已冻结（${detail.salesFrozenReason || '原因未知'}）。领料/补料/开工/完工/打卡/质检/入库申请已暂停，${canTerminateCurrent ? '请点击下方「立即终止」完成退料闭环' : '请联系生产管理员执行终止完成退料闭环'}；生产退料不受影响。`"
+          :description="detail.salesLineTerminateReason ? `终止留痕：${detail.salesLineTerminateReason}${detail.salesLineTerminateTime ? '（' + fmtTime(detail.salesLineTerminateTime) + '，操作人：' + (detail.salesLineTerminatorName || '-') + '）' : ''}` : ''"
+        >
+          <el-button
+            v-if="canTerminateCurrent"
+            type="danger" size="small" style="margin-top: 8px"
+            @click="terminateFromDetail"
+          >立即终止</el-button>
+        </el-alert>
         <!-- D107 两段式：入库申请状态提示 -->
         <el-alert
           v-if="detail.status === 3 && detail.pendingInboundId"
@@ -348,6 +370,7 @@
                 </el-tooltip>
                 <el-button
                   v-if="!s.row.lockReason && s.row.operable" link type="primary" size="small"
+                  :disabled="detail.salesFrozen"
                   v-permission="{ deptCodes: ['production'] }"
                   @click="doStepComplete(s.row)"
                 >打卡</el-button>
@@ -398,6 +421,7 @@
           <el-button
             v-if="detail.status === 1 && !pickListStatus"
             type="primary"
+            :disabled="detail.salesFrozen"
             :loading="pickSubmitting"
             @click="doApplyPick"
             v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
@@ -601,32 +625,70 @@
       />
       <el-form label-width="90px">
         <el-form-item label="终止原因" required>
-          <el-input v-model="terminateReason" type="textarea" :rows="2" placeholder="必填，如：销售交易单 XS… 已取消" />
+          <el-input v-model="terminateReason" type="textarea" :rows="2" placeholder="必填，如：仓库现货充足，直接出库成品" />
+        </el-form-item>
+        <!-- 需求二 Q10a/Q13：关联销售单且行未终止时显示现货信息；不足时缺口警告（Q13a 允许终止+明示缺口） -->
+        <el-alert
+          v-if="terminateStockInfo"
+          :title="`关联销售单 ${terminateStockInfo.salesOrderNo || '-'}（订单量 ${terminateStockInfo.salesLineQuantity}）—— 该成品现货库存 ${terminateStockInfo.goodsStock}`"
+          :type="terminateStockInfo.stockSufficient ? 'info' : 'warning'"
+          :closable="false" style="margin-bottom: 12px"
+        />
+        <el-alert
+          v-if="terminateStockInfo && !terminateStockInfo.stockSufficient"
+          :title="`现货 ${terminateStockInfo.goodsStock} < 订单量 ${terminateStockInfo.salesLineQuantity}，终止后仍缺 ${terminateStockInfo.salesLineQuantity - terminateStockInfo.goodsStock}，订单仍待出库（可等现货补充后直接出库，或重新排产）`"
+          type="warning" :closable="false" style="margin-bottom: 12px"
+        />
+        <!-- 需求二 Q17 + 会话 58：在途补料采购申请提示 + 一键撤销勾选（撤销权=申请人本人或生产管理员，仅任务单已冻结时可用） -->
+        <el-alert
+          v-if="terminateInFlightPurchases.length"
+          :title="`该任务单有 ${terminateInFlightPurchases.length} 张在途补料采购申请（${terminateInFlightPurchases.join('、')}）。若销售已取消该需求，可勾选一并撤销（采购侧将收到通知）；销售未取消时请勿勾选。`"
+          type="warning" :closable="false" style="margin-bottom: 12px"
+        />
+        <el-form-item v-if="terminateInFlightPurchases.length" label=" ">
+          <el-checkbox v-model="terminateRevokePurchases">一并撤销在途补料采购申请（待采购/采购中）</el-checkbox>
         </el-form-item>
         <el-form-item v-if="terminateItems.length" label="退料明细">
           <el-table :data="terminateItems" border size="small" style="width: 100%">
-            <el-table-column type="index" label="序号" width="55" />
-            <el-table-column label="物料" min-width="150">
+            <el-table-column label="物料" min-width="140">
               <template #default="{ row }">
                 {{ row.goodsName }}
                 <span v-if="row.spec || row.material" style="color:#909399">（{{ [row.spec, row.material].filter(Boolean).join(' / ') }}）</span>
               </template>
             </el-table-column>
+            <el-table-column label="已领" width="70" align="center">
+              <template #default="{ row }">{{ row.pickedQuantity ?? row.maxQty }}</template>
+            </el-table-column>
+            <el-table-column label="已退" width="70" align="center">
+              <template #default="{ row }">{{ row.returnedQuantity ?? 0 }}</template>
+            </el-table-column>
             <el-table-column label="已领未退" width="90" align="center">
               <template #default="{ row }">{{ row.maxQty }}</template>
             </el-table-column>
-            <el-table-column label="退料数量" width="140">
+            <el-table-column label="退料数量" width="130">
               <template #default="{ row }">
-                <el-input-number v-model="row.quantity" :min="0" :max="row.maxQty" controls-position="right" style="width: 120px" />
+                <el-input-number v-model="row.quantity" :min="0" :max="row.maxQty" controls-position="right" style="width: 110px" />
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="70" align="center">
-              <template #default="{ $index }">
-                <el-button link size="small" type="danger" @click="terminateItems.splice($index, 1)">删除</el-button>
+            <el-table-column label="差异" width="70" align="center">
+              <template #default="{ row }">
+                <span :style="row.maxQty - row.quantity > 0 ? 'color:#e6a23c;font-weight:600' : ''">{{ row.maxQty - row.quantity }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="差异备注" min-width="160">
+              <template #default="{ row }">
+                <el-input
+                  v-if="row.maxQty - row.quantity > 0"
+                  v-model="row.diffReason" size="small" maxlength="200"
+                  placeholder="必填：损耗/丢失等原因"
+                />
+                <span v-else style="color:#c0c4cc">—</span>
               </template>
             </el-table-column>
           </el-table>
-          <div style="color:#909399; font-size:12px; margin-top:6px">已耗用/损坏的物料请减量或删除该行；退料数量不可超过已领未退。</div>
+          <div style="color:#909399; font-size:12px; margin-top:6px">
+            行不可移除；已耗用/损坏的物料请减量并在差异备注说明原因（损耗/丢失等），退料数量不可超过已领未退。
+          </div>
         </el-form-item>
         <el-form-item v-else label="退料明细">
           <span style="color:#909399">无已领未退物料，终止后不生成退料单</span>
@@ -677,10 +739,10 @@ import { getLatestSuppliersAPI } from '@/api/business' // D129：补料缺口行
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
-import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
+import { createDraftPurchaseRequestAPI, revokeByProductionOrderAPI } from '@/api/purchaseRequest'
 import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI, confirmPickListAPI } from '@/api/pickList'
 import { useUserStore } from '@/stores/user'
-import { canAccessRoles, hasDeptAccess, isSuperAdmin } from '@/utils/auth'
+import { canAccessRoles, getDeptCode, getRole, hasDeptAccess, isSuperAdmin } from '@/utils/auth'
 
 const statusOptions = [
   { value: 1, label: '待生产' },
@@ -823,6 +885,8 @@ const handleCreate = () => {
       })
       createResult.value = res.data || {}
       ElMessage.success('生产任务单已下达')
+      // 会话 58 需求修复：创建成功立即刷新列表，不再等弹窗关闭（X/遮罩关闭也能看到新单）
+      loadList()
     } catch {
       // 业务错误已由拦截器统一提示
     }
@@ -831,7 +895,6 @@ const handleCreate = () => {
 
 const closeCreate = () => {
   createVisible.value = false
-  if (createResult.value) loadList()
 }
 
 // ============================== D113：按销售单批量下达 ==============================
@@ -926,6 +989,8 @@ const submitBatchRelease = async () => {
     })
     batchResult.value = res.data || []
     ElMessage.success('批量下达完成')
+    // 会话 58 需求修复：批量下达成功立即刷新列表（原来只在点「关闭」时刷新，X/遮罩关闭不刷新）
+    loadList()
   } catch {
     // 业务错误已由拦截器统一提示
   } finally {
@@ -948,7 +1013,6 @@ const batchSummary = computed(() => {
 
 const closeBatchRelease = () => {
   batchVisible.value = false
-  if (batchResult.value) loadList()
 }
 
 // D112：站内消息点击缺货消息 → 跳本页并自动打开「按销售单下达」弹窗、预选该销售单
@@ -960,6 +1024,17 @@ watch(() => route.query.salesId, (salesId) => {
     return
   }
   openBatchRelease(salesId)
+  router.replace({ path: route.path, query: {} })
+}, { immediate: true })
+
+// 会话 58：行终止/销售取消消息点击直达任务单详情（?orderId= 深链，消费后清空 query 防刷新重复弹窗）
+watch(() => route.query.orderId, async (orderId) => {
+  if (!orderId) return
+  try {
+    await openDetail({ id: Number(orderId) })
+  } catch {
+    // 详情不存在（已删除/无权限）时静默忽略
+  }
   router.replace({ path: route.path, query: {} })
 }, { immediate: true })
 
@@ -1221,6 +1296,11 @@ const terminateItems = ref([])
 const terminateHasOpenReturn = ref(false)
 const terminateOpenReturnPickNo = ref('')
 const terminateSubmitting = ref(false)
+// 需求二 Q10a/Q13/Q17：终止弹窗现货信息 + 在途补料采购申请单号
+const terminateStockInfo = ref(null)
+const terminateInFlightPurchases = ref([])
+// 会话 58：终止时一并撤销在途补料采购申请（默认不勾选）
+const terminateRevokePurchases = ref(false)
 
 async function openTerminate(row) {
   terminateRow.value = row
@@ -1228,12 +1308,22 @@ async function openTerminate(row) {
   terminateItems.value = []
   terminateHasOpenReturn.value = false
   terminateOpenReturnPickNo.value = ''
+  terminateStockInfo.value = null
+  terminateInFlightPurchases.value = []
+  terminateRevokePurchases.value = false
   try {
     const res = await getProductionReturnableAPI(row.id)
     const data = res.data || {}
-    terminateItems.value = (data.items || []).map((it) => ({ ...it, maxQty: it.quantity }))
+    terminateItems.value = (data.items || []).map((it) => ({ ...it, maxQty: it.quantity, diffReason: '' }))
     terminateHasOpenReturn.value = !!data.hasOpenReturn
     terminateOpenReturnPickNo.value = data.openReturnPickNo || ''
+    terminateStockInfo.value = data.goodsStock == null ? null : {
+      goodsStock: data.goodsStock,
+      salesLineQuantity: data.salesLineQuantity,
+      stockSufficient: !!data.stockSufficient,
+      salesOrderNo: data.salesOrderNo || ''
+    }
+    terminateInFlightPurchases.value = data.inFlightPurchaseNos || []
   } catch {
     // 业务错误已由拦截器统一提示；加载失败不打开终止弹窗
     return
@@ -1253,15 +1343,35 @@ async function doTerminate() {
   }
   terminateSubmitting.value = true
   try {
+    // 需求二 Q15/Q7：差异行（退料数量 < 已领未退，含清零）差异备注必填（前端预检，后端也有守卫）
+    const diffRows = terminateItems.value.filter(
+      (i) => i.maxQty - i.quantity > 0 && !(i.diffReason && i.diffReason.trim())
+    )
+    if (diffRows.length) {
+      ElMessage.warning(`物料「${diffRows[0].goodsName}」退料数量小于已领未退，请填写差异备注说明原因（损耗/丢失等）`)
+      return
+    }
+    // F2/code-review：0 数量行随单提交（全部损耗场景），差异备注必填由 diffRows 预检+后端守卫兜底
     const items = terminateItems.value
-      .filter((i) => i.quantity > 0)
-      .map((i) => ({ goodsId: i.goodsId, quantity: i.quantity }))
+      .filter((i) => i.quantity >= 0)
+      .map((i) => ({ goodsId: i.goodsId, quantity: i.quantity, diffReason: i.diffReason && i.diffReason.trim() ? i.diffReason.trim() : null }))
     await terminateProductionOrderAPI(terminateRow.value.id, {
       reason: terminateReason.value.trim(),
       items
     })
     ElMessage.success(items.length ? '已终止，退料单已提交仓储确认入库' : '已终止')
     terminateVisible.value = false
+    // 会话 58：勾选了「一并撤销在途补料采购申请」→ 调一键撤销（失败不阻塞终止本身）
+    if (terminateRevokePurchases.value && terminateInFlightPurchases.value.length) {
+      try {
+        const revoked = await revokeByProductionOrderAPI(terminateRow.value.id)
+        const nos = revoked.data || []
+        if (nos.length) ElMessage.success(`已一并撤销在途补料采购申请：${nos.join('、')}`)
+        else ElMessage.info('没有可撤销的在途补料采购申请（可能已被撤销或已收尾）')
+      } catch {
+        // 业务错误已由拦截器统一提示
+      }
+    }
     await loadList()
   } catch {
     // 业务错误已由拦截器统一提示
@@ -1427,6 +1537,32 @@ const fmtNum = (v) => (v == null ? '-' : Number(v).toLocaleString())
 const fmtTime = (v) => (v ? String(v).replace('T', ' ').slice(0, 16) : '')
 const kitTagType = (k) => (k === 'ok' || k === 'issued' ? 'success' : k === 'partial' ? 'warning' : k === 'block' ? 'danger' : 'info')
 const statusTagType = (s) => (s === 1 ? 'info' : s === 2 ? 'warning' : s === 3 ? 'primary' : s === 4 ? 'success' : s === 7 ? 'danger' : 'info')
+
+// 会话 58：冻结标识 tooltip（原因 + 行终止留痕）
+const frozenTip = (row) => {
+  const base = row.salesFrozenReason || '关联销售已取消'
+  if (row.salesLineTerminateReason) {
+    const t = row.salesLineTerminateTime ? `，${String(row.salesLineTerminateTime).replace('T', ' ').slice(0, 16)}` : ''
+    const u = row.salesLineTerminatorName ? `，操作人：${row.salesLineTerminatorName}` : ''
+    return `${base}——终止原因：${row.salesLineTerminateReason}${t}${u}`
+  }
+  return base
+}
+
+// 会话 61+：当前用户能否终止——与列表行终止按钮 v-permission 同口径
+//（超管只读、admin 角色 + production 部门），供详情冻结横幅内联按钮与角色化文案使用
+const canTerminateCurrent = computed(() => {
+  const role = getRole()
+  if (isSuperAdmin(role)) return false
+  return canAccessRoles(role, ['admin']) && hasDeptAccess(getDeptCode(), ['production'], role)
+})
+
+// 会话 61+：详情冻结横幅「立即终止」——关详情弹窗 → 打开既有终止弹窗（退料预填/一键撤销全复用）
+function terminateFromDetail() {
+  if (!detail.value) return
+  detailVisible.value = false
+  openTerminate(detail.value)
+}
 // D60：lineStatus 四态——unknown（未知物料）用 info 灰，区别于严重缺料的红
 const lineTagType = (l) => (l === 'ok' ? 'success' : l === 'partial' ? 'warning' : l === 'unknown' ? 'info' : 'danger')
 

@@ -41,6 +41,21 @@ public class ProductionOrderVO {
     /** D113：锚定的销售明细行 id（可空=通用备货） */
     private Long salesDetailId;
 
+    /** 会话 58：关联销售已取消（行终止/作废/删除三通道）冻结标志——未完结任务单冻结时 true */
+    private Boolean salesFrozen;
+
+    /** 会话 58：冻结原因短文案（"关联的销售明细行已终止"/"关联的销售单已作废"/"关联的销售单已取消"/"关联的销售单已冲抵"） */
+    private String salesFrozenReason;
+
+    /** 会话 58：行终止留痕（仅行终止场景非空）——终止原因 */
+    private String salesLineTerminateReason;
+
+    /** 会话 58：行终止留痕——终止时间 */
+    private LocalDateTime salesLineTerminateTime;
+
+    /** 会话 58：行终止留痕——终止操作人 */
+    private String salesLineTerminatorName;
+
     /** D71：生产手工修正的预计完工时间（可空，优先于系统推算） */
     private LocalDateTime expectedCompletionTime;
 

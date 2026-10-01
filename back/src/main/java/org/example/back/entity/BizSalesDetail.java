@@ -16,6 +16,11 @@ import java.time.LocalDateTime;
 @TableName("biz_sales_detail")
 public class BizSalesDetail {
 
+    /** 行终止状态：正常（需求一 Q21 行级终止） */
+    public static final int TERMINATE_NORMAL = 1;
+    /** 行终止状态：已终止（客户取消；全部行终止时头单 biz_status 派生为 4-已终止，ADR-0019） */
+    public static final int TERMINATE_TERMINATED = 2;
+
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
 
@@ -65,6 +70,31 @@ public class BizSalesDetail {
      * 行序号(同单从1递增)
      */
     private Integer sortNo;
+
+    /**
+     * 行终止状态: 1-正常, 2-已终止（需求一 Q21 行级终止；全部行终止 → 头单 biz_status=4 已终止）
+     */
+    private Integer terminateStatus;
+
+    /**
+     * 行终止原因（必填留痕，对齐生产终止原因口径）
+     */
+    private String terminateReason;
+
+    /**
+     * 行终止时间
+     */
+    private LocalDateTime terminateTime;
+
+    /**
+     * 行终止操作人ID
+     */
+    private Long terminatorId;
+
+    /**
+     * 行终止操作人姓名
+     */
+    private String terminatorName;
 
     private LocalDateTime createTime;
 

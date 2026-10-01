@@ -42,6 +42,8 @@ class QcServiceTest {
     @Mock private AuthService authService;
     @Mock private MessageService messageService;
 
+    @Mock private SalesTerminateGuard salesTerminateGuard;
+
     @InjectMocks private QcService service;
 
     private BizProductionOrder order(long id) {

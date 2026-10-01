@@ -138,6 +138,20 @@ public class SalesTimelineService {
         nodes.add(node("order_placed", "下单", "done", sales.getOperationTime(),
                 "销售单 " + sales.getSalesNo()));
 
+        // 需求一 Q22：行已终止 → 下单+行终止两节点，不再排产/推算交付时间（已终止行保留可见打标）
+        if (detail.getTerminateStatus() != null
+                && detail.getTerminateStatus() == BizSalesDetail.TERMINATE_TERMINATED) {
+            String desc = "行已终止：" + (detail.getTerminateReason() == null ? "" : detail.getTerminateReason());
+            if (detail.getTerminatorName() != null) {
+                desc += "（" + detail.getTerminatorName() + "）";
+            }
+            nodes.add(node("terminated", "行终止", "done", detail.getTerminateTime(), desc));
+            line.setEstimatedDeliveryText("已终止");
+            line.setEstimatedSource("none");
+            line.setNodes(nodes);
+            return line;
+        }
+
         if (order == null) {
             buildNoOrderNodes(line, nodes, stock, shipped, sales.getConfirmTime());
         } else {
@@ -175,13 +189,24 @@ public class SalesTimelineService {
     private void buildOrderNodes(SalesTimelineLineVO line, List<SalesTimelineNodeVO> nodes,
                                  BizSales sales, BizProductionOrder order, int stock, boolean shipped) {
         // 关联单已作废/已终止 → 排产回退为待排产（D73：关联保留，时间线如实反映）
+        // 需求二 Q12：行仍待出库且现货 >= 行数量时，派生显示「可现货出库」（不落新状态，避免多一个要维护的状态）
         if (order.getStatus() != null && (order.getStatus() == BizProductionOrder.STATUS_VOIDED
                 || order.getStatus() == BizProductionOrder.STATUS_TERMINATED)) {
-            nodes.add(node("scheduled", "生产排产", "pending", null,
-                    "关联生产任务单 " + order.getOrderNo() + " " + statusText(order.getStatus()) + "，待重新排产"));
-            nodes.add(node("shipped", "发货", "pending", null, null));
-            line.setEstimatedDeliveryText("待生产排产");
-            line.setEstimatedSource("none");
+            int need = line.getQuantity() == null ? 0 : line.getQuantity();
+            if (!shipped && stock >= need) {
+                nodes.add(node("scheduled", "生产排产", "pending", null,
+                        "关联生产任务单 " + order.getOrderNo() + " " + statusText(order.getStatus())
+                                + "，该成品现货充足（现存 " + stock + "），可现货出库"));
+                nodes.add(node("shipped", "发货", "pending", null, "现货充足，待仓储确认出库"));
+                line.setEstimatedDeliveryText("可现货出库");
+                line.setEstimatedSource("none");
+            } else {
+                nodes.add(node("scheduled", "生产排产", "pending", null,
+                        "关联生产任务单 " + order.getOrderNo() + " " + statusText(order.getStatus()) + "，待重新排产"));
+                nodes.add(node("shipped", "发货", "pending", null, null));
+                line.setEstimatedDeliveryText("待生产排产");
+                line.setEstimatedSource("none");
+            }
             return;
         }
 

@@ -50,6 +50,8 @@ class ProductionStepServiceTest {
     @Mock private AuthzService authzService;
     @Mock private AuthService authService;
 
+    @Mock private SalesTerminateGuard salesTerminateGuard;
+
     @InjectMocks private ProductionStepService service;
 
     @BeforeAll

@@ -80,8 +80,11 @@
               <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
               <!-- D107：待确认申请 → 仓储管理员「确认入库 / 驳回」 -->
               <template v-if="isPendingConfirm(scope.row)">
+                <el-tooltip v-if="scope.row.salesFrozen" :content="`关联销售已取消（${scope.row.salesFrozenReason || '已冻结'}），禁止确认入库，请与生产协商终止`" placement="top">
+                  <span class="action-disabled" style="cursor:not-allowed">冻结禁入库</span>
+                </el-tooltip>
                 <el-button
-                  v-if="isWarehouseAdmin" size="small" type="success" link
+                  v-else-if="isWarehouseAdmin" size="small" type="success" link
                   @click="handleConfirmInbound(scope.row)"
                 >确认入库</el-button>
                 <el-button

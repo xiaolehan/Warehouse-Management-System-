@@ -14,4 +14,8 @@ public class ProductionPickItemVO {
     private String spec;
     /** 材质（同上） */
     private String material;
+    /** 需求二 Q15(b)：累计已领数量（PICK/SUPPLY 已发料起，仅终止退料预览填充，可空） */
+    private Integer pickedQuantity;
+    /** 需求二 Q15(b)：累计已退数量（RETURN 已发料起，仅终止退料预览填充，可空） */
+    private Integer returnedQuantity;
 }

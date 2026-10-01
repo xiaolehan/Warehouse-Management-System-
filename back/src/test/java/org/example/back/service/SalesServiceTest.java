@@ -3,6 +3,7 @@ package org.example.back.service;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.SalesSaveDTO;
+import org.example.back.dto.SalesTerminateDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
 import org.example.back.entity.BizBom;
@@ -524,5 +525,209 @@ class SalesServiceTest {
 
         assertEquals(1, options.size());
         assertEquals(6, options.get(0).getQuantity()); // 前端标签「销售单（客户 × 数量）」数据源
+    }
+
+    // ---------- 需求一（ADR-0019）：行级终止 + 回补库存排除终止行 ----------
+
+    private SalesTerminateDTO.TerminateLine terminateLine(long detailId, String reason) {
+        SalesTerminateDTO.TerminateLine line = new SalesTerminateDTO.TerminateLine();
+        line.setDetailId(detailId);
+        line.setReason(reason);
+        return line;
+    }
+
+    private BizSalesDetail detailWithTotal(long id, long goodsId, String name, int quantity, String totalPrice) {
+        BizSalesDetail d = detail(id, goodsId, name, quantity);
+        d.setTotalPrice(new BigDecimal(totalPrice));
+        return d;
+    }
+
+    private BizSalesDetail terminatedDetail(long id, long goodsId, String name, int quantity, String totalPrice) {
+        BizSalesDetail d = detailWithTotal(id, goodsId, name, quantity, totalPrice);
+        d.setTerminateStatus(BizSalesDetail.TERMINATE_TERMINATED);
+        return d;
+    }
+
+    private SalesTerminateDTO terminateDto(SalesTerminateDTO.TerminateLine... lines) {
+        SalesTerminateDTO dto = new SalesTerminateDTO();
+        dto.setLines(List.of(lines));
+        return dto;
+    }
+
+    @Test
+    void terminate_partialLine_recalculatesHeadOnlyActiveLines_andNotifiesAnchoredOrder() {
+        BizSales entity = pendingSales();
+        entity.setOperatorId(7L);
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
+        // 第一次取行做校验（两行都活跃），第二次取行做表头重算（行 1 已终止）——用连续打桩模拟落库结果
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(
+                List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00"),
+                        detailWithTotal(2L, 30L, "轴承", 3, "120.00")),
+                List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00"),
+                        detailWithTotal(2L, 30L, "轴承", 3, "120.00")));
+        when(bizSalesDetailMapper.update(isNull(), any())).thenReturn(1);
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(88L);
+        order.setOrderNo("PRO260910001");
+        order.setStatus(1);
+        order.setSalesDetailId(1L); // 锚定被终止行 → 应收到终止通知
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(authService.getUserInfo()).thenReturn(operator());
+
+        service.terminate(501L, terminateDto(terminateLine(1L, "客户取消该型号")));
+
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BizSales>> headCap =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(bizSalesMapper).update(isNull(), headCap.capture()); // 仅表头重算，未派生状态
+        assertEquals(3, headCap.getValue().getParamNameValuePairs().containsValue(3) ? 3 : -1);
+        assertTrue(headCap.getValue().getParamNameValuePairs().containsValue(new BigDecimal("120.00")),
+                "表头金额应只计活跃行（120=3×40）");
+        verify(messageService).sendSalesLineTerminatedToProductionAdmins(
+                eq("XS260910001"), eq("PTO153×5"), eq("客户取消该型号"), eq("PRO260910001"), eq(88L));
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), anyLong()); // 未全行终止不撤消息
+    }
+
+    @Test
+    void terminate_allLines_derivesTerminatedStatusAndRevokesPendingMessage() {
+        BizSales entity = pendingSales();
+        entity.setOperatorId(7L);
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(
+                List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00")),
+                List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00")));
+        when(bizSalesDetailMapper.update(isNull(), any())).thenReturn(1);
+        when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
+        when(authService.getUserInfo()).thenReturn(operator());
+
+        service.terminate(501L, terminateDto(terminateLine(1L, "整单取消")));
+
+        verify(bizSalesMapper, times(2)).update(isNull(), any()); // 表头重算 + 派生 biz_status=4
+        verify(messageService).revokeUnreadByBiz("sales", 501L);
+    }
+
+    @Test
+    void terminate_partialLine_alsoRevokesPriceDeviationApprovals() {
+        BizSales entity = pendingSales();
+        entity.setOperatorId(7L);
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L); // 作废审批守卫（价格偏离审批不拦终止）
+        // 两行只终止一行 → 部分终止：整单数量/金额已变，价格偏离审批若继续走会按过时金额放行
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(
+                List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00"),
+                        detailWithTotal(2L, 30L, "轴承", 3, "120.00")),
+                List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00"),
+                        detailWithTotal(2L, 30L, "轴承", 3, "120.00")));
+        when(bizSalesDetailMapper.update(isNull(), any())).thenReturn(1);
+        when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(88L);
+        order.setOrderNo("PRO260910001");
+        order.setStatus(1);
+        order.setSalesDetailId(1L);
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(authService.getUserInfo()).thenReturn(operator());
+
+        service.terminate(501L, terminateDto(terminateLine(1L, "部分终止撤审批")));
+
+        // F6/code-review：部分终止同样撤销价格偏离审批待办（幂等：仅 status 1→3）
+        verify(bizApprovalOrderMapper).update(isNull(), any());
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), anyLong()); // 未全行终止不撤待确认消息
+    }
+
+    @Test
+    void terminate_employeeCanTerminateOwnOrder() {
+        BizSales entity = pendingSales();
+        entity.setOperatorId(7L); // 本人所建
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
+        when(bizSalesDetailMapper.selectList(any())).thenReturn(
+                List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00")),
+                List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00")));
+        when(bizSalesDetailMapper.update(isNull(), any())).thenReturn(1);
+        when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
+        when(authService.getUserInfo()).thenReturn(operator()); // id=7
+
+        service.terminate(501L, terminateDto(terminateLine(1L, "客户不要了")));
+
+        verify(bizSalesDetailMapper).update(isNull(), any());
+    }
+
+    @Test
+    void terminate_employeeOtherOrder_forbidden() {
+        BizSales entity = pendingSales();
+        entity.setOperatorId(8L); // 他人所建
+        when(bizSalesMapper.selectById(501L)).thenReturn(entity);
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authService.getUserInfo()).thenReturn(operator()); // id=7 ≠ 8
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(501L, terminateDto(terminateLine(1L, "越权终止"))));
+        assertTrue(ex.getMessage().contains("仅可终止本人所建"), "实际: " + ex.getMessage());
+        verify(bizSalesDetailMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void terminate_shippedOrder_rejected() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(501L, terminateDto(terminateLine(1L, "太迟了"))));
+        assertTrue(ex.getMessage().contains("已确认出库"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void terminate_pendingVoidApproval_rejected() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(1L);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(501L, terminateDto(terminateLine(1L, "审批中"))));
+        assertTrue(ex.getMessage().contains("正在作废审批中"), "实际: " + ex.getMessage());
+    }
+
+    @Test
+    void terminate_alreadyTerminatedLine_rejected() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
+        when(bizSalesDetailMapper.selectList(any()))
+                .thenReturn(List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00")));
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> service.terminate(501L, terminateDto(terminateLine(1L, "重复终止"))));
+        assertTrue(ex.getMessage().contains("已终止，禁止重复终止"), "实际: " + ex.getMessage());
+    }
+
+    /** E2E T11 揪出的幽灵库存 bug 回归：作废已出库单回补只计活跃行，终止行从未出库不得回补 */
+    @Test
+    void voidDocument_shipped_skipsTerminatedLines() {
+        when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
+        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
+        when(bizSalesDetailMapper.selectList(any()))
+                .thenReturn(List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00"),
+                        detailWithTotal(2L, 30L, "轴承", 3, "120.00")));
+        when(baseGoodsMapper.update(isNull(), any())).thenReturn(1);
+        when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
+
+        service.voidDocument(501L, null);
+
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<BaseGoods>> stockCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(baseGoodsMapper, times(1)).update(isNull(), stockCaptor.capture()); // 仅活跃行回补一次
+        assertTrue(String.valueOf(stockCaptor.getValue().getSqlSet()).contains("stock + 3"),
+                "应只回补轴承 3 件");
     }
 }

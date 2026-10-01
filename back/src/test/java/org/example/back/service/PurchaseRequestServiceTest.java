@@ -83,6 +83,8 @@ class PurchaseRequestServiceTest {
     @Mock private org.example.back.mapper.BaseSupplierMapper baseSupplierMapper;
     @Mock private BizProductionOrderMapper bizProductionOrderMapper;
 
+    @Mock private SalesTerminateGuard salesTerminateGuard;
+
     @InjectMocks private PurchaseRequestService service;
 
     @Test

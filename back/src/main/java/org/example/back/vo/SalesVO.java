@@ -34,6 +34,9 @@ public class SalesVO {
 
     private String operatorName;
 
+    /** 建单人 id（需求一 Q3/Q23：前端据此判定销售员工能否终止本人所建单） */
+    private Long operatorId;
+
     private String operator;
 
     private String remark;

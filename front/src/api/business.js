@@ -76,6 +76,7 @@ export const deleteSalesAPI = (id) => request.delete(`/business/sales/${id}`)
 export const batchDeleteSalesAPI = (ids) => request.post('/business/sales/batch-delete', ids)
 export const voidSalesAPI = (id, data) => request.put(`/business/sales/${id}/void`, data)
 export const confirmSalesAPI = (id) => request.put(`/business/sales/${id}/confirm`)
+export const terminateSalesAPI = (id, data) => request.put(`/business/sales/${id}/terminate`, data)
 
 // D107：仓储确认/驳回生产端提交的成品入库申请（确认才加库存，任务单转已完成）
 export const confirmProductionInboundAPI = (id) => request.put(`/business/production/${id}/confirm-inbound`)

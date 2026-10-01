@@ -79,6 +79,8 @@
             <el-tooltip v-else-if="scope.row.bizStatus === 3" content="作废时系统生成的负数冲抵记录，用于抵消原单的库存与金额" placement="top">
               <el-tag type="info" size="small">已冲抵</el-tag>
             </el-tooltip>
+            <!-- 需求一 Q21：全部明细行终止后的派生终态 -->
+            <el-tag v-else-if="scope.row.bizStatus === 4" type="warning" size="small">已终止</el-tag>
             <el-tag v-else :type="scope.row.confirmStatus === 2 ? 'success' : 'warning'" size="small">
               {{ scope.row.confirmStatusText || (scope.row.confirmStatus === 2 ? '已确认出库' : '待仓库确认') }}
             </el-tag>
@@ -92,7 +94,7 @@
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="scope">
             <div class="action-group">
               <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
@@ -108,6 +110,21 @@
                     @click="handleConfirm(scope.row)"
                   >
                     确认出库
+                  </el-button>
+                </span>
+              </el-tooltip>
+              <!-- 需求一 Q3/Q21：行级终止（免审批立即生效）；作废审批中禁用（Q18 拦截，后端兜底） -->
+              <el-tooltip v-if="canTerminate(scope.row)" :disabled="!voidPendingIds.has(scope.row.id)" content="作废审批中，待仓储管理员处理后再终止" placement="top">
+                <span>
+                  <el-button
+                    v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }"
+                    size="small"
+                    type="warning"
+                    link
+                    :disabled="voidPendingIds.has(scope.row.id)"
+                    @click="openTerminateDialog(scope.row)"
+                  >
+                    终止
                   </el-button>
                 </span>
               </el-tooltip>
@@ -189,15 +206,33 @@
             <el-table-column v-if="showPrice" prop="totalPrice" label="金额(元)" width="110" />
             <el-table-column label="标记" width="140">
               <template #default="scope">
-                <!-- D112：零库存/无 BOM 行标注（不拦下单，提示联动生产） -->
-                <el-tag v-if="scope.row.zeroStock" type="warning" size="small">零库存</el-tag>
-                <el-tag v-if="scope.row.hasBom === false" type="danger" size="small" style="margin-left: 4px">无 BOM</el-tag>
-                <span v-if="!scope.row.zeroStock && scope.row.hasBom !== false" style="color:#c0c4cc">—</span>
+                <!-- 需求一 Q22：已终止行保留可见打标（不进汇总/统计/确认出库） -->
+                <el-tag v-if="isLineTerminated(scope.row)" type="info" size="small">已终止</el-tag>
+                <template v-else>
+                  <!-- D112：零库存/无 BOM 行标注（不拦下单，提示联动生产） -->
+                  <el-tag v-if="scope.row.zeroStock" type="warning" size="small">零库存</el-tag>
+                  <el-tag v-if="scope.row.hasBom === false" type="danger" size="small" style="margin-left: 4px">无 BOM</el-tag>
+                  <span v-if="!scope.row.zeroStock && scope.row.hasBom !== false" style="color:#c0c4cc">—</span>
+                </template>
+              </template>
+            </el-table-column>
+            <!-- 需求一 Q22：终止原因/时间/操作人留痕展示 -->
+            <el-table-column label="终止原因" min-width="150">
+              <template #default="scope">
+                <el-tooltip
+                  v-if="isLineTerminated(scope.row)"
+                  :content="`终止时间：${normalizeDateTime(scope.row.terminateTime) || '—'}；操作人：${scope.row.terminatorName || '—'}`"
+                  placement="top"
+                >
+                  <span class="terminate-reason-text">{{ scope.row.terminateReason || '—' }}</span>
+                </el-tooltip>
+                <span v-else style="color:#c0c4cc">—</span>
               </template>
             </el-table-column>
             <el-table-column v-if="isWarehouseUser" label="库存/缺货" width="170">
               <template #default="scope">
-                <el-tag v-if="scope.row.shortage" type="danger" size="small">缺货（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</el-tag>
+                <span v-if="isLineTerminated(scope.row)">已终止</span>
+                <el-tag v-else-if="scope.row.shortage" type="danger" size="small">缺货（需{{ scope.row.quantity }}/现存{{ scope.row.stock ?? 0 }}）</el-tag>
                 <span v-else>库存 {{ scope.row.stock ?? '—' }}</span>
               </template>
             </el-table-column>
@@ -336,6 +371,49 @@
       @confirm="submitVoid"
     />
 
+    <!-- 需求一 Q21/Q22：行级终止弹窗——勾选活跃行 + 逐行必填原因，免审批立即生效 -->
+    <el-dialog v-model="terminateDialogVisible" title="终止销售明细行" width="680px" append-to-body>
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="终止免审批立即生效：已勾选行不再计入汇总与统计，关联的未完结生产任务单将收到终止通知；全部行终止后整单转为「已终止」。"
+      />
+      <el-table :data="terminateTarget?.details || []" size="small" border @selection-change="onTerminateSelectionChange">
+        <el-table-column type="selection" width="46" :selectable="(row) => !isLineTerminated(row)" />
+        <el-table-column type="index" label="#" width="50" align="center" />
+        <el-table-column prop="goodsName" label="成品" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="quantity" label="数量" width="70" align="center" />
+        <el-table-column label="状态" width="90" align="center">
+          <template #default="scope">
+            <el-tag v-if="isLineTerminated(scope.row)" type="info" size="small">已终止</el-tag>
+            <span v-else>活跃</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="终止原因（必填）" min-width="220">
+          <template #default="scope">
+            <span v-if="isLineTerminated(scope.row)" class="terminate-reason-text">
+              {{ scope.row.terminateReason || '—' }}<template v-if="scope.row.terminatorName">（{{ scope.row.terminatorName }}）</template>
+            </span>
+            <el-input
+              v-else
+              v-model="terminateReasons[scope.row.id]"
+              maxlength="200"
+              placeholder="勾选后填写原因（如：客户取消）"
+              :disabled="!terminateSelectedIds.has(scope.row.id)"
+            />
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button :icon="Close" @click="terminateDialogVisible = false">取消</el-button>
+          <el-button type="danger" :icon="Check" :loading="terminateSubmitting" @click="submitTerminate">确认终止</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
     <!-- D121：销售端「+新品」快速建品小表单（ADR-0017）——四项入参，同名成品直接选用 -->
     <el-dialog
       v-model="quickProductVisible"
@@ -377,7 +455,7 @@ import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { getRole } from '@/utils/auth'
-import { getDeptCode, isSuperAdmin } from '@/utils/auth'
+import { getDeptCode, getUserId, isSuperAdmin } from '@/utils/auth'
 import SalesTimeline from '@/components/SalesTimeline.vue'
 import {
   createSalesAPI,
@@ -385,7 +463,8 @@ import {
   deleteSalesAPI,
   getGoodsOptionsAPI,
   getSalesDetailAPI,
-  getSalesPageAPI
+  getSalesPageAPI,
+  terminateSalesAPI
 } from '@/api/business'
 import { createQuickProductAPI } from '@/api/base'
 
@@ -400,6 +479,9 @@ const voidSubmitting = ref(false)
 const voidPendingIds = ref(new Set())
 const isSalesAdmin = userRole === 'admin' && userDept === 'sales'
 const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
+// 需求一 Q3/Q23：销售部门成员才可见终止入口（admin 全部单 / 员工仅本人单，后端兜底）
+const currentUserId = getUserId()
+const isSalesDeptMember = userDept === 'sales'
 const voidStockEffect = computed(() => {
   const row = voidTarget.value
   // 已确认出库的销售单，作废审批通过后须把发出去的货补回来（D110：按明细行回补，提示按汇总）
@@ -602,6 +684,17 @@ const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete
 
 const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
 
+// 需求一 Q4/Q21：终止入口——未确认出库的有效单；销售 admin 可终止本部门所有单，员工仅本人所建单
+const canTerminate = (row) =>
+  isSalesDeptMember &&
+  Number(row?.bizStatus) === 1 &&
+  Number(row?.confirmStatus) === 1 &&
+  !isBizDocumentDeleted(row) &&
+  (isSalesAdmin || Number(row?.operatorId) === currentUserId)
+
+// 需求一 Q22：明细行是否已终止（terminate_status=2）
+const isLineTerminated = (line) => Number(line?.terminateStatus) === 2
+
 const loadGoodsOptions = async () => {
   const res = await getGoodsOptionsAPI({ type: 'product' }) // D67：销售下单只选成品
   goodsOptions.value = res.data || []
@@ -762,6 +855,68 @@ const handleConfirm = (row) => {
     ElMessage.success('已确认出库')
     loadList()
   }).catch(() => {}) // 取消或业务错误已统一提示
+}
+
+// 需求一 Q21/Q22：行级终止弹窗——勾选活跃行 + 逐行必填原因，免审批立即生效
+const terminateDialogVisible = ref(false)
+const terminateTarget = ref(null)
+const terminateSelectedRows = ref([])
+const terminateReasons = reactive({})
+const terminateSubmitting = ref(false)
+const terminateSelectedIds = computed(() => new Set(terminateSelectedRows.value.map((r) => r.id)))
+const terminateActiveCount = computed(() =>
+  (terminateTarget.value?.details || []).filter((d) => !isLineTerminated(d)).length
+)
+
+const openTerminateDialog = (row) => {
+  terminateTarget.value = row
+  Object.keys(terminateReasons).forEach((k) => delete terminateReasons[k])
+  terminateSelectedRows.value = []
+  terminateDialogVisible.value = true
+}
+
+const onTerminateSelectionChange = (val) => {
+  terminateSelectedRows.value = val
+}
+
+const submitTerminate = async () => {
+  const target = terminateTarget.value
+  if (!target) return
+  if (!terminateSelectedRows.value.length) {
+    ElMessage.warning('请先勾选要终止的明细行')
+    return
+  }
+  for (const line of terminateSelectedRows.value) {
+    if (!String(terminateReasons[line.id] || '').trim()) {
+      ElMessage.warning(`请填写「${line.goodsName}」的终止原因`)
+      return
+    }
+  }
+  const allSelected = terminateSelectedRows.value.length === terminateActiveCount.value
+  const tip = allSelected
+    ? '已选中全部活跃明细行，整单将转为「已终止」并撤回待确认通知，确认继续吗？'
+    : `将立即终止选中的 ${terminateSelectedRows.value.length} 行（免审批生效，关联生产任务单将收到终止通知），确认继续吗？`
+  try {
+    await ElMessageBox.confirm(tip, '终止确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  terminateSubmitting.value = true
+  try {
+    await terminateSalesAPI(target.id, {
+      lines: terminateSelectedRows.value.map((line) => ({
+        detailId: line.id,
+        reason: String(terminateReasons[line.id]).trim()
+      }))
+    })
+    ElMessage.success(allSelected ? '销售单已全部终止' : '已终止所选明细行')
+    terminateDialogVisible.value = false
+    loadList()
+  } catch {
+    // 业务错误已由拦截器统一提示
+  } finally {
+    terminateSubmitting.value = false
+  }
 }
 
 // D94：先弹说明弹窗（后果/审批链路/留痕），确认后再提交
@@ -964,6 +1119,12 @@ onMounted(async () => {
 .stock-shortage-text {
   color: #f56c6c;
   font-weight: 600;
+  font-size: 12px;
+}
+
+/* 需求一 Q22：已终止行原因展示 */
+.terminate-reason-text {
+  color: #909399;
   font-size: 12px;
 }
 

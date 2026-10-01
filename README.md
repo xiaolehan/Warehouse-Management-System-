@@ -92,11 +92,11 @@ flowchart LR
 - 前端：Vue 3、Vite、Element Plus、Pinia、Vue Router、Axios、ECharts
 - 后端：Spring Boot 3.3.5、MyBatis-Plus 3.5.5、Sa-Token 1.37.0
 - 数据库：MySQL 8.0
-- 运行环境：JDK 17、Node.js 16+
+- 运行环境：JDK 25、Node.js 16+
 
 ## 📦 环境准备
 
-- JDK 17：后端基于 Spring Boot 3，必须有 Java 17 环境。
+- JDK 25：后端基于 Spring Boot 3，必须有 Java 25 环境。
 - Maven（MVN）：用于编译和启动后端。项目自带 Maven Wrapper（`mvnw` / `mvnw.cmd`）(即使未全局安装 Maven 也通常可以直接运行)。
 - Node.js（建议 18+）和 npm：前端基于 Vue 3 + Vite，需要用 npm 安装依赖并启动前端。
 - MySQL 8.0：项目数据存储在 MySQL，需先执行初始化 SQL 脚本。

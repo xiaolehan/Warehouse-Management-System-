@@ -72,6 +72,9 @@ public class PurchaseRequestService {
     private BizPurchaseRequestDetailMapper bizPurchaseRequestDetailMapper;
 
     @Autowired
+    private SalesTerminateGuard salesTerminateGuard;
+
+    @Autowired
     private BaseGoodsMapper baseGoodsMapper;
 
     @Autowired
@@ -134,13 +137,16 @@ public class PurchaseRequestService {
                 new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
 
         List<PurchaseRequestVO> records = page.getRecords().stream().map(this::toVO).toList();
+        fillSalesFrozen(records);
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     public PurchaseRequestVO getById(Long id) {
         requireModuleReadAccess();
         BizPurchaseRequest entity = requireEntity(id);
-        return toVO(entity);
+        PurchaseRequestVO vo = toVO(entity);
+        fillSalesFrozen(List.of(vo));
+        return vo;
     }
 
     // ============================== 缺货识别 ==============================
@@ -167,6 +173,8 @@ public class PurchaseRequestService {
     public Long createDraft(ProductionDraftCreateDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireProductionDraftAccess();
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（生产补料草稿）
+        salesTerminateGuard.ensureSalesLineActive(dto.getProductionOrderId());
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
         // 幂等（D86）：同一生产任务单已有在途补料单则拒绝；已入库/已驳回不占用名额，
@@ -305,6 +313,17 @@ public class PurchaseRequestService {
         return bizPurchaseRequestMapper.selectList(w);
     }
 
+    /**
+     * 需求二（Q17）：任务单在途补料采购申请单号列表（终止弹窗黄条提示，生产自行决定是否撤销——
+     * 撤销权=申请人本人（D130），系统不代撤）。仅 SOURCE_PRODUCTION 来源。
+     */
+    @Transactional(readOnly = true)
+    public List<String> inFlightProductionRequestNos(Long productionOrderId) {
+        return listInFlightByProductionOrder(productionOrderId).stream()
+                .map(BizPurchaseRequest::getRequestNo)
+                .toList();
+    }
+
     // ============================== 建单（D130：生产管理员） ==============================
 
     @Transactional(rollbackFor = Exception.class)
@@ -342,6 +361,93 @@ public class PurchaseRequestService {
 
     // ============================== 采购认领（转采购中，行级到货计划 D61） ==============================
 
+    /**
+     * 会话 58 采购侧半闸门：来源为生产补料（source=production）且挂了任务单的申请，
+     * 任务单关联销售已取消（行终止/作废/删除三通道同口径）→ 冻结"发起类"动作（认领/到货提交），
+     * 放行"收尾类"动作（确认入库/到货撤销/到货驳回/驳回申请单/删除）。
+     */
+    private void ensureProductionSourceActive(BizPurchaseRequest entity) {
+        if (SOURCE_PRODUCTION.equals(entity.getSourceType()) && entity.getProductionOrderId() != null) {
+            SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(
+                    bizProductionOrderMapper.selectById(entity.getProductionOrderId()));
+            if (info.isFrozen()) {
+                throw BusinessException.validateFail("该补料申请关联的生产任务单" + info.getReason()
+                        + "，销售已取消该需求，禁止认领/提交到货；在途申请（待采购/采购中）可由申请人或生产管理员一键撤销");
+            }
+        }
+    }
+
+    /** 会话 58：生产来源申请批量填充冻结标志（前端禁用认领/到货提交按钮用）。 */
+    private void fillSalesFrozen(List<PurchaseRequestVO> vos) {
+        List<Long> orderIds = vos.stream()
+                .filter(v -> SOURCE_PRODUCTION.equals(v.getSourceType())
+                        && v.getProductionOrderId() != null)
+                .map(PurchaseRequestVO::getProductionOrderId)
+                .distinct().toList();
+        if (orderIds.isEmpty()) {
+            return;
+        }
+        Map<Long, BizProductionOrder> orderMap = bizProductionOrderMapper.selectBatchIds(orderIds).stream()
+                .collect(Collectors.toMap(BizProductionOrder::getId, o -> o));
+        for (PurchaseRequestVO vo : vos) {
+            if (!SOURCE_PRODUCTION.equals(vo.getSourceType()) || vo.getProductionOrderId() == null) {
+                continue;
+            }
+            BizProductionOrder order = orderMap.get(vo.getProductionOrderId());
+            if (order == null) {
+                continue;
+            }
+            SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(order);
+            if (info.isFrozen()) {
+                vo.setSalesFrozen(true);
+                vo.setSalesFrozenReason(info.getReason());
+            }
+        }
+    }
+
+    /**
+     * 会话 58 一键撤销：终止弹窗勾选「一并撤销在途补料采购申请」或采购页直接调用。
+     * 撤销 status in (1,2) 的生产来源在途申请：撤消息 + 逻辑删单据与明细，返回被撤销单号。
+     * 权限：生产管理员或超管可撤该任务单下全部；非管理员仅能撤本人申请（不符的跳过）。
+     * 前置：任务单必须已被销售取消冻结（freezeInfo.frozen），未冻结时拒绝——防止误撤销正常需求。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public List<String> revokeByProductionOrder(Long productionOrderId) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        BizProductionOrder order = bizProductionOrderMapper.selectById(productionOrderId);
+        if (order == null) {
+            throw BusinessException.validateFail("生产任务单不存在");
+        }
+        SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(order);
+        if (!info.isFrozen()) {
+            throw BusinessException.validateFail("该任务单未处于销售取消冻结状态，无需一键撤销；请直接在采购申请列表自行撤销本人申请");
+        }
+        boolean productionAdmin = authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_PRODUCTION);
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LambdaQueryWrapper<BizPurchaseRequest> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
+                .eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
+                .in(BizPurchaseRequest::getStatus, List.of(STATUS_PENDING, STATUS_PURCHASING));
+        List<BizPurchaseRequest> requests = bizPurchaseRequestMapper.selectList(wrapper);
+        List<String> revokedNos = new ArrayList<>();
+        for (BizPurchaseRequest request : requests) {
+            boolean own = loginUser.getId() != null && loginUser.getId().equals(request.getApplicantId());
+            if (!productionAdmin && !own) {
+                continue;
+            }
+            messageService.revokeUnreadByBiz("purchase_request", request.getId());
+            bizPurchaseRequestMapper.deleteById(request.getId());
+            bizPurchaseRequestDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                    .eq(BizPurchaseRequestDetail::getRequestId, request.getId()));
+            revokedNos.add(request.getRequestNo());
+        }
+        if (!revokedNos.isEmpty()) {
+            messageService.sendPurchaseRequestRevokedToPurchaseAdmins(
+                    order.getOrderNo(), revokedNos, productionOrderId);
+        }
+        return revokedNos;
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void process(Long id, PurchaseRequestProcessDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
@@ -350,6 +456,8 @@ public class PurchaseRequestService {
         if (entity.getStatus() != STATUS_PENDING) {
             throw BusinessException.validateFail("仅待采购状态可认领");
         }
+        // 会话 58 半闸门：任务单关联销售已取消（任一通道）时禁止认领（发起类动作）
+        ensureProductionSourceActive(entity);
 
         List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
         if (details.isEmpty()) {
@@ -423,6 +531,8 @@ public class PurchaseRequestService {
         if (entity.getStatus() != STATUS_PURCHASING) {
             throw BusinessException.validateFail("仅采购中状态可提交到货");
         }
+        // 会话 58 半闸门：任务单关联销售已取消（任一通道）时禁止提交到货（发起类动作）
+        ensureProductionSourceActive(entity);
 
         List<BizPurchaseRequestDetail> details = listDetails(entity.getId());
         if (details.isEmpty()) {

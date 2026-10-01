@@ -30,6 +30,9 @@ public class BizPickListDetail {
     /** 备注快照（建单时自物料主数据描述带入，D63） */
     private String remark;
 
+    /** 差异备注（需求二 Q16/Q7：RETURN 行退料量<已领未退时的损耗/丢失等原因，仓储确认时可见；其余行为空） */
+    private String diffReason;
+
     private Integer quantity;
 
     private Integer sortNo;

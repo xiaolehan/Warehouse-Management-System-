@@ -8,9 +8,11 @@
       <div v-for="line in lines" :key="line.salesDetailId" class="timeline-line">
         <div class="line-header">
           <span class="line-goods">{{ line.goodsName }} × {{ line.quantity }}</span>
-          <span v-if="line.stock != null" class="line-stock" :class="{ 'line-stock-short': line.quantity > line.stock }">
+          <span v-if="line.stock != null && !lineTerminated(line)" class="line-stock" :class="{ 'line-stock-short': line.quantity > line.stock }">
             现存 {{ line.stock }}
           </span>
+          <!-- 需求一 Q22：行已终止（时间线只有 下单+行终止 两节点） -->
+          <el-tag v-if="lineTerminated(line)" type="info" size="small">已终止</el-tag>
           <!-- D71：预计可交付为系统最佳估计，非对客承诺；手工修正(生产确认)优先 -->
           <el-tag :type="estimateTagType(line)" size="small">{{ line.estimatedDeliveryText || '—' }}</el-tag>
         </div>
@@ -47,6 +49,9 @@ const estimateTagType = (line) => {
   if (source === 'system') return 'warning'   // 系统推算
   return 'info'
 }
+
+// 需求一 Q22：行已终止（后端该行只有 下单+行终止 两节点，交付文本=「已终止」）
+const lineTerminated = (line) => (line?.nodes || []).some((n) => n?.key === 'terminated')
 
 const load = async () => {
   if (!props.salesId) {

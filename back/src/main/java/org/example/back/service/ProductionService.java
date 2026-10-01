@@ -64,6 +64,9 @@ public class ProductionService {
     @Autowired
     private MessageService messageService;
 
+    @Autowired
+    private SalesTerminateGuard salesTerminateGuard;
+
     private void requireProductionReadAccess() {
         // 阶段13：生产部门成员可查看生产入库记录（含生产订单完工入库）；仓储管理员仍全权
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -169,6 +172,8 @@ public class ProductionService {
                 || order.getStatus() != BizProductionOrder.STATUS_AWAIT_QC) {
             throw BusinessException.validateFail("生产任务单当前不是待入库状态（可能已终止/返工/报废），不能确认入库，请驳回该申请");
         }
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（成品入库确认）
+        salesTerminateGuard.ensureSalesLineActive(order);
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         LocalDateTime confirmedAt = LocalDateTime.now();
         LambdaUpdateWrapper<BizProduction> wrapper = new LambdaUpdateWrapper<>();
@@ -441,6 +446,17 @@ public class ProductionService {
             if (vo.getProductionOrderId() != null) {
                 BizProductionOrder order = orderMap.get(vo.getProductionOrderId());
                 vo.setProductionOrderNo(order == null ? null : order.getOrderNo());
+                // 会话 58：来源任务单被销售取消冻结时给仓储显性提示（确认入库按钮前端禁用，后端守卫兜底）
+                if (order != null && order.getStatus() != null
+                        && (order.getStatus() == BizProductionOrder.STATUS_PENDING
+                        || order.getStatus() == BizProductionOrder.STATUS_IN_PROGRESS
+                        || order.getStatus() == BizProductionOrder.STATUS_AWAIT_QC)) {
+                    SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(order);
+                    if (info.isFrozen()) {
+                        vo.setSalesFrozen(true);
+                        vo.setSalesFrozenReason(info.getReason());
+                    }
+                }
             }
         }
     }

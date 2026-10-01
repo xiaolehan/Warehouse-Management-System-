@@ -9,6 +9,7 @@ import org.example.back.common.util.CodeGenerator;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.DocumentVoidDTO;
 import org.example.back.dto.SalesQueryDTO;
+import org.example.back.dto.SalesTerminateDTO;
 import org.example.back.dto.SalesSaveDTO;
 import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizApprovalOrder;
@@ -217,6 +218,10 @@ public class SalesService {
         line.setShortage(stock < d.getQuantity());
         line.setZeroStock(stock == 0);
         line.setHasBom(hasBom);
+        line.setTerminateStatus(d.getTerminateStatus());
+        line.setTerminateReason(d.getTerminateReason());
+        line.setTerminateTime(d.getTerminateTime());
+        line.setTerminatorName(d.getTerminatorName());
         return line;
     }
 
@@ -275,6 +280,7 @@ public class SalesService {
         LambdaQueryWrapper<BizSalesDetail> lineWrapper = new LambdaQueryWrapper<>();
         lineWrapper.in(BizSalesDetail::getSalesId, salesIds)
                 .eq(goodsId != null, BizSalesDetail::getGoodsId, goodsId)
+                .ne(BizSalesDetail::getTerminateStatus, BizSalesDetail.TERMINATE_TERMINATED) // 需求一：已终止行不可退货
                 .orderByAsc(BizSalesDetail::getSortNo)
                 .orderByAsc(BizSalesDetail::getId);
         List<BizSalesDetail> lines = bizSalesDetailMapper.selectList(lineWrapper);
@@ -340,7 +346,7 @@ public class SalesService {
         wrapper.eq(BizSales::getBizStatus, 1)
                 .eq(BizSales::getConfirmStatus, CONFIRM_PENDING)
                 .apply("EXISTS (SELECT 1 FROM biz_sales_detail d WHERE d.sales_id = biz_sales.id AND d.is_deleted = 0"
-                        + " AND d.goods_id = {0})", goodsId)
+                        + " AND d.goods_id = {0} AND d.terminate_status != 2)", goodsId)
                 .orderByDesc(BizSales::getOperationTime)
                 .orderByDesc(BizSales::getId)
                 .last("LIMIT 50");
@@ -352,6 +358,7 @@ public class SalesService {
         Map<Long, BizSalesDetail> lineBySales = bizSalesDetailMapper.selectList(new LambdaQueryWrapper<BizSalesDetail>()
                         .in(BizSalesDetail::getSalesId, salesIds)
                         .eq(BizSalesDetail::getGoodsId, goodsId)
+                        .ne(BizSalesDetail::getTerminateStatus, BizSalesDetail.TERMINATE_TERMINATED) // 需求一：已终止行不可再锚定生产
                         .orderByAsc(BizSalesDetail::getSortNo)
                         .orderByAsc(BizSalesDetail::getId)).stream()
                 .collect(Collectors.toMap(BizSalesDetail::getSalesId, d -> d, (a, b) -> a));
@@ -530,6 +537,9 @@ public class SalesService {
 
         List<BizSalesDetail> details = requireDetails(entity.getId());
         for (BizSalesDetail detail : details) {
+            if (isLineTerminated(detail)) {
+                continue; // 需求一 Q22：已终止行不发货不扣库存，整单确认只发活跃行
+            }
             decreaseStock(detail.getGoodsId(), detail.getQuantity(),
                     "库存不足，确认出库失败（" + detail.getGoodsName() + " 需 " + detail.getQuantity() + "）");
         }
@@ -554,6 +564,138 @@ public class SalesService {
         // D127：出库完成后提醒销售部门管理员（先撤后发——新提醒与被撤消息同 biz 绑定，顺序颠倒会被本次撤销误撤）
         messageService.sendSalesShippedToSalesAdmins(entity.getSalesNo(), entity.getCustomerName(),
                 loginUser.getRealName(), id);
+    }
+
+    /**
+     * 需求一（行级终止，ADR-0019）：销售单明细行终止——客户取消后的正常业务闭环（第三条取消通道），免审批立即生效。
+     * 权限（Q3/Q23）：销售管理员可终止本部门所有单，销售员工仅可终止本人所建单。
+     * 仅限未确认出库的有效单（Q4）；存在待审作废申请时拦截（Q18）。逐行条件更新 1→2 留痕（原因必填/时间/操作人，Q22），
+     * 每行通知锚定的未完结生产任务单（Q1a/Q20a 冻结+人工闭环），表头汇总重算只计活跃行（Q22-1），
+     * 全部行终止 → 头单派生 biz_status=4 已终止并撤未读待确认消息。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void terminate(Long id, SalesTerminateDTO dto) {
+        authzService.requireNotSuperAdminForBusinessWrite();
+        requireSalesModuleAccess();
+        BizSales entity = requireEntity(id);
+        ensureCanTerminateSales(entity);
+        ensureNormalStatus(entity.getBizStatus(), "销售单");
+        ensureNoPendingVoidApproval(id, "销售单");
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("销售单已确认出库，不可终止；客户取消已发货部分请走销售退货");
+        }
+        if (dto == null || dto.getLines() == null || dto.getLines().isEmpty()) {
+            throw BusinessException.validateFail("请选择要终止的明细行");
+        }
+
+        // 先全量校验再落库（行归属 + 未终止），避免半张单
+        List<BizSalesDetail> details = requireDetails(id);
+        Map<Long, BizSalesDetail> detailMap = details.stream()
+                .collect(Collectors.toMap(BizSalesDetail::getId, d -> d));
+        for (SalesTerminateDTO.TerminateLine line : dto.getLines()) {
+            BizSalesDetail detail = detailMap.get(line.getDetailId());
+            if (detail == null) {
+                throw BusinessException.validateFail("明细行不存在或不属于该销售单");
+            }
+            if (isLineTerminated(detail)) {
+                throw BusinessException.validateFail("明细行「" + detail.getGoodsName() + "」已终止，禁止重复终止");
+            }
+        }
+
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        LocalDateTime now = LocalDateTime.now();
+        for (SalesTerminateDTO.TerminateLine line : dto.getLines()) {
+            LambdaUpdateWrapper<BizSalesDetail> uw = new LambdaUpdateWrapper<>();
+            uw.eq(BizSalesDetail::getId, line.getDetailId())
+                    .eq(BizSalesDetail::getTerminateStatus, BizSalesDetail.TERMINATE_NORMAL)
+                    .set(BizSalesDetail::getTerminateStatus, BizSalesDetail.TERMINATE_TERMINATED)
+                    .set(BizSalesDetail::getTerminateReason, line.getReason().trim())
+                    .set(BizSalesDetail::getTerminateTime, now)
+                    .set(BizSalesDetail::getTerminatorId, loginUser.getId())
+                    .set(BizSalesDetail::getTerminatorName, loginUser.getRealName());
+            if (bizSalesDetailMapper.update(null, uw) != 1) {
+                throw BusinessException.validateFail("明细行已被处理，禁止重复终止");
+            }
+        }
+
+        // Q1a/Q20a：逐行通知锚定的未完结生产任务单（通知+冻结，生产侧人工终止闭环，不越权自动终止）
+        for (SalesTerminateDTO.TerminateLine line : dto.getLines()) {
+            BizSalesDetail detail = detailMap.get(line.getDetailId());
+            notifyLineTerminatedToProduction(entity, detail, line.getReason().trim());
+        }
+
+        // Q22-1：表头汇总重算只计活跃行（已终止行保留可见，不进汇总/统计/确认出库）
+        List<BizSalesDetail> freshDetails = requireDetails(id);
+        int activeQuantity = 0;
+        BigDecimal activeAmount = BigDecimal.ZERO;
+        for (BizSalesDetail d : freshDetails) {
+            if (isLineTerminated(d)) {
+                continue;
+            }
+            activeQuantity += d.getQuantity();
+            activeAmount = activeAmount.add(d.getTotalPrice());
+        }
+        LambdaUpdateWrapper<BizSales> headWrapper = new LambdaUpdateWrapper<>();
+        headWrapper.eq(BizSales::getId, entity.getId())
+                .set(BizSales::getTotalQuantity, activeQuantity)
+                .set(BizSales::getTotalAmount, activeAmount);
+        bizSalesMapper.update(null, headWrapper);
+
+        // F6/code-review：价格偏离审批基于终止前金额发起；部分终止减量后整单金额已变，
+        // 审批继续走会按过时金额放行——部分/全部终止都撤销（幂等：仅 status 1→3 条件更新，无待撤时 0 行）
+        revokePriceDeviationApprovals(id);
+
+        // Q21：全部行终止 → 头单派生 biz_status=4 已终止（撤未读待确认消息）
+        boolean allTerminated = freshDetails.stream().allMatch(this::isLineTerminated);
+        if (allTerminated) {
+            LambdaUpdateWrapper<BizSales> statusWrapper = new LambdaUpdateWrapper<>();
+            statusWrapper.eq(BizSales::getId, entity.getId())
+                    .eq(BizSales::getBizStatus, BizSales.BIZ_STATUS_NORMAL)
+                    .set(BizSales::getBizStatus, BizSales.BIZ_STATUS_TERMINATED);
+            if (bizSalesMapper.update(null, statusWrapper) != 1) {
+                throw BusinessException.validateFail("销售单已被处理，禁止终止");
+            }
+            messageService.revokeUnreadByBiz("sales", id);
+        }
+    }
+
+    /** 终止权限（Q3/Q23）：销售管理员可终止本部门所有单；销售员工仅可终止本人所建单。 */
+    private void ensureCanTerminateSales(BizSales entity) {
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+            return;
+        }
+        if (authzService.isDeptMember(AuthzService.DEPT_SALES)
+                && loginUser.getId() != null && loginUser.getId().equals(entity.getOperatorId())) {
+            return;
+        }
+        throw BusinessException.forbidden("仅可终止本人所建的销售单（部门内其他单据需销售管理员操作）");
+    }
+
+    /** 需求一：明细行是否已终止（terminate_status=2） */
+    private boolean isLineTerminated(BizSalesDetail detail) {
+        return detail.getTerminateStatus() != null
+                && detail.getTerminateStatus() == BizSalesDetail.TERMINATE_TERMINATED;
+    }
+
+    /**
+     * 需求一：行终止后通知锚定的未完结生产任务单（salesDetailId 直连或 (头单,成品) 解析，ADR-0013）。
+     */
+    private void notifyLineTerminatedToProduction(BizSales entity, BizSalesDetail detail, String reason) {
+        LambdaQueryWrapper<BizProductionOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductionOrder::getSalesOrderId, entity.getId())
+                .in(BizProductionOrder::getStatus, BizProductionOrder.UNFINISHED_STATUSES);
+        List<BizProductionOrder> orders = bizProductionOrderMapper.selectList(wrapper);
+        for (BizProductionOrder order : orders) {
+            boolean anchored = (order.getSalesDetailId() != null && order.getSalesDetailId().equals(detail.getId()))
+                    || (order.getSalesDetailId() == null && order.getGoodsId() != null
+                        && order.getGoodsId().equals(detail.getGoodsId()));
+            if (anchored) {
+                messageService.sendSalesLineTerminatedToProductionAdmins(entity.getSalesNo(),
+                        detail.getGoodsName() + "×" + detail.getQuantity(), reason,
+                        order.getOrderNo(), order.getId());
+            }
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -588,8 +730,12 @@ public class SalesService {
         validateDeleteWindow(entity.getOperationTime(), "销售单");
         ensureCanDeleteSales(entity);
         // 仅已确认出库（已扣库存）的销售单删除时需按行回补库存；待确认单据尚未扣库存，直接删除
+        // （需求一：已终止行从未出库——confirm 只扣活跃行，回补排除之防幽灵库存）
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
             for (BizSalesDetail detail : requireDetails(entity.getId())) {
+                if (isLineTerminated(detail)) {
+                    continue;
+                }
                 increaseStock(detail.getGoodsId(), detail.getQuantity());
             }
         }
@@ -687,8 +833,12 @@ public class SalesService {
 
         // 仅已确认出库（已扣库存）的销售单作废时需按行回补库存；待确认单据尚未扣库存，不回补
         // D110 决策⑨：红冲死代码不再随头行改造移植（D99 已封死入口），直接移除
+        // （需求一：已终止行从未出库——confirm 只扣活跃行，回补排除之防幽灵库存）
         if (entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_SHIPPED) {
             for (BizSalesDetail detail : requireDetails(entity.getId())) {
+                if (isLineTerminated(detail)) {
+                    continue;
+                }
                 increaseStock(detail.getGoodsId(), detail.getQuantity());
             }
         }
@@ -747,6 +897,9 @@ public class SalesService {
         }
         if (bizStatus == 2) {
             throw BusinessException.validateFail(docName + "已作废，禁止重复操作");
+        }
+        if (bizStatus == 4) {
+            throw BusinessException.validateFail(docName + "已终止，禁止重复操作");
         }
         throw BusinessException.validateFail(docName + "为冲抵记录，禁止删除或再次作废");
     }

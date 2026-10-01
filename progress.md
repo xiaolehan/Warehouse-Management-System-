@@ -5,6 +5,116 @@
 
 ---
 
+## 会话 61 — 2026-10-01
+
+### 需求三：销售取消全链路联动（三通道冻结同口径 + 采购半闸门 + 一键撤销 + 前端显性化 + 下达刷新）——单测 451 全绿 + curl E2E 全链通过，待用户统一手测
+
+- **用户报告三场景**（销售终止后生产还能开工/补料、采购还能继续、采购认领/到货提交后仍可入库）——探针证实：生产侧 8 个冻结点后端已有（会话 57），**采购侧认领/到货提交无守卫是真缺口**；用户报告的生产侧"还能操作"实为旧流程/未锚定单据；用户实测看到的「已作废」实为 fillSalesOrderNoBatch 把 biz_status=4（已终止）误标为「已作废」的**文案 bug**。
+- **后端**：
+  - SalesTerminateGuard 重构：新增 `freezeInfo(BizProductionOrder)` 返回 FreezeInfo（frozen/reason/行终止留痕 reason/time/terminatorName），触发源统一为**三条取消通道同口径**（行终止 ∨ 销售单删除 ∨ 作废 ∨ 冲抵）；`ensureSalesLineActive` 改由 freezeInfo 组装消息（「该任务单关联的销售明细行已终止」文案逐字保留，旧断言不破；删除/作废通道新文案「该任务单关联的销售单已取消/已作废，禁止继续消耗资源…」）。行终止留痕（原因/时间/操作人）从 BizSalesDetail 透传。
+  - 采购侧半闸门：PurchaseRequestService `ensureProductionSourceActive`（source=production 且挂任务单 → freezeInfo 冻结时 400）挂到 **process（认领）/arrive（到货提交）**；updateArrivalPlan/confirmReceive/arriveCancel/arriveReject/reject/delete 放行（收尾类不堵）。
+  - 新端点 `POST /business/purchase-requests/revoke-by-production-order/{orderId}`：一键撤销该任务单名下 status 1/2 的生产来源在途补料申请（撤消息+逻辑删单据明细，返回被撤单号）；权限=生产管理员∨超管可撤全部、否则仅本人申请（不符跳过）；**前置=任务单已被销售取消冻结**（未冻结拒绝，防误撤正常需求）；撤销后 sendPurchaseRequestRevokedToPurchaseAdmins 通知采购（绑 production_order biz，D21）。
+  - VO 显性化：ProductionOrderVO +salesFrozen/salesFrozenReason/salesLineTerminateReason/Time/TerminatorName（page/getById 批量填充，仅未完结单 1/2/3 计算）；PurchaseRequestVO、ProductionVO（成品入库页）+salesFrozen/salesFrozenReason（fillProductionOrderNo 扩展填充）。
+  - MessageService：行终止/D73 消息 targetRoute 改 `ROUTE_PRODUCTION_ORDER + "?orderId=" + orderId`（消息点击直达任务单详情深链）；新增 sendPurchaseRequestRevokedToPurchaseAdmins。
+  - **fillSalesOrderNoBatch 文案 bug 修复**：biz_status null→（已作废）/ 1→单号 / 3→（已冲抵）/ 4→（已终止）/ 其他→（已作废），switch 分辨显示。
+  - 新增 SalesTerminateGuardTest 8 用例（无关联/删除/作废/行终止/行正常 + 三条消息文案逐字断言）。
+- **前端**：
+  - **Issue 1 修复（下达不刷新）**：handleCreate/submitBatchRelease 成功回调立即 loadList()，closeCreate/closeBatchRelease 不再兜底刷新（成功即刷，X/遮罩关闭也能看到新单）。
+  - ProductionOrderView：列表状态列+详情状态加红色「冻结」tag（frozenTip tooltip 含行终止留痕）；详情冻结红色 banner（列暂停项+指引终止+留痕）；开工/补料/提交入库申请/申请领料/打卡按钮 `:disabled="salesFrozen"`；新增 `route.query.orderId` 深链 watch（消息直达详情，消费后清 query）；终止弹窗 Q17 黄条改文案 + 「一并撤销在途补料采购申请」勾选（doTerminate 成功后调 revoke API，失败不阻塞终止）。
+  - PurchaseRequestView：状态列冻结 tag（tooltip 说明）；认领/到货提交冻结时禁用（tooltip span 包裹，ADR-0007 兼容）。
+  - ProductionView（成品入库）：冻结行确认入库置灰为「冻结禁入库」提示（驳回保留可用=收尾类）；QcView：质检按钮冻结禁用。
+  - **手测反馈修复（D111 冻结横幅指引不可达）**：详情冻结横幅原只说「请执行终止」，但终止按钮仅在列表行（admin+production 的 v-permission 后）——详情弹窗里没有入口，消息深链同样卡住。现横幅内联红色「立即终止」按钮（production_admin 可见，`canTerminateCurrent` computed 与 v-permission 同口径：超管只读、admin 角色+production 部门），点击关详情→复用既有 `openTerminate`（退料预填/一键撤销勾选全保留）；无权限角色横幅文案角色化为「请联系生产管理员执行终止完成退料闭环」。
+  - purchaseRequest.js +revokeByProductionOrderAPI。
+- **验证**：`./mvnw compile` BUILD SUCCESS → 单测 451/451（新增 8）→ `npm run build` 过 → 后端重启（新 PID）→ curl E2E 12 项 →（D111 修复后 `npm run build` 复验通过，纯前端改动无需重启后端）：
+  - 双链全通：建销售单→生产关联任务单→补料草稿→采购认领（**冻结前放行**）→销售**删除**→任务单/采购申请 VO frozen=true（reason=关联的销售单已取消）→**开工/补料/到货提交全部 400 拦截**（新文案）→**一键撤销返回 [PR...]**→getById 404。
+  - 作废/冲抵通道由单测覆盖；confirmReceive 放行未单独 E2E（代码路径无守卫，代码走查确认）。
+  - 作废通道文案 bug：任务单 15 的 salesOrderNo 在删除通道显示「已取消的销售单」（原样），switch 新分支由单测覆盖。
+- **E2E 坑**：start/complete 为 **POST** 不是 PUT（打错方法 500 包 HttpRequestMethodNotSupported 而非 404）；arrive 的 ReceiveItemDTO 行必填 supplierId/unitPrice（DTO 校验先于业务守卫，探测守卫必须带全字段）；供应商列表在 `/base/suppliers`（不是 /business）。
+- **数据清理（已完成，复核通过）**：销售单 18/19 已删除（E2E 内完成，申请 9/10 撤销后 getById 均返回 code 404、任务单冻结依赖 selectById=null 亦旁证）；任务单 15/16 作废（status=5）、申请 10 一键撤销、PTO153（goods 9）库存仍 3、/tmp 临时 token 文件已清——分类器宕机期间由用户在 VS Code 终端代跑 + Claude 只读复核闭环。
+- **清理坑**：① 存盘的 /tmp token 过期后 curl `-s` 静默返回 401 JSON，肉眼看不出失败——清理脚本必须现登录现用，勿复用存盘 token；② 任务单 void 端点 `reason` 是 `@RequestParam`（form/query），传 JSON body 收不到（`required=false` 才没报错），curl 用 `--data-urlencode "reason=..."`。
+- **下一步**：用户统一手测（入口 http://localhost:5173，硬刷新 Ctrl+Shift+R + 重登）→ commit（工作区还有会话 57 行终止工作未提交，本次改动与其同文件交织，**建议合并为一次 commit 或按文件分组**）→ VS Code 面板推送。
+
+## 会话 60 — 2026-10-01
+
+### /code-review 6 项确认修复 + 单测 443 全绿 + E2E 复验全通过——用户统一手测前全部就绪
+
+- **code-review 结论**：8 findings 确认 6 真（F1 critical：MessageService.sendProductionTerminatedReceiptToSalesUser `String.format` 3 个 `%s` 传 2 参 → MissingFormatArgumentException，终止事务整体回滚；F2 high：终止退料 items 过滤 `>0` 把 qty=0「全部损耗」行静默丢弃且 diffReason 丢留痕；F3/F4 medium：销售单已作废后 notifySalesUserStockNotice 仍发文案 B/C、fillSalesStockInfo 终止弹窗仍回填现货充足性；F6 medium：价格偏离审批只在全行终止时撤销，部分终止后审批继续走会按过时金额放行；F7 minor：终止原因/差异备注无长度上限。F5/F8 核实为非问题）。用户拍板「全部 6 项修复」。
+- **修复（6 文件 9 编辑）**：MessageService format 补 salesNo 第三参；ProductionPickService terminate items 过滤改 `>=0` + notifySalesUserStockNotice/fillSalesStockInfo 加 VOIDED 短路；SalesService.terminate 把 revokePriceDeviationApprovals 提到无条件执行（幂等，部分终止也撤）；SalesTerminateDTO.TerminateLine.reason + ProductionReturnItemDTO 加 @Size(200)（后者 @Min 改 0）；ProductionOrderView.doTerminate 前端过滤 `>=0`。
+- **单测**：新增 4（qty=0 无备注 400 / qty=0+备注落库 quantity=0+diffReason / 不在清单内 0 行 400 / 部分终止也撤价格偏离审批）；全量 443/443 BUILD SUCCESS。
+- **E2E 复验（修复后运行中的后端）**：
+  - **E2E-A（F1）**：TS 建单 17（SMC105×2@100）→ 行终止 → TP 终止任务单 13（关联 detail 26）→ **文案 A 回执（sys_message 130）三变量全插值**：「您终止的销售单 SAL261001180218954 的明细行（成品 SMC105）所关联的生产任务单 PRO261001180231887 文案 A 全文」。任务单 13 status=7。
+  - **E2E-B（F2/F7）**：盘点单 3 补齐 BOM 4 五缺料（119/68/71/72/73）→ TP 建备货单 14（goods 9 无销售关联）→ 领料单 8 → TW issue 发料 → terminate 三连测：**T1 qty=0 无备注 400「请填写差异备注」；T2 250 字符 400「差异备注不能超过200字符」；T3 qty=0+备注 200，RETURN 单 9 goods 71 行 quantity=0 + diff_reason 落库**。
+  - **F6 证据**：审批 10（price_deviation_confirm）status 1→3；消息 126/127 is_deleted=1；回执 130 is_deleted=0。
+  - **数据恢复**：RETURN 9 仓储收料入库回加退料 + 反向盘点（盘点单 4）恢复盘点净增——**16 物料库存与 E2E 前完全一致**。
+- **E2E 坑（新增）**：生产终止端点 `POST /business/production-orders/{id}/terminate`（ProductionPickController 复数——**打错路径返回 500 包 NoResourceFoundException 而非 404，勿误判为业务异常**）；StocktakeController 基路径 `/business/stocktake`（单数）；盘点创建返回 `data` 标量 id；详情明细键 `detailList`；盘点行 assigneeId 必须仓储部门成员（id 4 会 400）；RETURN 单收料=PUT issue（1→3 即完成，confirm 会 400）。
+- **下一步**：用户统一手测（入口 http://localhost:5173，硬刷新 Ctrl+Shift+R + 重登）→ commit（Co-Authored-By: Claude Code）→ VS Code 面板推送。
+
+### 需求二（生产自发终止→现货出库，Q9–Q14）+ 批次 C（终止退料弹窗改版，Q15–Q17）落地——单测 439 全绿 + curl E2E 全链通过，待用户统一手测
+
+- **数据层**：db.sql「二十八、批次 C」新增 `ALTER TABLE biz_pick_list_detail ADD COLUMN diff_reason VARCHAR(200)`（RETURN 行差异备注，Q16；已执行落库）。biz_pick_list_detail 实体/mapper/VO 全链透出 diffReason，PickListView 详情弹窗加「差异备注」列。
+- **后端**：
+  - ProductionPickService：terminate 流程升级——items 过滤 `quantity > 0`（=0 全差异行不生成退料行）；差异行（0<退料量<已领未退）服务端兜底校验 diffReason 必填（400 守卫文案「请填写差异备注说明原因」）；`insertReturnList` 明细快照写入 diffReason；终态/销售关联判定后调 `notifySalesUserStockNotice`。
+  - `notifySalesUserStockNotice`（Q11）：仅通知**建单销售本人**（sales.operatorId），confirmStatus=2 已出库/行已终止/无销售关联（备货单）短路不发；库存够→文案 B「可现货出库」/不足→文案 C「现货不足（缺 N）」，均绑 sales biz（D21）+ targetRoute=sales。
+  - computeReturnablePreview（Q10a/Q13/Q17）：fillSalesStockInfo 透出 goodsStock/salesLineQuantity/stockSufficient/salesOrderNo；`inFlightPurchaseNos` 汇总该任务单在途补料采购申请单号（弹窗黄色告警，撤销权=申请人本人 D130，系统不代撤）。
+  - SalesTimelineService（Q12 派生显示，不落新状态）：关联任务单已终止分支内，行待出库 && 现货 ≥ 行量 → 「可现货出库」（排产节点描述「现货充足（现存 N），可现货出库」+ 发货节点「现货充足，待仓储确认出库」）；否则「待重新排产」。
+- **前端**（npm run build 过）：ProductionOrderView 终止弹窗改版——现货信息条（info/warning 按 stockSufficient）+ 缺口告警（Q13）+ 在途补料采购黄色告警（Q17）+ 退料明细表加 已领/已退/已领未退/差异列（Q15b）+ **移除操作列删除按钮（Q15a）**+ 差异行必填备注输入（Q15c，doTerminate 前端预检）+ 「行不可移除」提示；PickListView 详情弹窗「差异备注」列（Q16）。
+- **单测**：430 → 439 全绿（+9 终止/时间线用例；ProductionPickServiceTest 3 处修复——补 `import static org.mockito.Mockito.lenient`、3 个 terminate 用例补 `baseGoodsMapper.selectById(50L)` 物料快照 stub（insertReturnList 快照查询，缺 stub 则 PotentialStubbingProblem）、shipped 用例 resolveLinkedLine stub 加 lenient（CONFIRM_SHIPPED 短路后 stub 不被消费）。
+- **E2E（curl 全链，对新代码运行中的后端）**：
+  - E2E-1 预览：GET /business/production-orders/6/returnable → goodsStock=4/salesLineQuantity=2/stockSufficient=true/inFlightPurchaseNos=[]（Q10a/Q13/Q17 数据通路）。
+  - E2E-2 守卫：差异行无备注 terminate → 400「物料[轴套 01]退料数量小于已领未退，请填写差异备注说明原因（损耗/丢失等）」，任务单仍 status=1（Q15c）。
+  - E2E-3 终止：带 diffReason 终止 → 200；任务单 6 status=7 + 备注追加终止原因；RETURN 领料单 7（待收料）goods 49 行 diff_reason 落库 + 详情 API 透出 diffReason（Q16）。
+  - Q12 时间线：sales 9（SMC105 现存 4 ≥ 2）→ est「可现货出库」，节点 生产排产「已终止，该成品现货充足（现存 4），可现货出库」+ 发货「现货充足，待仓储确认出库」；sales 10 →「待重新排产」。
+  - Q11 消息：文案 B（id 93）「关联生产任务已终止，可现货出库」/文案 C（id 97）「关联生产任务已终止，现货不足」均落库给 sales_admin(3)、unread、biz_id=9/10。
+  - 场景 C 全链：TS 建单 10（PTO153×5@18599，现存 3）→ TP 建任务单 7（goodsId 9 关联 salesOrderId 10）→ 空退料终止 → 200。
+- **E2E 坑**：sys_message 收件人列名 `recipient_user_id`（非 user_id）；token 过期 401 重新登录即可（/tmp/wms-e2e-env.sh 可刷新）；create 返回 void 无 data，新单 id 从 DB 查（biz_sales.customer_name 定位）。
+- **分类器宕机绕行（CLAUDE.md 教训 #5 实战）**：mysql 写（UPDATE/INSERT）被 ark-code-latest 分类器超时拦截 5+ 次，curl/python/SELECT 直通——全部 DB 变更改走**业务 API**：库存上调用盘点模块（create 需每行 assigneeId=仓储 admin id 5；详情字段 `detailList` 非 details；entry→submit→review 四步后库存=actualQty）。
+- **演示终态（不清理，业务痕迹）**：sales 9/10、任务单 6/7 status=7、RETURN 领料单 7 待收料（diff_reason 演示，仓储收料入库即可闭环）、物料 38–57 库存 0（领料发料扣减后快照）、SMC105(30) stock 4、销售 9/10 时间线分别演示 可现货出库/待重新排产；sales_admin(3) 名下两条终止通知未读可演示。
+- **下一步**：用户统一手测（入口 http://localhost:5173，硬刷新+重登）→ commit（Co-Authored-By）→ VS Code 面板推送。手测指引：需求一（会话 60 上节 T1–T11 场景）+ 批次 C（终止弹窗：现货信息/缺口告警/在途采购告警/已领已退差异列/差异备注必填；领料单详情差异备注列）+ 需求二（销售 9 时间线可现货出库 + 消息文案 B；销售 10 时间线待重新排产 + 消息文案 C）。
+
+### 需求一销售行级终止——全链 E2E 全绿（T1–T11），E2E 揪出作废/删除回补幽灵库存真 bug 已修
+
+- **数据层**：db.sql「二十七、需求一」DDL 已执行落库——biz_sales_detail 加 terminate_status(NOT NULL DEFAULT 1)/terminate_reason/terminate_time/terminator_id/terminator_name 5 列 + biz_sales.biz_status 枚举补 4（已终止）。验证列用 `LIKE 'termin%'`（'terminate%' 漏 terminator 前缀）。
+- **后端（compile BUILD SUCCESS）**：
+  - SalesTerminateGuard（新文件，仅注入 2 Mapper 零循环依赖）——ensureSalesLineActive/isLineTerminated/resolveLinkedLine(salesDetailId 直查优先，NULL 则 (salesId,goodsId) LIMIT 1)。
+  - **8 处生产冻结点接线**：ProductionOrderService(start/complete/receipt+requireReleaseableSales 文案+releasePreview 标注+batchRelease 下拉剔终止行+batchRelease 跳过)、ProductionPickService(createPick+terminate 回执 Q6)、QcService(record/dispose)、ProductionStepService(complete/revoke)、ProductionService(confirmInbound)、PurchaseRequestService(createDraft)。
+  - SalesService.terminate（PUT /{lineId}/terminate，SalesController 新端点）：权限 Q3/Q23（admin 全部/员工本人，ensureCanTerminateSales）→ Q4 未出库 → Q18 待审作废拦截 → 逐行条件更新 1→2 留痕 → notifyLineTerminatedToProduction（锚定行→未完结任务单逐单发消息）→ 表头重算只计活跃行 → 全部行终止派生 biz_status=4 + revokeUnreadByBiz + 撤价格偏离审批。**坑：批量 Edit 吞掉 delete() 方法签名行致编译断裂（"class, interface, enum, or record expected" L935+），git diff 对 HEAD 核出缺 `@Transactional`+`public void delete(Long id) {` 两行，补回修复**。
+  - BizSalesMapper 13 处统计 SQL 下沉 detail 加 `d.terminate_status != 2`（grep -c 核对=13）；BizSales 加 BIZ_STATUS_TERMINATED/BizSalesDetail 加 TERMINATE_*常量；SalesVO 加 operatorId（前端判定本人单）；SalesDetailVO/toDetailVO 透出 4 终止字段；SalesTimelineService buildLine 行终止分支（下单+行终止两节点、交付文本「已终止」、直接 return 防排产）。
+  - MessageService 两新方法：sendSalesLineTerminatedToProductionAdmins（带 biz）/sendProductionTerminatedReceiptToSalesUser（Q6 回执建单销售本人）。
+- **前端（npm run build 过）**：SalesView.vue 终止按钮（bizStatus=1+confirmStatus=1+销售部门 admin/本人，作废审批中禁用）+ 终止弹窗（勾选活跃行+逐行必填原因+全选提示整单转已终止）+ 状态列 bizStatus=4「已终止」tag + 详情明细表已终止打标/终止原因列/缺货列拦截；SalesTimeline.vue 行头「已终止」tag+现存列不显示；bizDocumentState.js bizStatus=4→「已终止」；business.js terminateSalesAPI。
+- **E2E（T1–T11 全绿）**：登录四角色 token → 建两行单 → 生产锚定建任务单 → 部分终止 PTO153 行（表头重算 3→2/44597→25998、行留痕、时间线 [order_placed, terminated]）→ 冻结负测（start/领料 400 守卫文案）→ 生产消息落库 → 生产终止 status=7 + 回执建单销售本人 → 确认出库只扣活跃行（SMC105 4→2、PTO153 不动）→ 全行终止派生 bizStatus=4 + 撤未读消息 is_deleted=1 → 终态负测（重复终止/删除 400）→ 权限负测三连 403 → 仓储读权限 200。**端点坑：ProductionPickController 基路径是复数 /business/production-orders（ProductionOrderController 单数），terminate POST /{orderId}/terminate；HTTP 层面业务错误常 200+body code=400/403，判成败看 body**。
+- **真 bug（E2E T11 揪出，已修）**：作废已出库单 A（含终止行 PTO153 + 活跃行 SMC105）后 PTO153 3→4 幽灵 +1——deleteInternal 与 void 两处回补循环未过滤 terminate_status=2（终止行从未出库，confirm 只扣活跃行）。**修复：两处循环加 `if (isLineTerminated(detail)) continue;`（deleteInternal L733 + void L836），grep 核对 isLineTerminated 全文 7 处各就各位**。
+- **残留数据**：E2E 单 A bizStatus=2（审批单 #8）、单 B id=6 bizStatus=4、生产任务单 5 status=7 留作业务痕迹不删；**bug 效应已修正：PTO153（base_goods id=9）stock 4→3 UPDATE 完成**。
+- **单测补强**：初始全量 50 失败=5 个测试类（ProductionOrder/Pick/Step/PurchaseRequest/Qc）缺 `@Mock SalesTerminateGuard`（@InjectMocks 新依赖未注入 NPE），补 mock 后全绿；**SalesServiceTest 原本 0 个 terminate 用例，新增 8 个**：部分终止表头重算只计活跃行+锚定任务单通知、全行终止派生 bizStatus=4+撤消息、员工本人单可终止/他人单 403、已出库拦截、待审作废拦截、重复终止拦截、**voidDocument_shipped_skipsTerminatedLines（直接回归 bug 修复点）**。430/430 全绿。
+- **E2E 最小回归（修复验证通过）**：sales_admin 建单 8（PTO153×1@18599 + SMC105×2@12999，**坑：用非标准价被价格偏离审批拦截，标准价从 base_goods.sale_price 取**）→ 终止 PTO153 行（表头 3→2/44597→25998）→ 仓储 confirm（PTO153 不动、SMC105 4→2）→ 仓储直废 → **PTO153 停在 3 未被回补（修复生效）、SMC105 2→4 归位**，库存完全自洽；单 8 bizStatus=2 留业务痕迹。错误价测试单 7 已删除清理。
+- **E2E 坑**：非交互 curl 直调 API 需 `Authorization: Bearer <token>`（sa-token token-prefix=Bearer，漏前缀 401）；create 返回 void 无 data，新单 id 从 page 查询取。
+- **下一步（按序）**：用户浏览器手测（入口 http://localhost:5173，硬刷新+重登）→ commit → 批次 C 终止退料弹窗改版（Q15–Q17 + diff_reason 列）→ 需求二（Q9–Q14 现货履约）。
+
+---
+
+## 会话 59 — 2026-10-01
+
+### 销售终止/生产终止 grilling 定案（Q1–Q23）+ 终止退料「收料」口径修复（批次 A 落地）
+
+- **grilling 定案**：需求一（销售终止→生产联动终止）Q1–Q23 全部拍板——所有销售员工可终止自己的订单；**行级终止**（一单多成品可单独终止部分行，订单已终止=全部行终止，表头重算只计活跃行）；装配完成成品拆解退料、允许废料但差异必须备注（Q8）；Q21–Q23 按推荐。需求二（生产自发终止直接出库成品）Q9–Q14 按推荐。roadmap：先需求一后需求二。
+- **用户手测报障 → 批次 A 修复**：终止退料后仓储端仍显示「发料/待发料」→ 全链审计共修 7 处（P1–P7）：状态文本类型感知（RETURN=待收料/已收料，PICK/SUPPLY=待发料/已发料，后端双服务+前端筛选项/按钮/详情标签）、RETURN 收料入库即完成（1→3）、confirm 负测守卫、收料回执消息（替代误发的「领料已出库可开工」）、终止退料死端守卫（已终止任务单的 RETURN 单禁驳回/撤销）、生产端可见全部类型领料单、VO 透出 productionOrderStatus 供前端隐藏按钮。
+- **验证**：`./mvnw compile` BUILD SUCCESS + `npm run build` 过 + curl E2E T1–T10 全绿（page 待收料口径/reject+confirm 400 守卫/收料库存回流 15 物料 +1/+3 全对/1→3 已完成/生产端可见/sys_message 收料回执落库）+ 单测 39/39（更新 1 个过时断言 issue_returnPick_increasesStock：sendPickIssuedToProductionAdmins→sendPickReturnReceivedToProductionAdmins）。
+- **E2E 坑**：page 端点是 `/business/pick-lists/page`（直打 `/business/pick-lists` 500 NoResourceFound）、reject/issue/confirm 均为 PUT（POST 500 MethodNotSupported）——从 `front/src/api/pickList.js` 取准确端点后一次过。消息表名是 `sys_message`（非 biz_message）。
+- **改动文件**：PickListService/ProductionPickService/MessageService/PickListVO/PickListView.vue/PickListServiceTest。未 commit（待用户手测后随需求一一起提交）。
+- **下一步**：需求一销售行级终止落地（表头重算/行级原因必填/权限/冻结成品入库申请及确认/通知链 Q20a）→ 终止退料弹窗改版（Q15–Q17 已领/已退/差异+行级备注）→ 需求二现货履约（Q9–Q14）→ CONTEXT.md/ADR-0019。
+
+---
+
+## 会话 58 — 2026-09-30
+
+### 作废语义两疑虑（grill-with-docs）——调研后维持现状，零代码改动
+
+- **票面**：用户手测提出两疑虑：① 物料进货「确认到货→作废」审批通过后，时间线仍灰显未执行步骤「仓储管理员确认入库，库存共 +x」，怕新用户误读为库存已加；② 已完成的进货退货（确认出库+退货完成）仍可作废把库存"变回去"，提议所有单据完成后封板禁作废。
+- **调研（两个 Explore agent 前后端全景）**：现状是**有意设计**——作废守卫只看 `biz_status`（1/2/3），不看 `confirm_status`；9 模块中 5 个允许完成后作废（进货单/进货退货/销售单/销售退货/成品入库，回冲或回补库存+D101 进价重算），4 个天然封板（生产任务单仅待生产/生产中可废、盘点仅取消、领料无作废、采购申请撤销仅待采购）；作废审批是已完成单当天唯一自助纠错通道（D95 注释明示）。时间线步骤文案全在后端 DocumentTimelineService 拼装（「库存共 ±x」L75/L186），作废单未执行步骤灰 pending + 红色「已作废」节点（appendVoidNodes），生产任务单时间线同模式。
+- **决策（用户拍板）**：**先不做任何修改，目前的功能没问题**——封板口径/时间线呈现/错账补救三轮问题未进入第二轮即收口。
+- **留存**：VoidConfirmDialog 文案已自带「作废=当作没发生过，业务真实发生请走对应业务单」引导（D94）；灰=未执行与已驳回单「只显示当前步骤」并存为新用户需理解的既有惯例。若未来重提「完成封板」，改动点已摸清：后端 5 处 voidDocument 终态拦截 + ApprovalService.ensureCanSubmitVoidApproval 收紧 + 前端 4 页 canVoid + ProductionView isStockBearing 口径 + DocumentTimelineService.statusOf（pending 分支）。
+
+---
+
 ## 会话 57 — 2026-09-29
 
 ### 拉取 db-dump 快照基建 + 两机库分叉裁决（旧机富数据为准）

@@ -12,10 +12,13 @@ import org.example.back.entity.BaseGoods;
 import org.example.back.entity.BizPickList;
 import org.example.back.entity.BizPickListDetail;
 import org.example.back.entity.BizProductionOrder;
+import org.example.back.entity.BizSales;
+import org.example.back.entity.BizSalesDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizPickListDetailMapper;
 import org.example.back.mapper.BizPickListMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
+import org.example.back.mapper.BizSalesMapper;
 import org.example.back.vo.PickListVO;
 import org.example.back.vo.ProductionPickItemVO;
 import org.example.back.vo.ProductionReturnableVO;
@@ -48,6 +51,9 @@ public class ProductionPickService {
     @Autowired private AuthzService authzService;
     @Autowired private MessageService messageService;
     @Autowired private ProductionOrderService productionOrderService;
+    @Autowired private SalesTerminateGuard salesTerminateGuard;
+    @Autowired private BizSalesMapper bizSalesMapper;
+    @Autowired private PurchaseRequestService purchaseRequestService;
 
     public void requireProductionMember() {
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -65,6 +71,8 @@ public class ProductionPickService {
         if (order.getStatus() != BizProductionOrder.STATUS_PENDING) {
             throw BusinessException.validateFail("仅待生产状态可申请领料");
         }
+        // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（领料）
+        salesTerminateGuard.ensureSalesLineActive(order);
         LambdaQueryWrapper<BizPickList> dup = new LambdaQueryWrapper<>();
         dup.eq(BizPickList::getProductionOrderId, orderId)
                 .eq(BizPickList::getPickType, PickListService.TYPE_PICK);
@@ -185,6 +193,7 @@ public class ProductionPickService {
             det.setGoodsId(goods.getId());
             det.setGoodsName(goods.getGoodsName());
             det.setQuantity(item.getQuantity());
+            det.setDiffReason(item.getDiffReason()); // 需求二 Q16：差异备注随退料单落库，仓储确认时可见
             applyGoodsSnapshot(det, goods);
             det.setSortNo(sortNo++);
             pickListDetailMapper.insert(det);
@@ -224,7 +233,8 @@ public class ProductionPickService {
         ensureNoPendingPick(orderId);
 
         List<ProductionReturnItemDTO> items = dto.getItems() == null ? List.of() : dto.getItems().stream()
-                .filter(i -> i.getGoodsId() != null && i.getQuantity() != null && i.getQuantity() > 0)
+                // F2/code-review：quantity>=0 放行 0 数量行——差异行守卫（0 < 净额 → 差异备注必填）与不在清单内守卫兜底
+                .filter(i -> i.getGoodsId() != null && i.getQuantity() != null && i.getQuantity() >= 0)
                 .toList();
         if (!items.isEmpty()) {
             ensureWithinReturnable(orderId, items);
@@ -249,11 +259,51 @@ public class ProductionPickService {
         if (!items.isEmpty() && findOpenReturn(orderId) == null) {
             insertReturnList(order, items, "生产任务单 " + order.getOrderNo() + " 终止退料：" + reason.trim());
         }
+
+        // 需求一 Q6/Q19：销售端已终止该任务单关联的销售明细行，生产手动终止完成后回执建单销售本人
+        if (salesTerminateGuard.isLineTerminated(order)) {
+            BizSales sales = bizSalesMapper.selectById(order.getSalesOrderId());
+            if (sales != null && sales.getOperatorId() != null) {
+                messageService.sendProductionTerminatedReceiptToSalesUser(
+                        sales.getOperatorId(), order.getOrderNo(), order.getGoodsName(),
+                        sales.getSalesNo(), sales.getId());
+            }
+        } else if (order.getSalesOrderId() != null) {
+            // 需求二 Q11/Q13：生产自发终止、订单仍活着 → 通知建单销售本人（现货足→文案 B「可现货出库」/不足→文案 C）
+            notifySalesUserStockNotice(order);
+        }
+    }
+
+    /**
+     * 需求二（Q11/Q13/Q14）：生产自发终止关联销售单的任务单后 → 回执建单销售本人。
+     * 仅待确认出库的单据有意义（已出库/已终止/已作废的单无需再安排出库）；行已终止走需求一文案 A，两分支互斥。
+     * 现货数据取实时 base_goods.stock：足 → 文案 B「请安排出库」；不足 → 文案 C 缺口告知（Q13a 允许终止+警告）。
+     */
+    private void notifySalesUserStockNotice(BizProductionOrder order) {
+        BizSales sales = bizSalesMapper.selectById(order.getSalesOrderId());
+        if (sales == null || sales.getOperatorId() == null
+                || (sales.getBizStatus() != null && sales.getBizStatus() == BizSales.BIZ_STATUS_VOIDED)
+                || sales.getConfirmStatus() == null
+                || sales.getConfirmStatus() == SalesService.CONFIRM_SHIPPED) {
+            return;
+        }
+        BizSalesDetail line = salesTerminateGuard.resolveLinkedLine(order);
+        if (line == null || salesTerminateGuard.isLineTerminated(line)) {
+            return;
+        }
+        BaseGoods goods = order.getGoodsId() == null ? null : baseGoodsMapper.selectById(order.getGoodsId());
+        int stock = goods == null || goods.getStock() == null ? 0 : goods.getStock();
+        int need = line.getQuantity() == null ? 0 : line.getQuantity();
+        messageService.sendProductionTerminatedStockNoticeToSalesUser(
+                sales.getOperatorId(), order.getOrderNo(), order.getGoodsName(),
+                sales.getSalesNo(), sales.getId(), stock, need);
     }
 
     /**
      * D73：终止弹窗「已领未退」预览 = PICK/SUPPLY（已发料/已完成）− RETURN（已发料/已完成），按物料分组取净额>0。
      * 生产成员可读（与领料/退料一致）。
+     * 需求二（Q10a/Q13）：关联销售单且行未终止时回填成品现货/订单量/充足性（终止弹窗缺口警告）；
+     * （Q17）回填在途补料采购申请单号（黄条提示生产自行决定是否撤销，系统不代撤）。
      */
     @Transactional(readOnly = true)
     public ProductionReturnableVO computeReturnablePreview(Long orderId) {
@@ -263,7 +313,37 @@ public class ProductionPickService {
         BizPickList open = findOpenReturn(orderId);
         vo.setHasOpenReturn(open != null);
         vo.setOpenReturnPickNo(open == null ? null : open.getPickNo());
+        fillSalesStockInfo(orderId, vo);
+        vo.setInFlightPurchaseNos(purchaseRequestService.inFlightProductionRequestNos(orderId));
         return vo;
+    }
+
+    /**
+     * 需求二（Q10a/Q13/Q14）：关联销售单且行未终止的任务单，终止弹窗回填成品现货/订单量/充足性；
+     * 备货单（Q14）与行已终止（需求一场景，回执走文案 A）不掺入现货履约语义。
+     */
+    private void fillSalesStockInfo(Long orderId, ProductionReturnableVO vo) {
+        BizProductionOrder order = productionOrderMapper.selectById(orderId);
+        if (order == null || order.getSalesOrderId() == null) {
+            return;
+        }
+        BizSalesDetail line = salesTerminateGuard.resolveLinkedLine(order);
+        if (salesTerminateGuard.isLineTerminated(line)) {
+            return;
+        }
+        BizSales sales = bizSalesMapper.selectById(order.getSalesOrderId());
+        // F4/code-review：销售单已作废 → 终止弹窗不再回填现货充足性（已作废单无需安排出库）
+        if (sales == null
+                || (sales.getBizStatus() != null && sales.getBizStatus() == BizSales.BIZ_STATUS_VOIDED)) {
+            return;
+        }
+        BaseGoods goods = order.getGoodsId() == null ? null : baseGoodsMapper.selectById(order.getGoodsId());
+        int stock = goods == null || goods.getStock() == null ? 0 : goods.getStock();
+        int need = line == null || line.getQuantity() == null ? 0 : line.getQuantity();
+        vo.setGoodsStock(stock);
+        vo.setSalesLineQuantity(need);
+        vo.setStockSufficient(stock >= need);
+        vo.setSalesOrderNo(sales.getSalesNo());
     }
 
     private void ensureNoPendingPick(Long orderId) {
@@ -276,7 +356,7 @@ public class ProductionPickService {
         }
     }
 
-    /** 服务端兜底：提交退料量不得超过「已领未退」净额，防多退导致库存虚增 */
+    /** 服务端兜底：提交退料量不得超过「已领未退」净额，防多退导致库存虚增；差异行（Q15/Q7）差异备注必填 */
     private void ensureWithinReturnable(Long orderId, List<ProductionReturnItemDTO> items) {
         Map<Long, Integer> returnable = new HashMap<>();
         Map<Long, String> names = new HashMap<>();
@@ -284,6 +364,7 @@ public class ProductionPickService {
             returnable.put(vo.getGoodsId(), vo.getQuantity());
             names.put(vo.getGoodsId(), vo.getGoodsName());
         }
+
         for (ProductionReturnItemDTO item : items) {
             Integer max = returnable.get(item.getGoodsId());
             if (max == null) {
@@ -293,6 +374,12 @@ public class ProductionPickService {
             if (item.getQuantity() > max) {
                 throw BusinessException.validateFail(
                         "物料[" + names.get(item.getGoodsId()) + "]退料数量超过已领未退（可退 " + max + "）");
+            }
+            // 需求二 Q15/Q7：差异行（退料数量 < 已领未退）差异备注必填，随退料单落库仓储确认时可见
+            if (item.getQuantity() < max
+                    && (item.getDiffReason() == null || item.getDiffReason().trim().isEmpty())) {
+                throw BusinessException.validateFail(
+                        "物料[" + names.get(item.getGoodsId()) + "]退料数量小于已领未退，请填写差异备注说明原因（损耗/丢失等）");
             }
         }
     }
@@ -312,9 +399,14 @@ public class ProductionPickService {
                 .filter(p -> PickListService.TYPE_RETURN.equals(p.getPickType()))
                 .map(BizPickList::getId).toList();
         Map<Long, Integer> net = new LinkedHashMap<>();
+        Map<Long, Integer> picked = new LinkedHashMap<>();
+        Map<Long, Integer> returned = new LinkedHashMap<>();
         Map<Long, String> names = new LinkedHashMap<>();
         addDetailSums(outIds, net, names, 1);
         addDetailSums(inIds, net, names, -1);
+        // 需求二 Q15(b)：另算毛数（已领=OUT 累计、已退=RETURN 累计），弹窗展示「退料数量与领料数量不匹配」的完整上下文
+        addDetailSums(outIds, picked, names, 1);
+        addDetailSums(inIds, returned, names, 1);
         List<Long> goodsIds = net.entrySet().stream()
                 .filter(e -> e.getValue() > 0).map(Map.Entry::getKey).toList();
         Map<Long, BaseGoods> goodsMap = loadGoodsSnapshot(goodsIds);
@@ -332,6 +424,8 @@ public class ProductionPickService {
                 item.setMaterial(g.getMaterial());
             }
             item.setQuantity(e.getValue());
+            item.setPickedQuantity(picked.getOrDefault(e.getKey(), 0));
+            item.setReturnedQuantity(returned.getOrDefault(e.getKey(), 0));
             items.add(item);
         }
         return items;
@@ -393,11 +487,13 @@ public class ProductionPickService {
         return productionOrderService.computePickItems(orderId);
     }
 
-    private String statusText(Integer status) {
+    /** 类型感知状态文本：RETURN 按「收料」口径，其余按「发料」口径（与 PickListService 口径一致） */
+    private String statusText(String pickType, Integer status) {
         if (status == null) return null;
+        boolean isReturn = PickListService.TYPE_RETURN.equals(pickType);
         return switch (status) {
-            case 1 -> "待发料";
-            case 2 -> "已发料";
+            case 1 -> isReturn ? "待收料" : "待发料";
+            case 2 -> isReturn ? "已收料" : "已发料";
             case 3 -> "已完成";
             case 4 -> "已驳回";
             default -> String.valueOf(status);
@@ -410,8 +506,9 @@ public class ProductionPickService {
         vo.setPickNo(p.getPickNo());
         vo.setPickType(p.getPickType());
         vo.setPickTypeText(pickTypeText(p.getPickType()));
+        vo.setProductionOrderId(p.getProductionOrderId());
         vo.setStatus(p.getStatus());
-        vo.setStatusText(statusText(p.getStatus()));
+        vo.setStatusText(statusText(p.getPickType(), p.getStatus()));
         vo.setApplicantId(p.getApplicantId());
         vo.setApplicantName(p.getApplicantName());
         vo.setRemark(p.getRemark());

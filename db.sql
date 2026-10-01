@@ -2128,3 +2128,27 @@ ALTER TABLE `biz_sales`
 ALTER TABLE `biz_sales_return`
     ADD COLUMN `customer_contact_name` VARCHAR(50) DEFAULT NULL COMMENT '客户联系人姓名快照(D128,可从来源销售单带出可改)' AFTER `customer_name`,
     ADD COLUMN `customer_phone` VARCHAR(30) DEFAULT NULL COMMENT '客户手机号快照(D128,可从来源销售单带出可改)' AFTER `customer_contact_name`;
+
+-- =============================================
+-- 二十七、需求一：销售订单行级终止（ADR-0019，Q21-Q23）
+-- =============================================
+-- 终止落在明细行上（行级终止为主操作）；全部行终止时头单 biz_status 派生为 4-已终止。
+-- 行上记 终止状态/原因(必填)/时间/操作人，对齐生产终止原因留痕口径。
+-- 1) 列（列增删不可重复执行）
+ALTER TABLE `biz_sales_detail`
+    ADD COLUMN `terminate_status` TINYINT NOT NULL DEFAULT 1 COMMENT '行终止状态: 1-正常, 2-已终止(需求一 Q21)' AFTER `sort_no`,
+    ADD COLUMN `terminate_reason` VARCHAR(200) DEFAULT NULL COMMENT '行终止原因(必填留痕,对齐生产终止口径)' AFTER `terminate_status`,
+    ADD COLUMN `terminate_time` DATETIME DEFAULT NULL COMMENT '行终止时间' AFTER `terminate_reason`,
+    ADD COLUMN `terminator_id` BIGINT DEFAULT NULL COMMENT '行终止操作人ID' AFTER `terminate_time`,
+    ADD COLUMN `terminator_name` VARCHAR(50) DEFAULT NULL COMMENT '行终止操作人姓名' AFTER `terminator_id`;
+-- 2) 头表 biz_status 语义扩一档：4-已终止(全部明细行终止的派生终态)
+ALTER TABLE `biz_sales`
+    MODIFY COLUMN `biz_status` TINYINT NOT NULL DEFAULT 1 COMMENT '业务状态: 1-正常, 2-已作废, 3-红冲单(停用), 4-已终止(全部明细行终止派生,ADR-0019)';
+
+-- =============================================
+-- 二十八、需求二：生产自发终止→现货履约（Q10a/Q13/Q15-Q17）
+-- =============================================
+-- 终止退料单差异备注：RETURN 行退料数量 < 已领未退（损耗/丢失等）时必填，仓储确认收料时每行可见（Q16）。
+-- 列增删不可重复执行。
+ALTER TABLE `biz_pick_list_detail`
+    ADD COLUMN `diff_reason` VARCHAR(200) DEFAULT NULL COMMENT '差异备注(Q16/Q7:RETURN行退料量<已领未退时的损耗/丢失原因)' AFTER `remark`;

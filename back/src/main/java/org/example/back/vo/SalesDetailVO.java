@@ -3,6 +3,7 @@ package org.example.back.vo;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 /**
  * 销售单明细行 VO（D110）。
@@ -25,6 +26,15 @@ public class SalesDetailVO {
     private BigDecimal totalPrice;
 
     private Integer sortNo;
+
+    /** 行终止状态: 1-正常, 2-已终止（需求一 Q21） */
+    private Integer terminateStatus;
+    /** 行终止原因（必填留痕） */
+    private String terminateReason;
+    /** 行终止时间 */
+    private LocalDateTime terminateTime;
+    /** 行终止操作人姓名 */
+    private String terminatorName;
 
     /** D110：当前库存快照（列表批量填充，仓储确认页据此标缺货行） */
     private Integer stock;

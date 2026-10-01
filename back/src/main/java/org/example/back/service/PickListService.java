@@ -96,9 +96,9 @@ public class PickListService {
                 .lt(endTime != null, BizPickList::getCreateTime, endTime)
                 .in(matchedPickListIds != null, BizPickList::getId, matchedPickListIds)
                 .orderByDesc(BizPickList::getId);
-        // 数据范围：仓储/超管看全部；生产成员只看"生产领料"（PICK 类型，含生产任务单自动领料）；其余看本人
+        // 数据范围：仓储/超管看全部；生产成员看生产来源全部类型（PICK/SUPPLY/RETURN，与 listByOrder 口径一致）；其余看本人
         if (!isWarehouseOrSuper && isProductionMember) {
-            wrapper.eq(BizPickList::getPickType, TYPE_PICK);
+            // 生产来源单据全类型可见（RETURN/SUPPLY 均由生产端提交）
         } else if (!isWarehouseOrSuper) {
             wrapper.eq(BizPickList::getApplicantId, loginUser.getId());
         }
@@ -106,7 +106,19 @@ public class PickListService {
         Page<BizPickList> page = bizPickListMapper.selectPage(
                 new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
 
-        List<PickListVO> records = page.getRecords().stream().map(this::toVO).toList();
+        // RETURN 行附带生产单状态（前端隐藏终止单退料单的驳回/撤销按钮）——批量取避免逐行查库
+        List<BizPickList> rows = page.getRecords();
+        List<Long> orderIds = rows.stream()
+                .filter(e -> TYPE_RETURN.equals(e.getPickType()) && e.getProductionOrderId() != null)
+                .map(BizPickList::getProductionOrderId)
+                .distinct().toList();
+        Map<Long, BizProductionOrder> orderMap = orderIds.isEmpty()
+                ? Map.of()
+                : bizProductionOrderMapper.selectBatchIds(orderIds).stream()
+                        .collect(Collectors.toMap(BizProductionOrder::getId, o -> o));
+        List<PickListVO> records = rows.stream()
+                .map(e -> toVO(e, orderMap.get(e.getProductionOrderId())))
+                .toList();
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
@@ -124,17 +136,17 @@ public class PickListService {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseIssueAccess();
         BizPickList entity = requireEntity(id);
+        boolean isReturn = TYPE_RETURN.equals(entity.getPickType());
         if (entity.getStatus() != STATUS_PENDING) {
-            throw BusinessException.validateFail("仅待发料状态可发料");
+            throw BusinessException.validateFail(isReturn ? "仅待收料状态可收料" : "仅待发料状态可发料");
         }
 
         List<BizPickListDetail> details = listDetails(entity.getId());
         if (details.isEmpty()) {
-            throw BusinessException.validateFail("领料单明细为空，无法发料");
+            throw BusinessException.validateFail(isReturn ? "退料单明细为空，无法收料" : "领料单明细为空，无法发料");
         }
 
         // PICK/SUPPLY 扣减库存（任一缺料整单回滚）；RETURN 回流入库
-        boolean isReturn = TYPE_RETURN.equals(entity.getPickType());
         try {
             for (BizPickListDetail detail : details) {
                 if (isReturn) {
@@ -162,24 +174,29 @@ public class PickListService {
         LambdaUpdateWrapper<BizPickList> updateWrapper = new LambdaUpdateWrapper<>();
         updateWrapper.eq(BizPickList::getId, entity.getId())
                 .eq(BizPickList::getStatus, STATUS_PENDING)
-                .set(BizPickList::getStatus, STATUS_ISSUED)
+                // 收料入库即完成：RETURN 仓储确认收料后直达已完成，无需申请人再确认收货
+                .set(BizPickList::getStatus, isReturn ? STATUS_DONE : STATUS_ISSUED)
                 .set(BizPickList::getOperatorId, loginUser.getId())
                 .set(BizPickList::getOperatorName, loginUser.getRealName())
                 .set(BizPickList::getOperationTime, LocalDateTime.now());
         int rows = bizPickListMapper.update(null, updateWrapper);
         if (rows != 1) {
-            throw BusinessException.validateFail("领料单已被处理，禁止重复发料");
+            throw BusinessException.validateFail(isReturn ? "退料单已被处理，禁止重复收料" : "领料单已被处理，禁止重复发料");
         }
-        // 发料成功：撤销之前可能存在的缺料反馈待办（已不再缺料）
+        // 发料/收料成功：撤销之前可能存在的缺料反馈待办（已不再缺料）
         messageService.revokeUnreadByBiz("pick_list", id);
-        // 发料成功：生产来源领料单通知生产端可开工
+        // 生产来源单据发料/收料成功 → 通知生产端（领料=可开工；退料=已收料入库闭环）
         if (entity.getProductionOrderId() != null) {
             String orderNo = null;
             BizProductionOrder productionOrder = bizProductionOrderMapper.selectById(entity.getProductionOrderId());
             if (productionOrder != null) {
                 orderNo = productionOrder.getOrderNo();
             }
-            messageService.sendPickIssuedToProductionAdmins(entity.getPickNo(), orderNo, id);
+            if (isReturn) {
+                messageService.sendPickReturnReceivedToProductionAdmins(entity.getPickNo(), orderNo, id);
+            } else {
+                messageService.sendPickIssuedToProductionAdmins(entity.getPickNo(), orderNo, id);
+            }
         }
     }
 
@@ -190,6 +207,10 @@ public class PickListService {
         authzService.requireNotSuperAdminForBusinessWrite();
         requirePickListModuleAccess();
         BizPickList entity = requireEntity(id);
+        // 退料单由仓储收料入库即完成（issue 直达已完成），不存在"申请人确认收货"环节
+        if (TYPE_RETURN.equals(entity.getPickType())) {
+            throw BusinessException.validateFail("退料单由仓储收料入库即完成，无需确认收货");
+        }
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         if (!entity.getApplicantId().equals(loginUser.getId()) && !authzService.isSuperAdmin()) {
             throw BusinessException.forbidden("仅申请人本人可确认收货");
@@ -216,6 +237,11 @@ public class PickListService {
         authzService.requireNotSuperAdminForBusinessWrite();
         requireWarehouseIssueAccess();
         BizPickList entity = requireEntity(id);
+        // 终止退料死端守卫：已终止任务单的退料单被驳回后无重提路径（createReturn 仅生产中可提），
+        // 物料将滞留生产端无法回库 → 禁止驳回，异常情况线下协调后走库存盘点修正
+        if (isTerminatedOrderReturn(entity)) {
+            throw BusinessException.validateFail("已终止任务单的终止退料单不可驳回，请收料入库；如物料无法回收，请联系生产管理员协商处理");
+        }
         if (entity.getStatus() != STATUS_PENDING) {
             throw BusinessException.validateFail("仅待发料状态可驳回");
         }
@@ -250,6 +276,10 @@ public class PickListService {
         authzService.requireNotSuperAdminForBusinessWrite();
         requirePickListModuleAccess();
         BizPickList entity = requireEntity(id);
+        // 终止退料死端守卫：撤销后任务单已终止无重提路径，物料滞留生产端 → 禁止撤销
+        if (isTerminatedOrderReturn(entity)) {
+            throw BusinessException.validateFail("已终止任务单的终止退料单不可撤销，请由仓储收料入库");
+        }
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         if (!entity.getApplicantId().equals(loginUser.getId()) && !authzService.isSuperAdmin()) {
             throw BusinessException.forbidden("仅申请人本人可撤销领料单");
@@ -299,14 +329,13 @@ public class PickListService {
     }
 
     private void ensureViewAccess(BizPickList entity) {
-        if (authzService.isSuperAdmin() || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)) {
+        // 仓储管理员/超管全权；生产部门成员可看生产来源全部类型（PICK/SUPPLY/RETURN，与列表数据范围一致）
+        if (authzService.isSuperAdmin() || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)
+                || authzService.isDeptMember(AuthzService.DEPT_PRODUCTION)) {
             return;
         }
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        // 生产部门成员可查看生产领料（PICK 类型，含生产任务单自动领料），不限申请人
-        if (authzService.isDeptMember(AuthzService.DEPT_PRODUCTION) && TYPE_PICK.equals(entity.getPickType())) {
-            return;
-        }
+        // 其余角色仅本人单据
         if (!entity.getApplicantId().equals(loginUser.getId())) {
             throw BusinessException.forbidden("无权查看该领料单");
         }
@@ -350,14 +379,22 @@ public class PickListService {
     }
 
     private PickListVO toVO(BizPickList entity) {
+        return toVO(entity, null);
+    }
+
+    private PickListVO toVO(BizPickList entity, BizProductionOrder productionOrder) {
         PickListVO vo = new PickListVO();
         vo.setId(entity.getId());
         vo.setPickNo(entity.getPickNo());
         vo.setPickType(entity.getPickType());
         vo.setPickTypeText(pickTypeText(entity.getPickType()));
         vo.setSourceSalesId(entity.getSourceSalesId());
+        vo.setProductionOrderId(entity.getProductionOrderId());
+        if (productionOrder != null) {
+            vo.setProductionOrderStatus(productionOrder.getStatus());
+        }
         vo.setStatus(entity.getStatus());
-        vo.setStatusText(statusText(entity.getStatus()));
+        vo.setStatusText(statusText(entity.getPickType(), entity.getStatus()));
         vo.setApplicantId(entity.getApplicantId());
         vo.setApplicantName(entity.getApplicantName());
         vo.setOperatorId(entity.getOperatorId());
@@ -399,6 +436,7 @@ public class PickListService {
         vo.setGoodsName(detail.getGoodsName());
         vo.setQuantity(detail.getQuantity());
         vo.setSortNo(detail.getSortNo());
+        vo.setDiffReason(detail.getDiffReason()); // 需求二 Q16：RETURN 行差异备注透出
         if (fallbackGoods != null) {
             vo.setSpec(fallbackGoods.getSpec());
             vo.setMaterial(fallbackGoods.getMaterial());
@@ -418,14 +456,26 @@ public class PickListService {
         return pickType;
     }
 
-    private String statusText(Integer status) {
+    /** 类型感知状态文本：RETURN 按「收料」口径（待收料/已收料），其余按「发料」口径 */
+    private String statusText(String pickType, Integer status) {
         if (status == null) return null;
+        boolean isReturn = TYPE_RETURN.equals(pickType);
         return switch (status) {
-            case STATUS_PENDING -> "待发料";
-            case STATUS_ISSUED -> "已发料";
+            case STATUS_PENDING -> isReturn ? "待收料" : "待发料";
+            case STATUS_ISSUED -> isReturn ? "已收料" : "已发料";
             case STATUS_DONE -> "已完成";
             case STATUS_REJECTED -> "已驳回";
             default -> String.valueOf(status);
         };
+    }
+
+    /** 终止退料死端守卫判定：RETURN 单且其生产任务单已终止（驳回/撤销将致物料滞留生产端无重提路径） */
+    private boolean isTerminatedOrderReturn(BizPickList entity) {
+        if (!TYPE_RETURN.equals(entity.getPickType()) || entity.getProductionOrderId() == null) {
+            return false;
+        }
+        BizProductionOrder order = bizProductionOrderMapper.selectById(entity.getProductionOrderId());
+        return order != null && order.getStatus() != null
+                && order.getStatus().equals(BizProductionOrder.STATUS_TERMINATED);
     }
 }

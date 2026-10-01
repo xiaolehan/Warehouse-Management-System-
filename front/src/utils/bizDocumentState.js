@@ -44,6 +44,11 @@ export const resolveBizDocumentState = (row = {}) => {
     return { label: '作废并冲抵成功', type: 'success' }
   }
 
+  // 需求一（ADR-0019）：销售单全部明细行终止后的派生终态（仅销售单有 bizStatus=4）
+  if (Number(row?.bizStatus || 0) === 4) {
+    return { label: '已终止', type: 'warning' }
+  }
+
   return null
 }
 

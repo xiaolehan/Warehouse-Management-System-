@@ -344,4 +344,23 @@ class SalesTimelineServiceTest {
         assertTrue(line.getNodes().stream().anyMatch(n -> "scheduled".equals(n.getKey())
                 && n.getDescription() != null && n.getDescription().contains("已终止")));
     }
+
+    // ---------- 需求二 Q12：关联单已终止/已作废 + 行未发货 + 现货充足 → 派生「可现货出库」 ----------
+
+    @Test
+    void getTimeline_terminatedOrder_stockSufficient_showsReadyToShipNow() {
+        sales(SalesService.CONFIRM_PENDING);
+        detail(1L, 29L, "PTO153", 5);
+        goodsWithStock(10);
+        order(BizProductionOrder.STATUS_TERMINATED);
+
+        SalesTimelineVO vo = service.getTimeline(501L);
+        SalesTimelineLineVO line = vo.getLines().get(0);
+
+        assertEquals("可现货出库", line.getEstimatedDeliveryText());
+        assertEquals("none", line.getEstimatedSource());
+        assertEquals(3, line.getNodes().size()); // 下单 + 生产排产 + 发货
+        assertTrue(line.getNodes().get(1).getDescription().contains("可现货出库"));
+        assertTrue(line.getNodes().get(2).getDescription().contains("待仓储确认出库"));
+    }
 }

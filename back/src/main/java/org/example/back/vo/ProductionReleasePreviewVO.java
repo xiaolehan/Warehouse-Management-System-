@@ -33,5 +33,9 @@ public class ProductionReleasePreviewVO {
         private String inFlightOrderNo;
         /** 该行已完成生产数量（非作废/终止的 DONE 单合计） */
         private Integer doneQuantity;
+        /** 需求一：该行销售明细已终止（禁选） */
+        private Boolean terminated;
+        /** 需求一：行终止原因（已终止行展示用） */
+        private String terminateReason;
     }
 }

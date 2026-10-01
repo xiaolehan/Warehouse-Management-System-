@@ -32,6 +32,12 @@ public class PurchaseRequestVO {
      */
     private Long productionOrderId;
 
+    /** 会话 58：关联任务单被销售取消冻结（前端禁用认领/到货提交按钮用） */
+    private Boolean salesFrozen;
+
+    /** 会话 58：冻结原因作为短文案 */
+    private String salesFrozenReason;
+
     private Long applicantId;
 
     private String applicantName;
