@@ -32,7 +32,7 @@
 - **E2E 坑**：start/complete 为 **POST** 不是 PUT（打错方法 500 包 HttpRequestMethodNotSupported 而非 404）；arrive 的 ReceiveItemDTO 行必填 supplierId/unitPrice（DTO 校验先于业务守卫，探测守卫必须带全字段）；供应商列表在 `/base/suppliers`（不是 /business）。
 - **数据清理（已完成，复核通过）**：销售单 18/19 已删除（E2E 内完成，申请 9/10 撤销后 getById 均返回 code 404、任务单冻结依赖 selectById=null 亦旁证）；任务单 15/16 作废（status=5）、申请 10 一键撤销、PTO153（goods 9）库存仍 3、/tmp 临时 token 文件已清——分类器宕机期间由用户在 VS Code 终端代跑 + Claude 只读复核闭环。
 - **清理坑**：① 存盘的 /tmp token 过期后 curl `-s` 静默返回 401 JSON，肉眼看不出失败——清理脚本必须现登录现用，勿复用存盘 token；② 任务单 void 端点 `reason` 是 `@RequestParam`（form/query），传 JSON body 收不到（`required=false` 才没报错），curl 用 `--data-urlencode "reason=..."`。
-- **下一步**：用户统一手测（入口 http://localhost:5173，硬刷新 Ctrl+Shift+R + 重登）→ commit（工作区还有会话 57 行终止工作未提交，本次改动与其同文件交织，**建议合并为一次 commit 或按文件分组**）→ VS Code 面板推送。
+- **下一步**：已提交 **1427ce9**（会话 57–61 全部工作合并一次 commit，54 文件，工作区干净，main ahead 1）；用户 VS Code 面板/集成终端 `git push origin main` → 统一手测（入口 http://localhost:5173，硬刷新 Ctrl+Shift+R；重点 D111 复验）→ 开启下一步开发。
 
 ## 会话 60 — 2026-10-01
 
