@@ -96,6 +96,40 @@ public class BizSalesDetail {
      */
     private String terminatorName;
 
+    /** 成品处置：待处置（已入库未出库，仓储二选一） */
+    public static final int SPLIT_PENDING_HANDLE = 1;
+    /** 成品处置：已保留成品 */
+    public static final int SPLIT_KEPT = 2;
+    /** 成品处置：已发起拆分 */
+    public static final int SPLIT_INITIATED = 3;
+    /** 成品处置：拆分完成（含放弃回库完成） */
+    public static final int SPLIT_DONE = 4;
+
+    /**
+     * 成品处置状态(行终止后,ADR-0020): NULL-未触发(旧数据/未终止行), 1-待处置, 2-已保留成品, 3-已发起拆分, 4-拆分完成(含放弃回库完成)
+     */
+    private Integer splitStatus;
+
+    /**
+     * 当前关联拆分单ID(已发起拆分后,ADR-0020)
+     */
+    private Long splitOrderId;
+
+    /**
+     * 保留成品时间(ADR-0020)
+     */
+    private LocalDateTime splitKeepTime;
+
+    /**
+     * 保留成品操作人ID(ADR-0020)
+     */
+    private Long splitKeepBy;
+
+    /**
+     * 保留成品操作人姓名(冗余,ADR-0020)
+     */
+    private String splitKeepName;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

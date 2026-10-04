@@ -22,6 +22,11 @@ public class BizPurchaseRequest {
      */
     private Integer status;
 
+    /**
+     * 销售冻结豁免(D114): 0-不豁免, 1-生产终止未勾选撤销→豁免销售冻结(采购可继续认领/到货/入库)
+     */
+    private Integer freezeExempt;
+
     /** 来源: production-生产缺料补料, warehouse-仓储手动 */
     private String sourceType;
 

@@ -125,6 +125,10 @@ class ProductionStepServiceTest {
     void complete_marksDoneWithOperator() {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_UNDONE, null));
+        // D113 顺序闸：前置工序 1/2 已打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L)));
         when(authService.getUserInfo()).thenReturn(user(9L));
 
         service.complete(7L, 3);
@@ -342,6 +346,13 @@ class ProductionStepServiceTest {
     void complete_step7_beforeFirstPass_rejected() {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(7, BizProductionOrderStep.STATUS_UNDONE, null));
+        // D113 顺序闸：前置人工工序 1-5 已打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("untested");
         when(qcService.buildState(any())).thenReturn(qc);
@@ -355,6 +366,14 @@ class ProductionStepServiceTest {
     void complete_step9_beforeFinalPass_rejected() {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_UNDONE, null));
+        // D113 顺序闸：前置人工工序 1-5、7 已打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_DONE, 8L)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("ok");
         qc.setFinalStatus("untested");
@@ -369,6 +388,13 @@ class ProductionStepServiceTest {
     void complete_step7_afterFirstOk_passes() {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(7, BizProductionOrderStep.STATUS_UNDONE, null));
+        // D113 顺序闸：前置人工工序 1-5 已打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("ok"); // NG→返工→重测合格也走此口径（buildState 取最新一条）
         when(qcService.buildState(any())).thenReturn(qc);
@@ -385,6 +411,14 @@ class ProductionStepServiceTest {
     void complete_step9_afterFinalOk_passes() {
         when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
         when(stepMapper.selectOne(any())).thenReturn(step(9, BizProductionOrderStep.STATUS_UNDONE, null));
+        // D113 顺序闸：前置人工工序 1-5、7 已打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_DONE, 8L)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("ok");
         qc.setFinalStatus("ok");
@@ -407,6 +441,56 @@ class ProductionStepServiceTest {
         // 工序 1-5 不设质检前置，无需查质检状态
         verify(qcService, never()).buildState(any());
         verify(stepMapper).updateById(any(BizProductionOrderStep.class));
+    }
+
+    // ---------- D113：顺序打卡闸 / 栈式撤销 ----------
+
+    @Test
+    void complete_rejectsSkippedPrevious() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_UNDONE, null));
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_UNDONE, null)));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.complete(7L, 3));
+        assertTrue(ex.getMessage().contains("第 2 道"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).updateById(any(BizProductionOrderStep.class));
+    }
+
+    @Test
+    void revoke_rejectsWhenLaterStepDone() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(3, BizProductionOrderStep.STATUS_DONE, 9L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L)));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(0L); // D125：无首测记录，放行
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 3));
+        assertTrue(ex.getMessage().contains("仅最后一道已打卡工序可撤销"), "实际: " + ex.getMessage());
+        verify(stepMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void revoke_lastDone_allLaterUndone_passes() {
+        when(orderMapper.selectById(7L)).thenReturn(order(BizProductionOrder.STATUS_IN_PROGRESS));
+        when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_DONE, 9L));
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 9L),
+                step(4, BizProductionOrderStep.STATUS_UNDONE, null),
+                step(5, BizProductionOrderStep.STATUS_UNDONE, null),
+                step(7, BizProductionOrderStep.STATUS_UNDONE, null),
+                step(9, BizProductionOrderStep.STATUS_UNDONE, null)));
+        when(authService.getUserInfo()).thenReturn(user(9L));
+        when(qcMapper.selectCount(any())).thenReturn(0L);
+
+        service.revoke(7L, 3);
+
+        verify(stepMapper).update(isNull(), any());
     }
 
     // ---------- D125：撤销保护（撤销不得使已发生的质检门禁失效） ----------
@@ -463,8 +547,14 @@ class ProductionStepServiceTest {
 
     @Test
     void listSteps_lockedStep7and9_getLockReasonAndNotOperable() {
-        BizProductionOrderStep done5 = step(5, BizProductionOrderStep.STATUS_DONE, 9L);
-        when(stepMapper.selectList(any())).thenReturn(List.of(done5));
+        // D113 顺序锁定优先：1-5 已打卡（工序 7 顺序闸通过）；工序 7 未打卡 → 工序 9 走顺序锁定
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_UNDONE, null)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("untested");
         qc.setFinalStatus("untested");
@@ -472,28 +562,75 @@ class ProductionStepServiceTest {
 
         List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
 
-        // 工序 1-5 已打卡/可打卡不受门禁影响；7/9 未解锁灰置并带锁定原因
-        assertTrue(steps.get(0).getOperable());
-        assertNull(steps.get(0).getLockReason());
+        // 工序 1 已打卡但非最后一道 → 撤销锁定（D113 栈式撤销显示）；工序 7 质检锁定；工序 9 顺序锁定
+        assertFalse(steps.get(0).getOperable());
+        assertFalse(steps.get(0).getRevocable());
+        assertTrue(steps.get(0).getLockReason().contains("仅最后一道已打卡工序可撤销"), steps.get(0).getLockReason());
         assertFalse(steps.get(6).getOperable());
         assertTrue(steps.get(6).getLockReason().contains("首次测试尚未通过"), steps.get(6).getLockReason());
+        assertFalse(steps.get(8).getOperable());
+        assertTrue(steps.get(8).getLockReason().contains("第 7 道"), steps.get(8).getLockReason());
+    }
+
+    @Test
+    void listSteps_step9QcLocked_whenSequenceComplete() {
+        // 顺序闸已过（1-5、7 已打卡）→ 工序 9 由成品测门禁锁定（D125）
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_DONE, 8L)));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok");
+        qc.setFinalStatus("untested");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
+
         assertFalse(steps.get(8).getOperable());
         assertTrue(steps.get(8).getLockReason().contains("成品测试尚未通过"), steps.get(8).getLockReason());
     }
 
     @Test
     void listSteps_unlockedAfterQcPass_gateReleased() {
-        BizProductionOrderStep done5 = step(5, BizProductionOrderStep.STATUS_DONE, 9L);
-        when(stepMapper.selectList(any())).thenReturn(List.of(done5));
+        // 工序 7：1-5 已打卡 + 首测合格 → 解锁可打卡（D113 顺序闸 + D125 质检闸均放行）
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_UNDONE, null)));
         QcStateVO qc = new QcStateVO();
         qc.setFirstStatus("ok"); // 首测合格 → 工序 7 解锁
-        qc.setFinalStatus("ok"); // 成品测合格 → 工序 9 解锁
+        qc.setFinalStatus("ok");
         when(qcService.buildState(any())).thenReturn(qc);
 
         List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
 
         assertTrue(steps.get(6).getOperable());
         assertNull(steps.get(6).getLockReason());
+    }
+
+    @Test
+    void listSteps_step9Unlocked_afterSequenceAndFinalOk() {
+        // 工序 9：1-5、7 已打卡 + 成品测合格 → 解锁可打卡
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(2, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(3, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(4, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(5, BizProductionOrderStep.STATUS_DONE, 8L),
+                step(7, BizProductionOrderStep.STATUS_DONE, 8L)));
+        QcStateVO qc = new QcStateVO();
+        qc.setFirstStatus("ok");
+        qc.setFinalStatus("ok");
+        when(qcService.buildState(any())).thenReturn(qc);
+
+        List<ProductionStepVO> steps = service.listSteps(order(BizProductionOrder.STATUS_IN_PROGRESS));
+
         assertTrue(steps.get(8).getOperable());
         assertNull(steps.get(8).getLockReason());
     }

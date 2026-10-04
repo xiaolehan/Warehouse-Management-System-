@@ -33,6 +33,11 @@ public class BizPickList {
     private Long productionOrderId;
 
     /**
+     * 关联成品拆分单ID(拆分退料RETURN单专用,ADR-0020; production_order_id 置空规避终止单退料死端守卫)
+     */
+    private Long splitOrderId;
+
+    /**
      * 状态: 1-待发料, 2-已发料, 3-已完成, 4-已驳回
      */
     private Integer status;

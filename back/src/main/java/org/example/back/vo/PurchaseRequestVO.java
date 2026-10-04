@@ -38,6 +38,9 @@ public class PurchaseRequestVO {
     /** 会话 58：冻结原因作为短文案 */
     private String salesFrozenReason;
 
+    /** D114：销售冻结豁免（生产终止未撤销在途补料申请→1，采购可继续认领/到货） */
+    private Integer freezeExempt;
+
     private Long applicantId;
 
     private String applicantName;

@@ -94,6 +94,8 @@ public class SalesService {
 
     @Autowired
     private MessageService messageService;
+    @Autowired
+    private SplitOrderService splitOrderService;
 
     @Autowired
     private SysConfigService sysConfigService;
@@ -622,6 +624,8 @@ public class SalesService {
         for (SalesTerminateDTO.TerminateLine line : dto.getLines()) {
             BizSalesDetail detail = detailMap.get(line.getDetailId());
             notifyLineTerminatedToProduction(entity, detail, line.getReason().trim());
+            // ADR-0020/D116：行终止后若该行成品已生产入库未出库 → 通知仓储处置（保留成品/发起拆分）
+            splitOrderService.handleLineTerminated(entity, detail);
         }
 
         // Q22-1：表头汇总重算只计活跃行（已终止行保留可见，不进汇总/统计/确认出库）

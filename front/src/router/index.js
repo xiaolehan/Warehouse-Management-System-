@@ -34,6 +34,7 @@ const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/business/qc',
   '/business/production',
   '/business/pick-list',
+  '/business/split-order',
   '/business/stocktake',
   '/business/stock-warning',
   // 人事档案 + 工作要求（只读）
@@ -154,6 +155,13 @@ const router = createRouter({
           path: "business/pick-list",
           name: "BusinessPickList",
           component: () => import("../views/business/PickListView.vue"),
+          meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'production'] }
+        },
+        // ADR-0020/D116：成品拆分单（仓储+生产；员工可领单/提交退料）
+        {
+          path: "business/split-order",
+          name: "BusinessSplitOrder",
+          component: () => import("../views/business/SplitOrderView.vue"),
           meta: { roles: ['admin', 'employee'], deptCodes: ['warehouse', 'production'] }
         },
         {

@@ -255,6 +255,14 @@ public class ProductionPickService {
         // D107/review：终止离开待入库态——自动关闭待确认入库申请（置系统驳回+撤仓储待办+回执生产）
         productionOrderService.closePendingInboundApplication(orderId, "生产任务单已终止，入库申请自动关闭");
 
+        // D114 在途补料采购申请处置：勾选→同事务撤销；不勾选→豁免销售冻结（采购可继续认领/到货）；
+        // 未传（旧客户端）→ 不处理，维持会话 58 行为
+        if (Boolean.TRUE.equals(dto.getRevokePurchases())) {
+            purchaseRequestService.revokeByProductionOrderInternal(orderId, true);
+        } else if (Boolean.FALSE.equals(dto.getRevokePurchases())) {
+            purchaseRequestService.unfreezeInFlightByProductionOrder(orderId);
+        }
+
         // Q6 定案：已有进行中退料单 → 跳过自动生成
         if (!items.isEmpty() && findOpenReturn(orderId) == null) {
             insertReturnList(order, items, "生产任务单 " + order.getOrderNo() + " 终止退料：" + reason.trim());

@@ -367,6 +367,10 @@ public class PurchaseRequestService {
      * 放行"收尾类"动作（确认入库/到货撤销/到货驳回/驳回申请单/删除）。
      */
     private void ensureProductionSourceActive(BizPurchaseRequest entity) {
+        // D114：生产终止未撤销在途申请→豁免冻结（freeze_exempt=1），采购可继续认领/到货
+        if (Integer.valueOf(1).equals(entity.getFreezeExempt())) {
+            return;
+        }
         if (SOURCE_PRODUCTION.equals(entity.getSourceType()) && entity.getProductionOrderId() != null) {
             SalesTerminateGuard.FreezeInfo info = salesTerminateGuard.freezeInfo(
                     bizProductionOrderMapper.selectById(entity.getProductionOrderId()));
@@ -391,6 +395,10 @@ public class PurchaseRequestService {
                 .collect(Collectors.toMap(BizProductionOrder::getId, o -> o));
         for (PurchaseRequestVO vo : vos) {
             if (!SOURCE_PRODUCTION.equals(vo.getSourceType()) || vo.getProductionOrderId() == null) {
+                continue;
+            }
+            // D114：已豁免的申请不显示冻结（采购可继续认领/到货）
+            if (Integer.valueOf(1).equals(vo.getFreezeExempt())) {
                 continue;
             }
             BizProductionOrder order = orderMap.get(vo.getProductionOrderId());
@@ -446,6 +454,74 @@ public class PurchaseRequestService {
                     order.getOrderNo(), revokedNos, productionOrderId);
         }
         return revokedNos;
+    }
+
+    /**
+     * D114 内部撤销主体（信任调用方已完成权限与意图校验，不校验冻结前置——
+     * 终止弹窗勾选时单据尚未被标记冻结，勾选本身即生产管理员明确意图）：
+     * 撤 status in (1,2) 的生产来源在途申请（不按申请人过滤），撤消息 + 逻辑删单据与明细。
+     * @return 被撤销单号列表
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public List<String> revokeByProductionOrderInternal(Long productionOrderId, boolean notifyPurchaseAdmins) {
+        BizProductionOrder order = bizProductionOrderMapper.selectById(productionOrderId);
+        if (order == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<BizPurchaseRequest> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
+                .eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
+                .in(BizPurchaseRequest::getStatus, List.of(STATUS_PENDING, STATUS_PURCHASING));
+        List<BizPurchaseRequest> requests = bizPurchaseRequestMapper.selectList(wrapper);
+        List<String> revokedNos = new ArrayList<>();
+        for (BizPurchaseRequest request : requests) {
+            messageService.revokeUnreadByBiz("purchase_request", request.getId());
+            bizPurchaseRequestMapper.deleteById(request.getId());
+            bizPurchaseRequestDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                    .eq(BizPurchaseRequestDetail::getRequestId, request.getId()));
+            revokedNos.add(request.getRequestNo());
+        }
+        if (!revokedNos.isEmpty() && notifyPurchaseAdmins) {
+            messageService.sendPurchaseRequestRevokedToPurchaseAdmins(
+                    order.getOrderNo(), revokedNos, productionOrderId);
+        }
+        return revokedNos;
+    }
+
+    /**
+     * D114：生产终止不勾选撤销 → 在途补料申请豁免销售冻结（freeze_exempt=1），
+     * 采购可继续认领/到货；并通知采购管理员豁免情况。
+     * 仅处理 freeze_exempt=0 的在途行（幂等）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void unfreezeInFlightByProductionOrder(Long productionOrderId) {
+        BizProductionOrder order = bizProductionOrderMapper.selectById(productionOrderId);
+        if (order == null) {
+            return;
+        }
+        LambdaQueryWrapper<BizPurchaseRequest> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
+                .eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
+                .in(BizPurchaseRequest::getStatus, List.of(STATUS_PENDING, STATUS_PURCHASING))
+                .and(w -> w.isNull(BizPurchaseRequest::getFreezeExempt)
+                        .or().eq(BizPurchaseRequest::getFreezeExempt, 0));
+        List<BizPurchaseRequest> requests = bizPurchaseRequestMapper.selectList(wrapper);
+        if (requests.isEmpty()) {
+            return;
+        }
+        for (BizPurchaseRequest request : requests) {
+            LambdaUpdateWrapper<BizPurchaseRequest> updateWrapper = new LambdaUpdateWrapper<>();
+            updateWrapper.eq(BizPurchaseRequest::getId, request.getId())
+                    .eq(BizPurchaseRequest::getStatus, request.getStatus())
+                    .set(BizPurchaseRequest::getFreezeExempt, 1);
+            if (bizPurchaseRequestMapper.update(null, updateWrapper) != 1) {
+                throw BusinessException.validateFail("补料申请状态已变化，请刷新后重试");
+            }
+        }
+        messageService.sendPurchaseUnfrozenToPurchaseAdmins(
+                order.getOrderNo(),
+                requests.stream().map(BizPurchaseRequest::getRequestNo).toList(),
+                productionOrderId);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -1013,6 +1089,8 @@ public class PurchaseRequestService {
         vo.setRemark(entity.getRemark());
         vo.setCreateTime(entity.getCreateTime());
         vo.setIsDeleted(entity.getIsDeleted());
+        // D114：豁免标记透出（前端豁免行不再显示冻结禁用，或显示已豁免文案）
+        vo.setFreezeExempt(entity.getFreezeExempt());
         // 先填明细再派生状态文案——「部分入库」依赖行级 receive_status（D120）
         vo.setDetails(listDetails(entity.getId()).stream().map(this::toDetailVO).toList());
         vo.setStatusText(statusText(entity.getStatus(), vo.getDetails()));

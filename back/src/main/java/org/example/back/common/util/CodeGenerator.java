@@ -69,6 +69,10 @@ public final class CodeGenerator {
         return "ST" + timestampSuffix();
     }
 
+    public static String splitOrderNo() {
+        return "SPO" + timestampSuffix();
+    }
+
     private static String timestampSuffix() {
         return DateUtil.format(new Date(), "yyMMddHHmmss") + RandomUtil.randomNumbers(3);
     }

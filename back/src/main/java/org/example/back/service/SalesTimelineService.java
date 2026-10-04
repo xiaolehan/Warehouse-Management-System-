@@ -9,6 +9,7 @@ import org.example.back.entity.BizPurchaseRequest;
 import org.example.back.entity.BizPurchaseRequestDetail;
 import org.example.back.entity.BizSales;
 import org.example.back.entity.BizSalesDetail;
+import org.example.back.entity.BizSplitOrder;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizBomMapper;
 import org.example.back.mapper.BizProductionOrderMapper;
@@ -16,6 +17,7 @@ import org.example.back.mapper.BizPurchaseRequestDetailMapper;
 import org.example.back.mapper.BizPurchaseRequestMapper;
 import org.example.back.mapper.BizSalesDetailMapper;
 import org.example.back.mapper.BizSalesMapper;
+import org.example.back.mapper.BizSplitOrderMapper;
 import org.example.back.vo.KitShortageVO;
 import org.example.back.vo.ProductionStepVO;
 import org.example.back.vo.QcStateVO;
@@ -83,6 +85,9 @@ public class SalesTimelineService {
     @Autowired
     private AuthzService authzService;
 
+    @Autowired
+    private BizSplitOrderMapper splitOrderMapper;
+
     public SalesTimelineVO getTimeline(Long salesId) {
         // 与销售单读权限一致：销售/仓储部门成员 + 超管
         authzService.requireAnyDeptMemberOrSuperAdmin(
@@ -148,6 +153,7 @@ public class SalesTimelineService {
             nodes.add(node("terminated", "行终止", "done", detail.getTerminateTime(), desc));
             line.setEstimatedDeliveryText("已终止");
             line.setEstimatedSource("none");
+            fillSplitDisposition(line, sales, detail);
             line.setNodes(nodes);
             return line;
         }
@@ -162,6 +168,53 @@ public class SalesTimelineService {
     }
 
     // ============================== 无关联生产单 ==============================
+
+    /**
+     * ADR-0020/D116：行终止行的成品处置透出（仓储双按钮门控 + 展示字段）。
+     * canHandleSplit = 行终止 + 仓储管理员/超管 + 待处置(NULL/1) + 实时余量>0 + 无在途拆分单。
+     */
+    private void fillSplitDisposition(SalesTimelineLineVO line, BizSales sales, BizSalesDetail detail) {
+        boolean warehouseHandler = authzService.isSuperAdmin()
+                || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE);
+        boolean pending = detail.getSplitStatus() == null
+                || detail.getSplitStatus() == BizSalesDetail.SPLIT_PENDING_HANDLE;
+        int unshipped = unshippedInboundQty(sales, detail);
+        line.setSplitStatus(detail.getSplitStatus());
+        line.setUnshippedInboundQty(unshipped);
+        line.setSplitKeepName(detail.getSplitKeepName());
+        line.setSplitKeepTime(detail.getSplitKeepTime());
+        boolean hasActive = false;
+        BizSplitOrder active = splitOrderMapper.selectOne(new LambdaQueryWrapper<BizSplitOrder>()
+                .eq(BizSplitOrder::getSalesDetailId, detail.getId())
+                .in(BizSplitOrder::getStatus, List.of(
+                        BizSplitOrder.STATUS_PENDING_CLAIM,
+                        BizSplitOrder.STATUS_PENDING_OUTBOUND,
+                        BizSplitOrder.STATUS_PENDING_RECEIPT,
+                        BizSplitOrder.STATUS_SPLITTING,
+                        BizSplitOrder.STATUS_PENDING_RESTOCK))
+                .orderByDesc(BizSplitOrder::getId)
+                .last("LIMIT 1"));
+        if (active != null) {
+            line.setSplitOrderId(active.getId());
+            line.setSplitOrderNo(active.getSplitNo());
+            hasActive = true;
+        }
+        line.setCanHandleSplit(pending && warehouseHandler && unshipped > 0 && !hasActive);
+    }
+
+    /** ADR-0020：已入库未出库量 = 关联生产任务单（已完成=已确认入库）数量合计；已确认出库单为 0。 */
+    private int unshippedInboundQty(BizSales sales, BizSalesDetail detail) {
+        if (sales.getConfirmStatus() != null && sales.getConfirmStatus() == SalesService.CONFIRM_SHIPPED) {
+            return 0;
+        }
+        List<BizProductionOrder> doneOrders = productionOrderMapper.selectList(
+                new LambdaQueryWrapper<BizProductionOrder>()
+                        .eq(BizProductionOrder::getSalesOrderId, sales.getId())
+                        .eq(BizProductionOrder::getGoodsId, detail.getGoodsId())
+                        .eq(BizProductionOrder::getStatus, BizProductionOrder.STATUS_DONE));
+        return doneOrders.stream()
+                .mapToInt(o -> o.getQuantity() == null ? 0 : o.getQuantity()).sum();
+    }
 
     private void buildNoOrderNodes(SalesTimelineLineVO line, List<SalesTimelineNodeVO> nodes,
                                    int stock, boolean shipped, LocalDateTime shippedTime) {

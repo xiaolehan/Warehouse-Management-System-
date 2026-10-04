@@ -63,6 +63,9 @@ public class PickListService {
     @Autowired
     private BizProductionOrderMapper bizProductionOrderMapper;
 
+    @Autowired
+    private SplitOrderService splitOrderService;
+
     // ============================== 查询 ==============================
 
     public PageResult<PickListVO> page(PickListQueryDTO queryDTO) {
@@ -185,6 +188,10 @@ public class PickListService {
         }
         // 发料/收料成功：撤销之前可能存在的缺料反馈待办（已不再缺料）
         messageService.revokeUnreadByBiz("pick_list", id);
+        // ADR-0020：拆分退料 RETURN 收料入库 → 拆分单完成（完成方式=退料完成）+ 行处置回算
+        if (entity.getSplitOrderId() != null) {
+            splitOrderService.onSplitReturnCompleted(entity.getSplitOrderId(), entity.getPickNo());
+        }
         // 生产来源单据发料/收料成功 → 通知生产端（领料=可开工；退料=已收料入库闭环）
         if (entity.getProductionOrderId() != null) {
             String orderNo = null;
@@ -258,7 +265,10 @@ public class PickListService {
         // 驳回反馈：按来源分流（REQUIRES_NEW 独立提交）。先发通知再撤销未读——
         // 若先 revoke(父事务对 sys_message 加锁)，独立子事务的 INSERT 会等父锁而超时。
         String reason = "仓储驳回领料：" + dto.getReason();
-        if (entity.getProductionOrderId() != null) {
+        if (entity.getSplitOrderId() != null) {
+            // ADR-0020：拆分退料驳回 → 回执生产领取人（清关联可重提），不通知销售
+            splitOrderService.onSplitReturnRejected(entity.getSplitOrderId(), entity.getPickNo(), reason);
+        } else if (entity.getProductionOrderId() != null) {
             messageService.sendPickIssueFailedToProductionAdmins(
                     entity.getPickNo(), reason, id);
         } else {

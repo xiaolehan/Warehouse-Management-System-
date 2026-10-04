@@ -511,6 +511,8 @@ class ProductionOrderServiceTest {
         when(productionMapper.selectList(any())).thenReturn(List.of());
         when(baseGoodsMapper.selectById(29L)).thenReturn(product29());
         when(authService.getUserInfo()).thenReturn(productionUser());
+        // D113 顺序闸：全部人工工序已打卡（mock 默认 Integer 返回 0 会误触闸，显式置 null 放行）
+        when(productionStepService.firstUncompletedManualStep(any())).thenReturn(null);
 
         service.receipt(7L);
 
@@ -535,6 +537,8 @@ class ProductionOrderServiceTest {
         pending.setConfirmStatus(org.example.back.entity.BizProduction.CONFIRM_PENDING);
         pending.setBizStatus(1);
         when(productionMapper.selectList(any())).thenReturn(List.of(pending));
+        // D113 顺序闸放行（mock 默认 Integer 返回 0 会误触闸，显式置 null）
+        when(productionStepService.firstUncompletedManualStep(any())).thenReturn(null);
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.receipt(7L));
         assertTrue(ex.getMessage().contains("待仓储确认的入库申请"), "实际: " + ex.getMessage());

@@ -5,6 +5,39 @@
 
 ---
 
+## 会话 62 — 2026-10-02
+
+### 四项需求 grilling 定稿（D112–D116）+ ADR-0020 + CONTEXT 词条落地，进入实现
+
+- **grilling 收敛**（/grill-with-docs，三轮）：Q1 仓储快捷卡「供应商管理」→「成品管理」（D112，顺带修 403 死链）；Q2 工序打卡流程闸（D113 修订 D64：顺序打卡闸 1→2→3→4→5→7→9 + 入库申请闸（7 道全完成才能提交入库申请）+ 仓储确认入库复验（Q3=a：拦截并给出具体工序提示，仓储选择等待补打卡或驳回）+ 栈式撤销（仅可撤销最后一道已打卡工序，中间工序不可直接撤销——用户明确「1,2,3 打卡后撤 3、3 再打卡才能到 4」）+ D125 质检闸继续生效）；Q3 终止弹窗提示词改锁定文案（D114：替换为「该任务单有 N 张在途补料采购申请（单号列表）。若销售已终止此单关联的销售单…请勿勾选」）+ **Option B（未勾选→解冻）**：生产终止不勾选撤销时，在途补料申请打 `freeze_exempt=1` 豁免销售冻结（采购可继续认领/到货/入库成可用库存）+ 采购侧解冻通知；Q4 履约进度双按钮（D115）+ 成品拆分单（D116，ADR-0020）：7 态状态机、BOM×数量快照、RETURN 复用（productionOrderId=null + splitOrderId，规避 isTerminatedOrderReturn 闸）、放弃→待仓储确认成品回库两段式、作废仅限未动库存。
+- **文档产出**：`docs/adr/0020-product-split-order.md`（成品拆分单 ADR）；CONTEXT.md 三词条落地（工序打卡 D113 语义重写 / 手动终止 D114 解冻语义 / 新增「成品拆分」词条）。
+- **后端实现（全部编译通过 BUILD SUCCESS，未提交）**：
+  - **D113 工序闸**：ProductionStepService complete() 顺序闸（ensurePreviousStepsDone 拦截跳步，报首道未完成工序）+ revoke() 栈式撤销闸（ensureRevokingLastDone，仅最后一道已打卡可撤）+ listSteps() operable/revocable 锁定与 lockReason（顺序锁定优先于 D125 质检锁定）+ 公开 firstUncompletedManualStep()；ProductionOrderService.receipt() 入库申请第一段闸；ProductionService.confirmInbound() 仓储确认入库复验（申请提交后打卡可能被撤销）。
+  - **D114 解冻**：ProductionTerminateDTO +revokePurchases 三值口径（true=撤销/false=豁免冻结/null=旧客户端不处理）；ProductionPickService.terminate() 分支；PurchaseRequestService +revokeByProductionOrderInternal(orderId, notify)（终止弹窗入口，不校验冻结前置+不按申请人过滤）+ unfreezeInFlightByProductionOrder（freeze_exempt=1 条件更新+采购侧解冻通知）+ ensureProductionSourceActive 豁免早退 + fillSalesFrozen 豁免跳过 + PurchaseRequestVO.freezeExempt 透出。
+  - **D116 成品拆分单**：SplitOrderService 全状态机（create/claim/confirmOutbound 扣库存/confirmReceipt/abandon（1/2 直接完成、3/4→7）/submitReturn 生成 RETURN（productionOrderId=null+splitOrderId）/confirmRestock 加库存/voidOrder（1/2 态）/onSplitReturnCompleted/onSplitReturnRejected/recalcDispositionAfterSplit 余量回算+重发通知/handleLineTerminated/keepProduct）+ 私有库存助手 + BOM×数量快照（CEILING 取整，跳过未绑物料行）；SplitOrderController `/business/split-orders`（12 端点）；SplitOrderCreateDTO/VoidDTO/ReturnSubmitDTO/QueryDTO + SplitOrderVO/DetailVO；BizSalesDetail +SPLIT_* 常量；MessageService +sendSplitReturnPendingToWarehouseAdmins（第 12 个拆分发送器）；SalesService.terminate() 逐行 handleLineTerminated 联动；PickListService issue()/reject() 拆分回调分支（split RETURN 驳回不再误通知销售）；SalesTimelineService.fillSplitDisposition（canHandleSplit 门控=行终止+仓储管理员+待处置+余量>0+无在途拆分单）+ SalesTimelineLineVO +7 字段。
+- **踩坑**：Edit 长中文锚点反复出现 token 损坏（Bizzle_placeholder/de Tail_placeholder/15锁/多余括号），均已逐一发现并修复——**后续 Edit 一律短锚点+写后 grep 验证**。
+- **前端实现（全部完成，npm run build ✓ 9.93s）**：
+  - **D112**：AdminHome 仓储快捷卡「供应商管理」→「成品管理」（`/base/products`，顺带修 403 死链）。
+  - **D114**：ProductionOrderView 终止弹窗 alert 文案改锁定版（N 张在途单号列表+勾选指引）；doTerminate 改为 `revokePurchases: terminateRevokePurchases.value` 随终止 payload **原子提交**（true=同事务撤销/false=豁免冻结采购可继续），独立 revoke API 调用移除、revokeByProductionOrderAPI 导入删除；成功 toast 区分撤销/豁免两种结果。
+  - **D115/D116**：SalesTimeline 履约进度新增行终止处置块（canHandleSplit 门控双按钮 保留成品/发起拆分 + 拆分状态 tag + 拆分单号深链 + 保留人留痕）+ 发起拆分数量弹窗（默认=已入库未出库量，可部分）；新页 SplitOrderView（7 态状态机操作列按角色门控：生产=领取/确认领到/提交退料/放弃，仓储=admin 出库/回库/作废；canProductionSide=生产 admin∨认领人本人，与后端 requireProductionSideAccess 同口径；退料弹窗默认全量预填+减量行差异备注必填前端预检）；api/splitOrder.js 12 端点封装；路由 +/business/split-order（warehouse+production，admin+employee）+ 超管白名单；layout 四处菜单（仓储 admin/生产 admin/生产员工/超管只读）。
+  - 新文件 front/src/api/splitOrder.js + front/src/views/business/SplitOrderView.vue（Write 后 token 损坏 5 处：模板闭合/重复 v-if/缺箭头/双 catch/unified，已逐一修复并 grep 复核清零）。
+- **单测（458/458 全绿，BUILD SUCCESS，451→458）**：
+  - ProductionStepServiceTest +7：complete_rejectsSkippedPrevious（跳步闸）/revoke_rejectsWhenLaterStepDone + revoke_lastDone_allLaterUndone_passes（栈式撤销）/listSteps 四态重写补全（顺序锁定优先于质检锁定、质检锁定释放、9 道双闸）。
+  - ProductionPickServiceTest +2：terminate 分发双路（revokePurchases=true→revokeByProductionOrderInternal、false→unfreezeInFlightByProductionOrder）。
+  - ProductionOrderServiceTest 两个 receipt 用例补 `firstUncompletedManualStep→null` stub；SalesServiceTest 补 `@Mock SplitOrderService`（修 4 个 terminate NPE）。
+  - **Mockito 陷阱（新）**：未 stub 的 mock 方法返回 `Integer` 时默认 **0**（装箱基本类型），不是 null——`firstUncompletedManualStep` 未 stub 返回 0 导致 `PROCESS_STEPS[0-1]` ArrayIndexOutOfBounds；必须显式 `thenReturn(null)`。
+  - **D113 闸重构**：ensurePreviousStepsDone/ensureRevokingLastDone 从逐道 selectOne 改为单次 selectList 构 `manualStepsByNo` map（生产路径 1 条查询 vs 最多 6 条），与 allPreviousStepsDone 展示口径一致。
+- **E2E（48/48 全通过，跨零点 5 轮迭代收口）**：/tmp/e2e_d113_d116.sh——D113 十二项（跳工序×2/栈撤销×2/QC 闸×2/终检合格后打 9/入库申请/待入库撤销锁定/确认入库/库存+2）+ D116 拆分主流程（终止→canHandleSplit(仓储视角)→超额负测→领取→出库−2→收货→退料→RETURN issue 收料→物料回库→终态 5(退料完成)→回算）+ C 链（作废 1→6→canHandleSplit 恢复→重开→部分拆分 qty=1→领取→1/2 态放弃直达 5→保留成品 splitStatus=2→重复保留负测）+ D 链（出库−1→收货→3/4 态放弃→7→确认回库 7→5→库存回补）+ D114 双路终止。
+- **E2E 踩坑五连（逐一定位修复）**：
+  1. **db.sql 缺列**：实体 BizSplitOrder.initTime（setInitTime 在 create/VO 透出）但 DDL 无 `init_time` → 拆分单任何查询 500（Unknown column）。db.sql CREATE TABLE 补列 + 本地 ALTER 落库——**新表 DDL 落库验证别只看编译**。
+  2. **状态机语义**：终检 OK 即自动 AWAIT_QC（QcService），`complete`（完工）是 IN_PROGRESS→DONE 的独立支路不接入库流；正确链=1-5→首检→7→终检(自动待入库)→9→receipt→confirm-inbound（**其 {id} 是入库单 BizProduction.id 非任务单 id**，用 production/page?goodsId 取 records[0]）。入库闸负测可达路径=终检 OK 后、打 9 前 receipt。
+  3. **@PreventDuplicateSubmit 按 URL 记键（默认 1200ms）**：负测调用与后续同 URL 正调必须 sleep 2 隔开（工序打卡/拆分建单/生产建单均中招）。
+  4. **D113 配套锁**：终检合格（待入库态）后撤销打卡被拦「订单已进入待入库…无法撤销」——撤销 9 再混过 receipt 的路径不存在，闸闭环成立。
+  5. **细节数据口径**：canHandleSplit 仅仓储管理员视角为 true（断言要用 WH token）；拆分明细数量字段是 `requiredQuantity`；**RETURN 退料收料=PUT issue（收料入库即完成），confirm 会 400**（会话 60 教训复犯）；物料被后续链消耗导致绝对值断言要用即时基线。
+- **测试数据收尾**：物料/成品库存按 E2E 前快照（/tmp/e2e_stock_snapshot.txt，成品 9=2、顶盖=0 等 17 项）SQL 恢复原值（已核对）；生产单 18/20（待生产残留）API 作废（STATUS_VOIDED=5）；订单 21-30/33-36 等中间态单据按惯例保留作历史；本轮 4 张销售单（行终止）+ 拆分单 5 张保留。
+- **收尾与交接**：单测复跑 458/458（BUILD SUCCESS）→ commit（feat: D112–D116，44 文件 +2921/−31，含 15 个 SplitOrder 新文件 + ADR-0020）→ shell push 实测无通路（git fetch 挂起、push 被分类器拦）→ push 交用户 VS Code；交接文档 /tmp/handoff-wms-session62.md（/tmp 重启即丢，要点已并入本节）。
+- **下一步**：用户 VS Code 推送 → 用户统一手测（http://localhost:5173 硬刷新+重登）→ 反馈修复或开启下一项开发。
+
 ## 会话 61 — 2026-10-01
 
 ### 需求三：销售取消全链路联动（三通道冻结同口径 + 采购半闸门 + 一键撤销 + 前端显性化 + 下达刷新）——单测 451 全绿 + curl E2E 全链通过，待用户统一手测

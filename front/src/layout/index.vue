@@ -66,6 +66,8 @@
           <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <!-- ADR-0020/D116：成品拆分单（仓储确认成品出库/回库/作废） -->
+          <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货入库确认</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料入库确认</span></el-menu-item>
@@ -101,6 +103,8 @@
           <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <!-- ADR-0020/D116：成品拆分单（生产领取/提交拆分退料） -->
+          <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
           <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
           <!-- D130：普通采购申请创建权从仓储移到生产 -->
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
@@ -112,6 +116,7 @@
           <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
         </template>
 
         <!-- 业务部门员工（D32）：销售/采购员工可建单与查看，库存变更仍由仓储/admin 确认 -->
@@ -174,6 +179,7 @@
             <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
             <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
             <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+            <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
             <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
             <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
           </el-sub-menu>

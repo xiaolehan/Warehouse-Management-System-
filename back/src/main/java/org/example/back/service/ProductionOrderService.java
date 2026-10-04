@@ -48,6 +48,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -540,6 +541,13 @@ public class ProductionOrderService {
         salesTerminateGuard.ensureSalesLineActive(order);
         // 质检前置校验：首测+成品测最新均 OK 且未报废
         qcService.ensurePassedForReceipt(id);
+        // D113 顺序打卡闸：全部人工工序打卡完成后才能提交入库申请（D107 两段式第一段闸）
+        Integer uncompletedStep = productionStepService.firstUncompletedManualStep(order);
+        if (uncompletedStep != null) {
+            throw BusinessException.validateFail(String.format(Locale.ROOT,
+                    "该任务单第 %d 道「%s」工序打卡未完成，无法提交成品入库申请",
+                    uncompletedStep, ProductionStepService.PROCESS_STEPS[uncompletedStep - 1]));
+        }
         // D107：同一生产单至多一笔待确认入库申请
         if (findPendingInbound(id) != null) {
             throw BusinessException.validateFail("该生产任务单已有待仓储确认的入库申请，如需调整请先撤销再重新提交");

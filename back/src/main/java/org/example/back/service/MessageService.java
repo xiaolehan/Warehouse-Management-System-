@@ -43,6 +43,7 @@ public class MessageService {
     private static final String ROUTE_PRODUCTION_ORDER = "/business/production-order";
     private static final String ROUTE_PRODUCTION = "/business/production";
     private static final String ROUTE_VOID_APPROVAL = "/system/void-approval";
+    private static final String ROUTE_SPLIT_ORDER = "/business/split-order";
 
     @Autowired
     private SysMessageMapper sysMessageMapper;
@@ -865,6 +866,249 @@ public class MessageService {
                 "pick_list",
                 pickId,
                 ROUTE_PICK_LIST);
+    }
+
+    // ==================== 成品拆分（ADR-0020 / D115）+ D114 解冻通知 ====================
+
+    /**
+     * D115 行终止处置通知：销售明细行终止且已入库未出库量>0 → 通知仓储管理员二选一处置。
+     * 绑 biz_type=sales_detail_split + biz_id=销售明细行 id（D21 范式）；保留成品/发起拆分时撤未读，拆分单作废回退待处理时重发。
+     */
+    public void sendSalesDetailSplitHandleNoticeToWarehouse(String salesNo, String goodsName, int unshippedQty, Long salesDetailId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "成品拆分处置待处理",
+                String.format(Locale.ROOT,
+                        "销售单 %s 明细行（成品 %s）已行终止，尚有 %d 件已入库未出库成品，请在履约进度中选择「保留成品」或「发起成品拆分」。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        unshippedQty),
+                "sales_detail_split",
+                salesDetailId,
+                ROUTE_SALES);
+    }
+
+    /**
+     * D115 保留成品回执：仓储选「保留成品」→ 撤销处置待处理消息（调用方负责）+ 回执生产管理员留痕。
+     * 绑 biz_type=sales_detail_split + biz_id=销售明细行 id。
+     */
+    public void sendSalesDetailKeptToProductionAdmins(String salesNo, String goodsName, String keeperName, Long salesDetailId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "行终止成品已保留",
+                String.format(Locale.ROOT,
+                        "销售单 %s 明细行（成品 %s）已由仓储管理员 %s 保留成品，库存正常保留，无需拆分处理。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        keeperName == null ? "-" : keeperName),
+                "sales_detail_split",
+                salesDetailId,
+                ROUTE_SALES);
+    }
+
+    /**
+     * D115 拆分单创建：仓储发起成品拆分 → 通知生产管理员领取。
+     * 绑 biz_type=split_order + biz_id=拆分单 id（D21 范式），作废时撤未读。
+     */
+    public void sendSplitOrderCreatedToProductionAdmins(String splitNo, String goodsName, int quantity,
+                                                        String salesNo, Long splitOrderId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "待领取成品拆分任务",
+                String.format(Locale.ROOT,
+                        "销售单 %s 行终止成品（%s × %d）已由仓储发起拆分（拆分单 %s），请领取后到仓库领取成品并拆解。",
+                        salesNo == null ? "-" : salesNo,
+                        goodsName == null ? "-" : goodsName,
+                        quantity,
+                        splitNo == null ? "-" : splitNo),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分单领取：生产领取人领取 → 通知仓储管理员确认成品出库。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitOrderClaimedToWarehouseAdmins(String splitNo, String claimerName, Long splitOrderId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认拆分成品出库",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 已由生产端 %s 领取，请确认成品出库。",
+                        splitNo == null ? "-" : splitNo,
+                        claimerName == null ? "-" : claimerName),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分成品出库确认回执：仓储确认成品出库（库存扣减）→ 通知生产领取人确认收货。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitOrderOutboundConfirmedToProduction(Long claimantUserId, String splitNo, Long splitOrderId) {
+        sendToUserWithBiz(
+                claimantUserId,
+                "拆分成品已出库，请确认收货",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 的成品已由仓储确认出库，请确认收货后开始拆分。",
+                        splitNo == null ? "-" : splitNo),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分放弃回库：生产在 3/4 态放弃拆分 → 通知仓储管理员确认成品回库（仓储确认才加库存）。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitOrderAbandonedToWarehouseAdmins(String splitNo, String abandonerName, Long splitOrderId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认拆分成品回库",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 已由生产端 %s 放弃拆分，成品暂存生产端，请确认成品回库（确认后库存恢复）。",
+                        splitNo == null ? "-" : splitNo,
+                        abandonerName == null ? "-" : abandonerName),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分退料待收料：拆分中生产提交 RETURN 退料单 → 通知仓储管理员确认物料回流入库。
+     * 绑 biz_type=split_order + biz_id=拆分单 id（RETURN 单本身挂在领料模块，深链回拆分单页）。
+     */
+    public void sendSplitReturnPendingToWarehouseAdmins(String splitNo, String pickNo, Long splitOrderId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                "待确认拆分退料入库",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 的拆分退料单 %s 已由生产端提交，请确认物料回流入库。",
+                        splitNo == null ? "-" : splitNo,
+                        pickNo == null ? "-" : pickNo),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 放弃回库完成回执：仓储确认成品回库 → 通知生产领取人（完成方式=放弃回库）。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitOrderRestockedToProduction(Long claimantUserId, String splitNo, Long splitOrderId) {
+        sendToUserWithBiz(
+                claimantUserId,
+                "拆分成品已回库，拆分单完成",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 的成品已由仓储确认回库，拆分单以「放弃回库」方式完成。",
+                        splitNo == null ? "-" : splitNo),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分退料完成回执：仓储确认拆分 RETURN 退料入库 → 通知生产领取人（完成方式=退料完成）。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitReturnCompletedToProduction(Long claimantUserId, String splitNo, String pickNo, Long splitOrderId) {
+        sendToUserWithBiz(
+                claimantUserId,
+                "拆分退料已入库，拆分单完成",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 的退料单 %s 已由仓储确认入库，物料已回流仓库，拆分单以「退料完成」方式完成。",
+                        splitNo == null ? "-" : splitNo,
+                        pickNo == null ? "-" : pickNo),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分退料驳回回执：仓储驳回拆分 RETURN 退料 → 通知生产领取人重新提交。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitReturnRejectedToProduction(Long claimantUserId, String splitNo, String pickNo,
+                                                    String rejectReason, Long splitOrderId) {
+        sendToUserWithBiz(
+                claimantUserId,
+                "拆分退料被驳回",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 的退料单 %s 已被仓储驳回，请修改后重新提交退料。%s",
+                        splitNo == null ? "-" : splitNo,
+                        pickNo == null ? "-" : pickNo,
+                        StringUtils.hasText(rejectReason) ? "驳回原因：" + rejectReason : ""),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D115 拆分单作废：仓储作废未动库存的拆分单（1/2 态）→ 通知生产管理员。
+     * 绑 biz_type=split_order + biz_id=拆分单 id。
+     */
+    public void sendSplitOrderVoidedToProductionAdmins(String splitNo, String voiderName, Long splitOrderId) {
+        Long productionDeptId = resolveDeptIdByCode(AuthzService.DEPT_PRODUCTION);
+        if (productionDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                productionDeptId,
+                "拆分单已作废",
+                String.format(Locale.ROOT,
+                        "拆分单 %s 已由仓储管理员 %s 作废，未产生库存变动；行终止成品回到待处置状态。",
+                        splitNo == null ? "-" : splitNo,
+                        voiderName == null ? "-" : voiderName),
+                "split_order",
+                splitOrderId,
+                ROUTE_SPLIT_ORDER + "?splitOrderId=" + splitOrderId);
+    }
+
+    /**
+     * D114 解冻通知：生产终止未勾选撤销 → 在途补料采购申请豁免销售冻结 → 通知采购管理员可继续采购。
+     * 绑 biz_type=production_order + biz_id=任务单 id（对齐既有冻结消息）。
+     */
+    public void sendPurchaseUnfrozenToPurchaseAdmins(String orderNo, java.util.List<String> requestNos, Long orderId) {
+        Long purchaseDeptId = resolveDeptIdByCode(AuthzService.DEPT_PURCHASE);
+        if (purchaseDeptId == null || requestNos == null || requestNos.isEmpty()) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                purchaseDeptId,
+                "关联补料采购申请已解除冻结",
+                String.format(Locale.ROOT,
+                        "生产任务单 %s 已由生产端终止（未撤销补料申请），关联在途补料采购申请 %s 已豁免销售冻结，可继续认领与到货入库。",
+                        orderNo == null ? "-" : orderNo,
+                        String.join("、", requestNos)),
+                "production_order",
+                orderId,
+                ROUTE_PURCHASE_REQUEST);
     }
 
     /**

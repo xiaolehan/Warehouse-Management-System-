@@ -642,7 +642,7 @@
         <!-- 需求二 Q17 + 会话 58：在途补料采购申请提示 + 一键撤销勾选（撤销权=申请人本人或生产管理员，仅任务单已冻结时可用） -->
         <el-alert
           v-if="terminateInFlightPurchases.length"
-          :title="`该任务单有 ${terminateInFlightPurchases.length} 张在途补料采购申请（${terminateInFlightPurchases.join('、')}）。若销售已取消该需求，可勾选一并撤销（采购侧将收到通知）；销售未取消时请勿勾选。`"
+          :title="`该任务单有 ${terminateInFlightPurchases.length} 张在途补料采购申请（${terminateInFlightPurchases.join('、')}）。若销售已终止此单关联的销售单，且生产认为此批采购物料暂不可用，可勾选一并撤销补料申请；若终止原因并非销售终止关联单，仍需采购此批物料，请勿勾选。`"
           type="warning" :closable="false" style="margin-bottom: 12px"
         />
         <el-form-item v-if="terminateInFlightPurchases.length" label=" ">
@@ -739,7 +739,7 @@ import { getLatestSuppliersAPI } from '@/api/business' // D129：补料缺口行
 import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import DocumentTimeline from '@/components/DocumentTimeline.vue'
 import { getGoodsProductOptionsAPI, getGoodsMaterialOptionsAPI } from '@/api/base'
-import { createDraftPurchaseRequestAPI, revokeByProductionOrderAPI } from '@/api/purchaseRequest'
+import { createDraftPurchaseRequestAPI } from '@/api/purchaseRequest'
 import { createProductionPickAPI, getProductionPickListAPI, createProductionReturnAPI, getProductionReturnableAPI, terminateProductionOrderAPI, confirmPickListAPI } from '@/api/pickList'
 import { useUserStore } from '@/stores/user'
 import { canAccessRoles, getDeptCode, getRole, hasDeptAccess, isSuperAdmin } from '@/utils/auth'
@@ -1355,23 +1355,18 @@ async function doTerminate() {
     const items = terminateItems.value
       .filter((i) => i.quantity >= 0)
       .map((i) => ({ goodsId: i.goodsId, quantity: i.quantity, diffReason: i.diffReason && i.diffReason.trim() ? i.diffReason.trim() : null }))
+    // D114：revokePurchases 随终止 payload 原子提交——true=同事务撤销在途补料申请；false=豁免销售冻结（采购可继续）
     await terminateProductionOrderAPI(terminateRow.value.id, {
       reason: terminateReason.value.trim(),
-      items
+      items,
+      revokePurchases: terminateRevokePurchases.value
     })
-    ElMessage.success(items.length ? '已终止，退料单已提交仓储确认入库' : '已终止')
+    const base = items.length ? '已终止，退料单已提交仓储确认入库' : '已终止'
+    const suffix = terminateInFlightPurchases.value.length
+      ? (terminateRevokePurchases.value ? '；在途补料采购申请已一并撤销' : '；在途补料采购申请已豁免销售冻结，采购可继续')
+      : ''
+    ElMessage.success(base + suffix)
     terminateVisible.value = false
-    // 会话 58：勾选了「一并撤销在途补料采购申请」→ 调一键撤销（失败不阻塞终止本身）
-    if (terminateRevokePurchases.value && terminateInFlightPurchases.value.length) {
-      try {
-        const revoked = await revokeByProductionOrderAPI(terminateRow.value.id)
-        const nos = revoked.data || []
-        if (nos.length) ElMessage.success(`已一并撤销在途补料采购申请：${nos.join('、')}`)
-        else ElMessage.info('没有可撤销的在途补料采购申请（可能已被撤销或已收尾）')
-      } catch {
-        // 业务错误已由拦截器统一提示
-      }
-    }
     await loadList()
   } catch {
     // 业务错误已由拦截器统一提示

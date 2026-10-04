@@ -592,6 +592,39 @@ class ProductionPickServiceTest {
     }
 
     @Test
+    void terminate_revokePurchasesTrue_revokesInFlightRequests() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_PENDING));
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("销售单取消，补料无需继续");
+        dto.setItems(List.of());
+        dto.setRevokePurchases(true);
+
+        service.terminate(7L, dto);
+
+        // D114：勾选撤销 → 同事务撤销在途补料申请（不豁免冻结）
+        verify(purchaseRequestService).revokeByProductionOrderInternal(7L, true);
+        verify(purchaseRequestService, never()).unfreezeInFlightByProductionOrder(any());
+    }
+
+    @Test
+    void terminate_revokePurchasesFalse_unfreezesInFlightRequests() {
+        mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_PENDING));
+        when(productionOrderMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        ProductionTerminateDTO dto = new ProductionTerminateDTO();
+        dto.setReason("非销售关联终止，仍需此批物料");
+        dto.setItems(List.of());
+        dto.setRevokePurchases(false);
+
+        service.terminate(7L, dto);
+
+        // D114：不勾选 → 豁免销售冻结（freeze_exempt=1，采购可继续），不撤销
+        verify(purchaseRequestService).unfreezeInFlightByProductionOrder(7L);
+        verify(purchaseRequestService, never()).revokeByProductionOrderInternal(
+                any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
     void terminate_openReturnExists_skipsAutoCreate() {
         mockTerminateBase(terminatableOrder(BizProductionOrder.STATUS_IN_PROGRESS));
         mockReturnableData(6);

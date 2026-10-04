@@ -72,6 +72,8 @@ class SalesServiceTest {
     @Mock private SysConfigService sysConfigService;
     @Mock private SalesReturnService salesReturnService;
     @Mock private BizBomMapper bizBomMapper;
+    // ADR-0020/D116：行终止联动成品拆分处置（terminate 逐行回调，默认 no-op）
+    @Mock private SplitOrderService splitOrderService;
 
     @InjectMocks private SalesService service;
 

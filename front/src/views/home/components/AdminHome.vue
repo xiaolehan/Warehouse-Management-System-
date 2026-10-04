@@ -163,7 +163,7 @@ const quickActions = computed(() => {
       { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存商品明细' }
     ],
     warehouse: [
-      { path: '/base/supplier', title: '供应商管理', description: '维护供应商信息与合作资料' },
+      { path: '/base/products', title: '成品管理', description: '维护成品资料与 BOM 配方信息' },
       { path: '/base/goods', title: '物料管理', description: '维护库存物料资料与阈值' },
       { path: '/business/stock-warning', title: '预警中心', description: '集中查看库存异常并跟进处理' },
       { path: '/system/void-approval', title: '作废审批', description: '审核采购与销售历史单据作废申请' }

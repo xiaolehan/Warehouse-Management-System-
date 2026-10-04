@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -107,6 +108,8 @@ public class ProductionStepService {
         if (step.getStatus() != null && step.getStatus() == BizProductionOrderStep.STATUS_DONE) {
             throw BusinessException.validateFail("该工序已完成打卡，无需重复操作");
         }
+        // D113 顺序打卡闸：只有上一道人工工序打卡后才能打下一道（首道无前置；跳步被拒）
+        ensurePreviousStepsDone(orderId, stepNo);
         // D125 工序-质检顺序门禁：工序 7 需首测最新一次合格，工序 9 需成品测最新一次合格
         validateStepGate(order, stepNo);
         LoginResponse.UserInfoVO user = authService.getUserInfo();
@@ -140,6 +143,8 @@ public class ProductionStepService {
         }
         // D125 撤销保护：撤销不得使已发生的质检门禁失效（守卫在任何写库动作之前）
         validateRevokeProtection(order, stepNo);
+        // D113 栈式撤销：只有最后一道已打卡的人工工序可以撤销（用户口径：1打卡2打卡3打卡后撤销，只能撤3）
+        ensureRevokingLastDone(orderId, stepNo);
         LambdaUpdateWrapper<BizProductionOrderStep> uw = new LambdaUpdateWrapper<>();
         uw.eq(BizProductionOrderStep::getId, step.getId())
                 .set(BizProductionOrderStep::getStatus, BizProductionOrderStep.STATUS_UNDONE)
@@ -177,10 +182,25 @@ public class ProductionStepService {
             vo.setStepName(PROCESS_STEPS[i]);
             if (MANUAL_STEP_NOS.contains(stepNo)) {
                 applyManualLine(vo, byNo.get(stepNo), operableStatus);
-                // D125：门禁锁定——未解锁工序 operable=false + lockReason（前端灰置+提示；complete() 仍强校验）
-                if (!Boolean.TRUE.equals(vo.getDone()) && stepGateLocked(qc, stepNo)) {
+                // D113：顺序锁定——前置人工工序未全完成时灰置后续工序（complete() 仍强校验）
+                if (!Boolean.TRUE.equals(vo.getDone()) && operableStatus && !allPreviousManualStepsDone(byNo, stepNo)) {
+                    Integer firstUncompleted = firstUncompletedBefore(byNo, stepNo);
+                    vo.setOperable(false);
+                    vo.setLockReason(String.format(Locale.ROOT,
+                            "第 %d 道「%s」工序打卡未完成，请先完成前置工序打卡",
+                            firstUncompleted, PROCESS_STEPS[firstUncompleted - 1]));
+                } else if (!Boolean.TRUE.equals(vo.getDone()) && stepGateLocked(qc, stepNo)) {
+                    // D125：门禁锁定——未解锁工序 operable=false + lockReason（前端灰置+提示；complete() 仍强校验）
                     vo.setOperable(false);
                     vo.setLockReason(stepGateMessage(stepNo));
+                }
+                // D113 栈式撤销：只有最后一道已打卡工序可撤销
+                if (Boolean.TRUE.equals(vo.getRevocable()) && !isLastDoneManualStep(byNo, stepNo)) {
+                    Integer nextDone = firstDoneAfter(byNo, stepNo);
+                    vo.setRevocable(false);
+                    vo.setLockReason(String.format(Locale.ROOT,
+                            "仅最后一道已打卡工序可撤销，请先撤销第 %d 道「%s」",
+                            nextDone, PROCESS_STEPS[nextDone - 1]));
                 }
             } else if (stepNo == 6) {
                 applyQcLine(vo, qc.getFirstStatus());
@@ -192,6 +212,111 @@ public class ProductionStepService {
             result.add(vo);
         }
         return result;
+    }
+
+    // ==================== D113 顺序打卡闸 ====================
+
+    /**
+     * D113 顺序打卡闸：stepNo 之前的人工工序必须全部已打卡（首道无前置；跳步被拒）。
+     */
+    private void ensurePreviousStepsDone(Long orderId, int stepNo) {
+        Map<Integer, BizProductionOrderStep> byNo = manualStepsByNo(orderId);
+        for (int prev : MANUAL_STEP_NOS) {
+            if (prev >= stepNo) {
+                break;
+            }
+            if (!isDoneStep(byNo.get(prev))) {
+                throw BusinessException.validateFail(String.format(Locale.ROOT,
+                        "第 %d 道「%s」工序打卡未完成，请先完成前置工序打卡",
+                        prev, PROCESS_STEPS[prev - 1]));
+            }
+        }
+    }
+
+    /**
+     * D113 栈式撤销：只有最后一道已打卡的人工工序可以撤销；若存在更后道已打卡工序则拒绝并指明。
+     */
+    private void ensureRevokingLastDone(Long orderId, int stepNo) {
+        Map<Integer, BizProductionOrderStep> byNo = manualStepsByNo(orderId);
+        for (int no : MANUAL_STEP_NOS) {
+            if (no <= stepNo) {
+                continue;
+            }
+            if (isDoneStep(byNo.get(no))) {
+                throw BusinessException.validateFail(String.format(Locale.ROOT,
+                        "仅最后一道已打卡工序可撤销，请先撤销第 %d 道「%s」",
+                        no, PROCESS_STEPS[no - 1]));
+            }
+        }
+    }
+
+    /**
+     * D113：返回第一道未完成打卡的人工工序号（按工序顺序），全部完成返回 null；
+     * 无步骤实例的历史单返回 null 不拦（与 listSteps 历史回退口径一致）。
+     */
+    public Integer firstUncompletedManualStep(BizProductionOrder order) {
+        Map<Integer, BizProductionOrderStep> byNo = manualStepsByNo(order.getId());
+        if (byNo.isEmpty()) {
+            return null;
+        }
+        for (int no : MANUAL_STEP_NOS) {
+            if (!isDoneStep(byNo.get(no))) {
+                return no;
+            }
+        }
+        return null;
+    }
+
+    private Map<Integer, BizProductionOrderStep> manualStepsByNo(Long orderId) {
+        return listByOrder(orderId).stream()
+                .collect(Collectors.toMap(BizProductionOrderStep::getStepNo, Function.identity()));
+    }
+
+    private boolean allPreviousManualStepsDone(Map<Integer, BizProductionOrderStep> byNo, int stepNo) {
+        for (int prev : MANUAL_STEP_NOS) {
+            if (prev >= stepNo) {
+                break;
+            }
+            if (!isDoneStep(byNo.get(prev))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 返回 stepNo 之前第一道未打卡工序号（调用方保证至少一道未完成） */
+    private Integer firstUncompletedBefore(Map<Integer, BizProductionOrderStep> byNo, int stepNo) {
+        for (int prev : MANUAL_STEP_NOS) {
+            if (prev >= stepNo) {
+                break;
+            }
+            if (!isDoneStep(byNo.get(prev))) {
+                return prev;
+            }
+        }
+        return stepNo;
+    }
+
+    private boolean isLastDoneManualStep(Map<Integer, BizProductionOrderStep> byNo, int stepNo) {
+        return firstDoneAfter(byNo, stepNo) == null;
+    }
+
+    /** 返回 stepNo 之后第一道已打卡工序号，没有则 null */
+    private Integer firstDoneAfter(Map<Integer, BizProductionOrderStep> byNo, int stepNo) {
+        for (int no : MANUAL_STEP_NOS) {
+            if (no <= stepNo) {
+                continue;
+            }
+            if (isDoneStep(byNo.get(no))) {
+                return no;
+            }
+        }
+        return null;
+    }
+
+    private boolean isDoneStep(BizProductionOrderStep row) {
+        return row != null && row.getStatus() != null
+                && row.getStatus() == BizProductionOrderStep.STATUS_DONE;
     }
 
     private void applyManualLine(ProductionStepVO vo, BizProductionOrderStep row, boolean operableStatus) {

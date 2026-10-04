@@ -28,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -63,6 +64,10 @@ public class ProductionService {
 
     @Autowired
     private MessageService messageService;
+
+    /** D113：仓储确认入库前复核人工工序打卡（申请提交后打卡可能被撤销） */
+    @Autowired
+    private ProductionStepService productionStepService;
 
     @Autowired
     private SalesTerminateGuard salesTerminateGuard;
@@ -174,6 +179,13 @@ public class ProductionService {
         }
         // 需求一 Q19/Q20a：关联销售明细行已终止的任务单冻结资源消耗动作（成品入库确认）
         salesTerminateGuard.ensureSalesLineActive(order);
+        // D113 复验：申请提交后工序打卡可能被撤销（打卡撤销只受状态限制），仓储确认前复核全部人工工序已完成
+        Integer uncompletedStep = productionStepService.firstUncompletedManualStep(order);
+        if (uncompletedStep != null) {
+            throw BusinessException.validateFail(String.format(Locale.ROOT,
+                    "该任务单第 %d 道「%s」工序打卡未完成，无法确认入库；请通知生产补打卡后重试，或驳回该申请",
+                    uncompletedStep, ProductionStepService.PROCESS_STEPS[uncompletedStep - 1]));
+        }
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         LocalDateTime confirmedAt = LocalDateTime.now();
         LambdaUpdateWrapper<BizProduction> wrapper = new LambdaUpdateWrapper<>();

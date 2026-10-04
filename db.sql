@@ -2152,3 +2152,83 @@ ALTER TABLE `biz_sales`
 -- 列增删不可重复执行。
 ALTER TABLE `biz_pick_list_detail`
     ADD COLUMN `diff_reason` VARCHAR(200) DEFAULT NULL COMMENT '差异备注(Q16/Q7:RETURN行退料量<已领未退时的损耗/丢失原因)' AFTER `remark`;
+
+-- =============================================
+-- 二十九、四项需求优化（D112–D116，ADR-0020 成品拆分单）
+-- =============================================
+-- 注：本节 ALTER 不可重复执行。
+
+-- D116 成品拆分单头表（独立单据承载「成品出库→生产拆解→物料退库」）
+CREATE TABLE IF NOT EXISTS `biz_split_order` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `split_no` VARCHAR(30) NOT NULL COMMENT '拆分单号(SPO开头)',
+    `sales_order_id` BIGINT NOT NULL COMMENT '关联销售单ID',
+    `sales_order_no` VARCHAR(30) DEFAULT NULL COMMENT '关联销售单号(冗余)',
+    `sales_detail_id` BIGINT NOT NULL COMMENT '关联销售明细行ID',
+    `goods_id` BIGINT NOT NULL COMMENT '成品商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '成品名称(冗余)',
+    `spec` VARCHAR(100) DEFAULT NULL COMMENT '成品规格(冗余)',
+    `material` VARCHAR(100) DEFAULT NULL COMMENT '成品材质(冗余)',
+    `quantity` INT NOT NULL COMMENT '拆分数量',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待生产领取, 2-待仓储确认成品出库, 3-待生产确认收货, 4-拆分中, 5-已完成, 6-已作废, 7-待仓储确认成品回库',
+    `initiator_id` BIGINT NOT NULL COMMENT '发起人ID(仓储管理员)',
+    `initiator_name` VARCHAR(50) DEFAULT NULL COMMENT '发起人姓名(冗余)',
+    `init_time` DATETIME DEFAULT NULL COMMENT '发起时间',
+    `claim_user_id` BIGINT DEFAULT NULL COMMENT '生产领取人ID',
+    `claim_user_name` VARCHAR(50) DEFAULT NULL COMMENT '生产领取人姓名(冗余)',
+    `claim_time` DATETIME DEFAULT NULL COMMENT '领取时间',
+    `outbound_confirm_user_id` BIGINT DEFAULT NULL COMMENT '仓储确认成品出库人ID',
+    `outbound_confirm_user_name` VARCHAR(50) DEFAULT NULL COMMENT '仓储确认成品出库人姓名(冗余)',
+    `outbound_confirm_time` DATETIME DEFAULT NULL COMMENT '仓储确认成品出库时间(此时扣成品库存)',
+    `receipt_confirm_user_id` BIGINT DEFAULT NULL COMMENT '生产确认收货人ID',
+    `receipt_confirm_user_name` VARCHAR(50) DEFAULT NULL COMMENT '生产确认收货人姓名(冗余)',
+    `receipt_confirm_time` DATETIME DEFAULT NULL COMMENT '生产确认收货时间',
+    `abandon_user_id` BIGINT DEFAULT NULL COMMENT '生产放弃拆分操作人ID',
+    `abandon_user_name` VARCHAR(50) DEFAULT NULL COMMENT '生产放弃拆分操作人姓名(冗余)',
+    `abandon_time` DATETIME DEFAULT NULL COMMENT '生产放弃拆分时间',
+    `return_pick_list_id` BIGINT DEFAULT NULL COMMENT '关联RETURN退料单ID(biz_pick_list,拆分退料专用)',
+    `finish_type` TINYINT DEFAULT NULL COMMENT '完成方式: 1-退料完成, 2-放弃回库',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_split_no` (`split_no`),
+    KEY `idx_so_status` (`status`),
+    KEY `idx_so_sales_detail` (`sales_detail_id`),
+    KEY `idx_so_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='成品拆分单头表(ADR-0020)';
+
+-- 成品拆分单明细表（BOM×拆分数量快照）
+CREATE TABLE IF NOT EXISTS `biz_split_order_detail` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `split_order_id` BIGINT NOT NULL COMMENT '拆分单头表ID',
+    `goods_id` BIGINT NOT NULL COMMENT '物料商品ID',
+    `goods_name` VARCHAR(100) DEFAULT NULL COMMENT '物料名称(冗余)',
+    `spec` VARCHAR(100) DEFAULT NULL COMMENT '规格(冗余)',
+    `material` VARCHAR(100) DEFAULT NULL COMMENT '材质(冗余)',
+    `required_quantity` INT NOT NULL COMMENT '需求量(BOM×拆分数量)',
+    `sort_no` INT NOT NULL DEFAULT 0 COMMENT '行序号',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `is_deleted` TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-正常, 1-删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_sod_split_order_id` (`split_order_id`),
+    KEY `idx_sod_goods_id` (`goods_id`),
+    KEY `idx_sod_is_deleted` (`is_deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='成品拆分单明细表(BOM×数量快照,ADR-0020)';
+
+-- D115 销售明细行成品处置留痕
+ALTER TABLE `biz_sales_detail`
+    ADD COLUMN `split_status` TINYINT NULL DEFAULT NULL COMMENT '成品处置状态(行终止后,ADR-0020): NULL-未触发(旧数据/未终止行), 1-待处置, 2-已保留成品, 3-已发起拆分, 4-拆分完成(含放弃回库完成)' AFTER `terminator_name`,
+    ADD COLUMN `split_order_id` BIGINT NULL DEFAULT NULL COMMENT '当前关联拆分单ID(已发起拆分后,ADR-0020)' AFTER `split_status`,
+    ADD COLUMN `split_keep_time` DATETIME NULL DEFAULT NULL COMMENT '保留成品时间(ADR-0020)' AFTER `split_order_id`,
+    ADD COLUMN `split_keep_by` BIGINT NULL DEFAULT NULL COMMENT '保留成品操作人ID(ADR-0020)' AFTER `split_keep_time`,
+    ADD COLUMN `split_keep_name` VARCHAR(50) NULL DEFAULT NULL COMMENT '保留成品操作人姓名(冗余,ADR-0020)' AFTER `split_keep_by`;
+
+-- D114 生产终止未勾选撤销→解冻在途补料采购申请
+ALTER TABLE `biz_purchase_request`
+    ADD COLUMN `freeze_exempt` TINYINT NOT NULL DEFAULT 0 COMMENT '销售冻结豁免(D114): 0-不豁免, 1-生产终止未勾选撤销→豁免销售冻结(采购可继续认领/到货/入库)' AFTER `status`;
+
+-- D116 拆分退料 RETURN 单关联拆分单
+ALTER TABLE `biz_pick_list`
+    ADD COLUMN `split_order_id` BIGINT NULL DEFAULT NULL COMMENT '关联成品拆分单ID(拆分退料RETURN单专用,ADR-0020)' AFTER `production_order_id`;
+
