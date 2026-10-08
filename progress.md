@@ -17,7 +17,7 @@
 - **单测（489 全绿，8 个测试类）**：mock stub 方法名随守卫改名（isDeptAdmin→isDeptMember / hasDeptAdminOrSuper→hasDeptMemberOrSuper / requireXxxAccess→requireAnyDeptMemberOrSuper…）——Goods/Sales/SalesReturn/Purchase/PurchaseReturn/Approval/PurchaseRequest/Stocktake/ProductionStep 九类 sed 改名；政策翻转负测改写（SalesServiceTest employeeCanTerminateOwnOrder→nonSalesMember_forbidden 断言「仅销售部门可终止销售单」等）；ApprovalControllerAuthTest 重写为「守卫下沉 service 层」验证（employee 到达 controller、service.create 守卫拦截）；删 SalesServiceTest getUserInfo unused stub。
 - **踩坑记录**：①本窗口 token 损坏 3 次（file_path 乱码/new_string 混入「全」/old_string 手误 el-menu-menu-item）——短小编辑单发默读+发前核对+IDE 诊断即时清零；②Edit 误改 ProductionController confirm-inbound 的 AuditLog module「生产入库」→「生产链路」，发现即恢复；③E2E sed 转义坑：`$()` 命令替换内 URL 的 `&` 未转义成命令分隔符 + sed 替换串 `&` 是「整个匹配」——修复一律改用单引号包 URL 或 Edit 工具直改；④E2E 查询字段名坑：goods page 过滤字段是 `goodsName` 非 `keywords`（过滤被忽略会取列表第一条造成误删风险——本例删到旧引用物料报 400，反向暴露）；⑤GET /system/configs/price-deviation-threshold 返回 200 是有意设计（SysConfigService javadoc：任意已登录上下文可用，供建单判定/前端提示），负测应打 PUT。
 - **E2E（/tmp/wms-d141-e2e.sh，27/27 全通过，测试数据零残留）**：四员工正测（WH 读销售单/审批页/采购申请/盘点+物料新增、SA 销售单+预警中心、PU 采购申请+供应商写+预警中心、PR BOM/采购申请/预警中心）+ 排除项负测 403（WH/SA/PU/PR 发公告、WH/PR 用户管理、SA 审批页、SA PUT 阈值）+ PA 公告创建正测（D142）+ 清理三项全 200 + superadmin 查操作日志含 warehouse_employee 记录（D143 留痕）。
-- **待办**：用户浏览器手测（验证点：①四部门员工登录看侧边栏菜单与页面可用性；②仓储员工建物料/采购员工建供应商后操作日志有记录；③销售员工进作废审批页被路由拦截；④盘点员工建单/取消/指派可用、审核/驳回按钮不可见）→ git 提交（会话 65+66+67+68+69 改动一起提交，VS Code 面板）。
+- **待办**：用户浏览器手测（验证点：①四部门员工登录看侧边栏菜单与页面可用性；②仓储员工建物料/采购员工建供应商后操作日志有记录；③销售员工进作废审批页被路由拦截；④盘点员工建单/取消/指派可用、审核/驳回按钮不可见）→ 已提交 commit a383c8a（main，91 文件含会话 63–69 全部改动；handoff 清理：.gitignore 排除 .claude/skills/ 与 document/pptx-build/，汇报 html/pptx 随提交入库）；推送需 VS Code 面板/集成终端（shell 无凭证）。
 
 ## 会话 68 — 2026-10-08
 
