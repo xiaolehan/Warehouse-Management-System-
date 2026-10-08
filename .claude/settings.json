@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sudo systemctl stop wms-backend wms-frontend)",
+      "Bash(git stash *)",
+      "Bash(git merge *)",
+      "Bash(mysql -u wms_user -pwms_pass warehouse_management -e \"SHOW TABLES LIKE 'biz_split_order%'; SHOW COLUMNS FROM biz_purchase_request LIKE 'freeze_exempt'; SHOW COLUMNS FROM biz_approval_order LIKE 'request_detail'; SHOW COLUMNS FROM biz_pick_list_detail LIKE 'expected_quantity'; SHOW COLUMNS FROM biz_pick_list_detail LIKE 'diff_reason'; SHOW COLUMNS FROM biz_sales_detail LIKE 'split_status'; SHOW COLUMNS FROM biz_pick_list LIKE 'split_order_id'; SELECT remark FROM sys_config WHERE config_key='price_deviation_threshold';\")"
+    ]
+  }
+}
