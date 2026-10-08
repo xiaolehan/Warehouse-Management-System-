@@ -5,6 +5,119 @@
 
 ---
 
+## 会话 69 — 2026-10-08
+
+### D141–D143 四部门同权开放（/grill-with-docs 九问全按推荐，ADR-0023）：489 单测全绿 + 前端 build 过 + curl E2E 27/27 全通过，待手测
+
+- **grilling 收敛**：Q1 员工=同部门管理员−排除清单（页面/路由/按钮/后端守卫四层同步）；Q2 部门级数据不加「仅本人」维度；Q3 盲盘 D119 isBlindViewer 零改动；Q4 消息路由仍只发部门管理员；Q5 生产管理员发布=纯前端补菜单；Q7 盘点建单/取消/指派开放员工、审核通过/驳回保留管理员；Q8 留痕以现有机制（@AuditLog+单据操作人）补 10 处缺口；Q9 跨部门协作维持现状（谁认领谁下达等操作人语义不变）。Q6（测试策略）并入实施。
+- **后端（13 控制器）**：守卫放宽三范式机械替换——`requireDeptAdminOrSuperAdmin→requireDeptMemberOrSuperAdmin`、`hasDeptAdminOrSuperAdminAccess→hasDeptMemberOrSuperAdminAccess`、`isDeptAdmin(X)→isDeptMember(X)`（member⊇admin，旧管理员正测零回归）。涉及：SplitOrderService、PickListService（3 处：issue/reject 发料/驳回、ensureViewAccess、page 口径）、StocktakeService（create/assign/cancel 三处放宽，review(:448)/reject(:499) 保持 admin）、PurchaseRequestService（6 处：读口径改 requireAnyDeptMemberOrSuperAdmin「仅仓储/采购/生产部门」、仓储确认/生产草稿/到货/撤销判定全部 member 化）、ProductionOrderService、ProductionPickService（terminate）、ProductionStepService（revoke 非本人分支）、ProductionService（生产入库 2 处）、DocumentTimelineService、ApprovalService（作废类审批操作 requireDeptMemberOrSuperAdmin(WAREHOUSE)、发起权 ensureRequesterCanSubmitApproval 放宽 admin+员工、requireApprovalModuleAccess=warehouse member∨sales admin∨superadmin、listPendingVoidBizIds 新增守卫）。controller 层摘 30 余处 @RequireAdmin（PickList/Stocktake/PurchaseRequest/Production/Approval 五个控制器），权限判断全部下沉 service，无空白点。
+- **特例口径**：销售员工挡「作废审批」页=路由 meta 新机制 `forbiddenRolesForDept`（auth.js checkRouteAccess 新分支，router.beforeEach 自动生效）+ 后端 requireApprovalModuleAccess 兜底 403——价格偏离审批（D120/D121 销售管理员专属）不得经作废审批页绕开；路由 void-approval meta `roles:['admin','employee','superadmin'], deptCodes:['warehouse','sales'], forbiddenRolesForDept:{employee:['sales']}`。purchase-request 路由 roles 加 employee。
+- **前端**：11 视图 `roles:['admin']`→`['admin','employee']`（65 处 sed）+ StocktakeView 建单(:15)/取消(:282/:295)放宽、审核(:289)/驳回(:292)保持 admin；SalesView canTerminate 去「仅管理员或本人」限制（D141 同权后部门内均可终止，留痕见操作人）+loadVoidPendingIds 放宽（sales|warehouse member）+删 isSalesAdmin/isWarehouseAdmin/currentUserId 死代码；SalesReturnView/PurchaseView/PurchaseReturnView loadVoidPendingIds 同步放宽；StockWarningView isWarehouseAdmin→isWarehouseMember（D92 误伤员工修复）；layout 四员工菜单重写——仓储 14 项（物料/成品/BOM/生产入库/领料/拆分单/销售出库确认/销售退货入库/物料入库确认/物料退货出库/采购申请/盘点/预警中心/作废审批）、生产 10 项（+物料/成品/BOM/采购申请/预警中心）、采购销售各补「预警中心」，生产管理员补发布子菜单（D142 工作要求+公告管理）。
+- **D143 留痕补 10 处 @AuditLog**：GoodsController 新增/编辑/删除/批量删除 4 处（module=物料管理）；BomController 新增/编辑/删除(含 #force)/批量删除/导入 5 处（module=BOM管理，导入 detail=#result.data?.imported）；PickListController batch-delete 1 处（module=生产领料，批量撤销共 N 张）。
+- **单测（489 全绿，8 个测试类）**：mock stub 方法名随守卫改名（isDeptAdmin→isDeptMember / hasDeptAdminOrSuper→hasDeptMemberOrSuper / requireXxxAccess→requireAnyDeptMemberOrSuper…）——Goods/Sales/SalesReturn/Purchase/PurchaseReturn/Approval/PurchaseRequest/Stocktake/ProductionStep 九类 sed 改名；政策翻转负测改写（SalesServiceTest employeeCanTerminateOwnOrder→nonSalesMember_forbidden 断言「仅销售部门可终止销售单」等）；ApprovalControllerAuthTest 重写为「守卫下沉 service 层」验证（employee 到达 controller、service.create 守卫拦截）；删 SalesServiceTest getUserInfo unused stub。
+- **踩坑记录**：①本窗口 token 损坏 3 次（file_path 乱码/new_string 混入「全」/old_string 手误 el-menu-menu-item）——短小编辑单发默读+发前核对+IDE 诊断即时清零；②Edit 误改 ProductionController confirm-inbound 的 AuditLog module「生产入库」→「生产链路」，发现即恢复；③E2E sed 转义坑：`$()` 命令替换内 URL 的 `&` 未转义成命令分隔符 + sed 替换串 `&` 是「整个匹配」——修复一律改用单引号包 URL 或 Edit 工具直改；④E2E 查询字段名坑：goods page 过滤字段是 `goodsName` 非 `keywords`（过滤被忽略会取列表第一条造成误删风险——本例删到旧引用物料报 400，反向暴露）；⑤GET /system/configs/price-deviation-threshold 返回 200 是有意设计（SysConfigService javadoc：任意已登录上下文可用，供建单判定/前端提示），负测应打 PUT。
+- **E2E（/tmp/wms-d141-e2e.sh，27/27 全通过，测试数据零残留）**：四员工正测（WH 读销售单/审批页/采购申请/盘点+物料新增、SA 销售单+预警中心、PU 采购申请+供应商写+预警中心、PR BOM/采购申请/预警中心）+ 排除项负测 403（WH/SA/PU/PR 发公告、WH/PR 用户管理、SA 审批页、SA PUT 阈值）+ PA 公告创建正测（D142）+ 清理三项全 200 + superadmin 查操作日志含 warehouse_employee 记录（D143 留痕）。
+- **待办**：用户浏览器手测（验证点：①四部门员工登录看侧边栏菜单与页面可用性；②仓储员工建物料/采购员工建供应商后操作日志有记录；③销售员工进作废审批页被路由拦截；④盘点员工建单/取消/指派可用、审核/驳回按钮不可见）→ git 提交（会话 65+66+67+68+69 改动一起提交，VS Code 面板）。
+
+## 会话 68 — 2026-10-08
+
+### D137 价格偏离审批详情（/grill-with-docs 八项决策按推荐全确认）：快照列 + 详情端点 + 弹窗 + 深链，485 单测全绿 + build 过，待 E2E/手测
+
+- **grilling 收敛**：Q1=1a 审批页详情弹窗（不新增路由页）；Q2=2a 建单时点快照（非审批时点实时取）；Q3=3a 通用详情弹窗（作废类审批单也有详情）；Q4=4a 不展示进价（维持 D8 口径）；Q5=5a 消息深链 ？approvalId=；Q6=6a 独立 TEXT 列存 JSON（不塞 before/after_biz_snapshot——那是作废类业务单据快照，语义不同）；Q7=7a 存量无快照降级仅显原因文本；Q8=8a 弹窗纯只读、通过/驳回仍在列表操作列。
+- **后端**：biz_approval_order +request_detail TEXT（db.sql ALTER+本地已执行）；BizApprovalOrder/ApprovalOrderVO +requestDetail（toVO BeanUtils 同名透出）；SalesService.createPriceDeviationApproval 重写——reason 带价格对照（「第1行 PTO153 本次150.00/标准100.00 偏离 50%」）超 200 字符退化行数汇总、setRequestDetail(buildDeviationSnapshot(...))（hutool JSONUtil；deviationAmount 带符号/deviationPercent 绝对值/thresholdPercent 已 ×100）、消息调用加 approval.getId() 第 5 参；MessageService.sendPriceDeviationToSalesAdmin 5 参，targetRoute=/system/void-approval?approvalId={id}；ApprovalService.getById（eq(id)+applyRoleActionScope 同一 wrapper 走 selectOne——与列表单一口径源）+ApprovalController GET /{id}。
+- **前端**：system.js +getApprovalOrderDetailAPI；VoidApprovalView 操作列「详情」置首（link+primary，全部行可见含已处理）+通用只读详情弹窗（descriptions 头部+价格偏离快照表[行号/商品/数量/本次售价/标准售价/偏离金额红涨绿跌/偏离%]+阈值标题+无快照降级+关闭按钮）+深链 watch(route.query.approvalId) immediate 消费后 router.replace 清 query（openDetailById 定义在 watch 之前防 TDZ，SplitOrderView 同款）。
+- **单测（482→485，+3）**：SalesServiceTest 多偏离行测试更新（reason 新格式+快照 JSON 内容断言+消息 verify 5 参+审批 insert 桩回填 id=999）；MessageServiceTest targetRoute 断言含 ？approvalId=77；ApprovalServiceTest 新增 getById 三测（销售管理员 eq 口径+VO 透出/仓储管理员 ne 口径/越权 404「审批单不存在」）。**踩坑**：hutool JSONUtil 序列化 BigDecimal 去尾零（150.00→150），断言按实际输出写。
+- **踩坑（前端）**：分 chunk Edit 插弹窗时吃掉 `</el-card>` 闭合标签致 build 失败「Element is missing end tag (2:3)」——锚点替换跨块时务必核对块级闭合标签完整性。
+- **待办**：用户浏览器手测（验证点：①销售管理员建偏离价销售单后，站内信点进直达审批详情弹窗看本次售价/标准售价/偏离对照；②作废类审批单详情弹窗；③存量无快照审批单降级显示）→ git 提交（会话 65+66+67+68 改动一起提交，VS Code 面板）。
+- **curl E2E（后端重启后同轮补测，2026-10-08）**：D137 端点冒烟通过——sales_admin GET /system/approval-orders/23 → 200（存量单 requestDetail=NULL，降级路径生效）、warehouse_admin → 404「审批单不存在」（行级过滤，不泄露存在性）。新建偏离单全链路（快照 JSON 落库→详情弹窗渲染）留待浏览器手测一并覆盖。
+
+### D138–D140 退料应退量三件套（同会话续做 /grill-with-docs，三项决策按推荐全确认，ADR-0022）：489 单测全绿 + build 过，待 E2E/手测
+
+- **grilling 收敛**：Q1=快照列（建单时点定格，非读取时回算）；Q2=术语沿用系统既有「应退量/差异备注」体系（CONTEXT.md 词条已补）；Q3=同类文案错标全修。
+- **D138 应退量快照**：biz_pick_list_detail +expected_quantity INT NULL（db.sql ALTER + 本地已执行，历史行 NULL）；Entity/VO 加 expectedQuantity；两条 RETURN 建单路径各写口径——拆分退料 submitReturn=BOM 需求量快照（expectedMap）、终止/生产退料 insertReturnList=建单时点已领未退净额（computeNetReturnableItems 同口径）；PickListService.toDetailVO 透出。**守卫发现**：createReturn 不跑 ensureWithinReturnable（仅 terminate 跑），故存量单测不 stub pickListMapper.selectList 时净额为空、expectedQuantity=null，无断言破坏。
+- **D139 文案全修（PickListView）**：详情弹窗标题 `${pickTypeText}单详情`、驳回弹窗标题（rejectForm.typeWord）、单条撤销确认 `${pickTypeText}申请`、批量撤销确认（同类型按类型/混合显「单据」）；RETURN 详情数量列改「退料数量」+新增「应退量」列（expectedQuantity ?? '—'）。全库 grep 复核：其余「领料」命中均为真领料场景或页名，无残留。
+- **D140 拆分单详情回显**：SplitOrderDetailVO +returnedQuantity/returnDiffReason；SplitOrderService.toVO 在 returnPickListId 非空且退料单未被逻辑删时按 goodsId 对齐回填（防重键取首行，与前端预填口径一致）；SplitOrderView 详情物料表加「已退量」「差异备注」两列、提交退料弹窗「需求量」→「应退量」。
+- **单测（485→489，+4）**：新建 SplitOrderServiceTest（submitReturn 捕获 expectedQuantity=BOM 快照 4 / getById 回填 returnedQuantity=2+diffReason+returnPickNo）+ PickListServiceTest.getById_returnDetail_mapsExpectedQuantity + ProductionPickServiceTest.createReturn_writesExpectedQuantitySnapshotFromNetReturnable（stub ISSUED PICK 净额 5→捕获 expectedQuantity=5）。
+- **踩坑（本轮复现）**：长内容 Edit 两次 token 损坏——一次把编辑路径写成不存在文件（失败未落盘）、一次把 `when(...)` 行写残（即时 IDE 诊断发现并修复）；含中文长块务必小 chunk 且写后核对。
+- **待办**：用户浏览器手测（验证点：①生产端拆分单详情看已退量/差异备注；②仓储端退料单详情标题「退料单详情」+应退量列；③历史退料行应退量显示「—」）→ git 提交（与 D137 同批，VS Code 面板）。
+- **curl E2E（后端已重启，2026-10-08 全通过）**：拆分路径——对状态4拆分单 id=1 提交部分退料（119 退1/应退2+差异备注、68 全退4/应退4）→ 退料单明细 expected_quantity=BOM 快照（2/4）+拆分单详情回填 returned/diff（119→1/「搬运破损1个」、68→4/空）；sales_admin 越权提交 403；仓储驳回后拆分单回基线（关联清空、回填消失）。生产路径——对生产中任务单 id=41 createReturn 部分退料 → expected_quantity=建单时点已领未退净额（returnable 接口同口径 119→2、68→4）+实退 1/2；仓储驳回清理。两条路径各留一张已驳回退料单（pick 31/32，状态5留痕），库存零变动。注：ProductionPickController 基路径为复数 /business/production-orders（任务单主表是单数 /business/production-order），URL 拼错时 NoResourceFoundException 被全局包装成 500，排查看日志。
+
+## 会话 67 — 2026-10-08
+
+### 三项优化（/grill-with-docs 七项决策按推荐全确认）：D134 撤销留痕 + D135 操作栏对齐 + D136 拆分退料闭环，482 单测全绿 + build 过 + E2E 过，待手测
+
+- **grilling 收敛**（/grill-with-docs + domain-modeling）：1a 已撤销默认可见+灰 tag+详情撤销信息；2a 撤销语义统一（本人/批量/一键全部置状态不删）；3a 禁止一键撤销已有入库进度的申请（跳过不抛异常——Internal 路径运行在生产终止事务内，抛异常会连坐回滚终止）；4a UI 全量对齐 ADR-0007；5a 「查看」→「详情」；6a 撤销类按钮全 danger；7a 组合修复（防重复提交+深链+引导条+领料标记）。决策按推荐全部确认后开工。
+- **问题 1 根因与修复（D134）**：采购申请是全库唯一用 @TableLogic 软删表达撤销的模块（销售/进货作废=置 biz_status 终态可见，D97 口径）。改法：biz_purchase_request +status=6「已撤销」+4 列（revoke_reason/revoker_id/revoker_name/revoke_time，db.sql ALTER+本地已执行）；PurchaseRequestService +STATUS_REVOKED 常量、markRevoked（LambdaUpdateWrapper 条件更新 eq(id)+eq(fromStatus)，rows!=1 抛「已被处理」兜并发）、hasReceiveProgress（明细含 RECEIVE_DONE 行判定）、两条一键撤销路径 deleteById+明细删→markRevoked（原因「关联销售已取消，生产侧一键撤销」）、delete()/batchDelete 自动继承；statusText +已撤销；VO 透出 4 字段。IN_FLIGHT_STATUSES 不含 6 → 已撤销不阻止再补料。IN_FLIGHT_STATUSES 不含 6 → 已撤销不阻止再补料（被软删的单曾永久占锁）。存量已软删的历史申请不做恢复迁移（用户重走新流程即可）。
+- **问题 2（D135）**：split-order 8 按钮 link 化+详情置首；「查看」→「详情」9 页（比清单多 ProductionView/ProductionOrderView，一并统一）；禁用态统一「原色 type+disabled+tooltip 包 span」（QcView 质检 info→success、打卡锁定 info→primary、ProductionView「冻结禁入库」灰文字→原色禁用按钮 3 处纠正）；ProductionOrderView「撤销申请」warning→danger；.action-group/.action-disabled 沉淀 assets/main.css，删 5 页 scoped 副本（SalesView/PurchaseView/PurchaseReturnView/SalesReturnView/ProductionView）；盘点列表导出去图标；ADR-0007 补修订记录。
+- **问题 3（D136）**：缺陷①=提交拆分退料后按钮仍可点（列表 L68+详情 footer 两处 `status===4 && canProductionSide` 缺 `&& !returnPickNo`，后端 SplitOrderService L336 returnPickListId 守卫本来就有，纯前端漏防）；缺陷②=拆分退料的「仓储端审批」实际是领料单页「收料」（4→5 唯一路径），但消息深链 ?splitOrderId= 拆分单页从未消费且仓储无处操作。修复：两处按钮条件补 returnPickNo；SplitOrderView +isWarehouseAdmin+gotoPickList+watch(route.query.splitOrderId)（immediate 消费后 replace 清 query）；详情 status=4+returnPickNo 时仓储见引导条「请前往领料单页收料入库」；PickListView RETURN 行 splitOrderId 非空打「拆分退料」tag（宽度 80→110）+落地消费 splitOrderId 深链自动切「退料」过滤+提示定位；PickListVO +splitOrderId 透出（toVO 填充）。
+- **单测（479→482，+3）**：PurchaseRequestServiceTest 4 处 deleteById 断言改 markRevoked 语义（+update 桩）+新 2 测（revokeByProductionOrderInternal_marksRevoked_keepsRowsVisible / _skipsRequestWithReceiveProgress）；PickListServiceTest +1（page_returnRowWithSplitOrder_exposesSplitOrderId）。全量 482/482 BUILD SUCCESS。
+- **E2E（curl 全绿，测试数据已物理清理）**：生产管理员建补料申请（物料 38）→本人撤销→status=6「已撤销」列表筛选可见+详情含 revokeReason=申请人自行撤销/revokerName=生产管理员/revokeTime；重复撤销→400「仅待采购状态可撤销」；他人（采购管理员）撤销→403「仅申请人本人」；已撤销后同物料再建→200 放行（IN_FLIGHT 不含 6 生效）。
+- **踩坑**：① 长内容 Edit 损坏 ×3——statusText switch 编辑一次 JSON 流损坏 111KB 乱码（InputValidationError 拦截文件无损）、batchDelete 断言编辑出现 getFailives/Biz@ExampleIgnore 乱码与截断（即写即 grep 即修，拆小 chunk 恢复）；② **会话编号冲突**：同日 PPT v2 会话已占用「会话 66」编号（progress.md 顶部条目+git untracked pptx-build 产物均在会话开始前存在），本轮改记会话 67 并 sed 统一 18 个文件内的「会话 66」→「会话 67」（progress.md PPT 条目除外）。
+- **待办**：用户浏览器手测（重启后端后旧 session 失效需重新登录+硬刷新；验证点：①采购申请撤销后列表可见「已撤销」灰 tag+筛选+详情撤销信息，生产终止勾选撤销后采购侧留痕；②全站操作列 link 化/详情文案/禁用态 tooltip；③拆分单提交退料后按钮消失、站内信点进直达拆分单详情、仓储从引导条跳领料页按「拆分退料」标记收料）→ git 提交（会话 65+66+67 改动一起提交）。
+
+## 会话 66 — 2026-10-08
+
+### 汇报简版 v2 改版：每页版式差异化 + 痛点逐项展开 + 7 处截图占位（采纳 anthropics pptx skill 设计规范）
+
+- **用户四点反馈驱动**：① 痛点总览每项展开介绍；② 丰富内容加流程图/示意图；③ 每页都是文字、排版雷同听众不知翻页 → 逐页改版式；④ 加系统截图（我加不了就留占位用户补）；⑤ 搜索并安装一个 ppt 制作 skill 后用它优化。
+- **skill 调研**：WebSearch/WebFetch 被环境拦（403）→ `git clone https://github.com/anthropics/skills /tmp/anthropic-skills` 成功，精读 `skills/pptx/SKILL.md` 设计规范并落地：每页至少一个视觉元素、页间版式不重复、深色「三明治」结构（封面+KPI+结尾）、大数字 callout、图标+文字行、时间线/流程/闸门图形化、**禁止标题下划线与装饰色条**。
+- **逐页版式**（11 页全重写）：S1 深色封面 → S2 五痛点瓦片 painrow（01–05 每项展开 2 行细节）+ gbar 准/快/明横条 → S3 八步流程 + 11 模块芯片 + 34/11/42 大数 + 首页全景截图占位 → S4 双卡（预警/盲盘）+ 双截图占位 → S5 左图标行 mrow（出/型/采）+ 右站内信脱敏样例 msg + 销售页截图 → S6 四道闸 gateflow（事前核算/申请/发料/复核收料）+ 质检卡 + 领料单截图 → S7 销售履约时间线脱敏样例（tl 4 节点）+ 双治理卡 + 时间线截图 → S8 四站旅程 jrn 编号圆点 + 角色章 → S9 深色 KPI 大数页 → S10 竖向路线图 vroad + AI 助手截图占位 → S11 深色结尾。
+- **通用增强**：每页右上 pgchip 页码章（`NN · 页名`，翻页感知）+ `.slide.active` fadeUp 入场动画；`.dark` 页变体（含打印 print-color-adjust）；`.ph` 截图占位组件（虚线框 + 主标题 + 「建议：」辅助文案）。
+- **截图占位 7 处（用户自行替换）**：S3 系统首页全景 / S4 库存预警中心 + 盘点盲盘录入页 / S5 销售订单页 / S6 生产领料单页 / S7 单据时间线展开效果 / S10 AI 使用助手界面。
+- **验证**：11/11 sections 配平、python 标签配平 OK、IDE 诊断清零；计数 pain5/gate4/jrn4/tln4/vi4/ph7/pgchip11/dark3 全对；占位符 7 处不变（甲方 1/项目 3/团队 2/联系 1）；无账号密码、业务数据全脱敏。
+- **踩坑**：长内容 Edit 损坏本轮 ×4——v2-css-2 三处（`.g` `color:#-white`、`.gateflow` `flow-align`、`.jrn` 截断吞掉后续 13 条规则）+ S4 `</上div>`；均即写即 grep 即修。教训重申：中文长 CSS/HTML 一律 ≤25 行小 chunk。
+- **被拦（bash 分类器宕机窗口）**：① `cp` 安装 pptx skill 到 `.claude/skills/` 未完成（clone 完好在 `/tmp/anthropic-skills`，恢复后一条 `cp -r /tmp/anthropic-skills/skills/pptx .claude/skills/pptx` 即可）；② 新版 deck 推送到 Windows 侧浏览器预览未完成（可用资源管理器地址栏 `\\wsl.localhost\<发行版>\home\pangl\Warehouse-Management-System-\document\` 直接打开，或等恢复后照旧 cp+start）。
+- **待办**：用户预览 v2 → 替换 7 处截图占位 → 核对口径占位符 → Ctrl+P 导 PDF；**详版 + 需求同步文档 v0 仍等用户明确开工指令**。
+- **追加（同日）——改交付原生 PPTX**：用户反馈 HTML v2 与 v1 差异不足、要真流程图 + 直接给 PPT 文档。按 anthropics pptx skill 规范用 pptxgenjs 重做 13 页原生 PowerPoint（`document/pptx-build/gen.js` 生成器 + package.json，依赖 pptxgenjs ^4.0.1）：S3 五痛点逐项展开（现象+后果）、S4 准快明目标条+八步蛇形流程图、S5 三层架构图（主数据/业务域/协同治理）+34/11/42 大数、S6 预警闭环+盲盘双竖向流程、S7 六节点销售协同流程+站内信样例、S8 四道闸门+质检、S9 横向履约时间线、S10 四站旅程、S11 深色 KPI、S12 路线图+AI 助手截图占位、S13 深色结尾；截图占位 7 处为虚线框（用户在 PPT 里删框插图）。skill 已安装 `.claude/skills/pptx/`（用户执行 cp）。产物 `document/WMS汇报简版-2026-10-08.pptx`（373KB）+ Windows 侧 C:\Users\42980\AppData\Local\Temp\ 同名副本（用户双击即开）；zip 完整性 OK / 13 slides / 关键部件齐全。生成期间 bash 分类器持续宕机，生成命令由用户在终端执行。视觉 QA 未做（无 LibreOffice），用户打开后如发现溢出/重叠再调 gen.js 重新生成。
+
+## 会话 65 — 2026-10-08
+
+### 三项修复：领料页 NPE + 盘点消息提醒（D132）+ 右下角浮层移除（D133），479 单测全绿 + 前端 build 过，待重启 E2E 与手测
+
+- **grilling 收敛**（/grill-with-docs，7 项决策用户确认）：1a 指派消息按负责人分组每人一条只列本人名下行；2a 改派=撤该单全部未读+按最新分组重发全部当前负责人；3b 员工提交送审提醒仓储管理员；4b 盘点消息深链 `?stocktakeId=` 直达详情；5a/6a 右下角 ElNotification 浮层整体移除（只留铃铛角标+站内邮箱）；7a 拆分单页不补深链。
+- **问题 1 根因与修复**：GET /business/pick-lists/page 第 1 页 NPE 500——拆分单退料行 `production_order_id=NULL`（按 splitOrderId 关联，SplitOrderService 设计如此），RETURN 行批量查生产单状态时空 `Map.of().get(null)` 抛 NPE；PickListService.page() 判空兜底 + 回归单测 `page_returnRowWithoutProductionOrder_doesNotThrowNpe`。触发数据 biz_pick_list id=22（2026-10-03），与未提交改动无关。
+- **问题 2 实现（D132，ADR-0010「盘点不发站内消息」口径修订）**：MessageService +`ROUTE_STOCKTAKE` 常量、`TITLE_STOCKTAKE_ASSIGNED/PENDING_REVIEW` 标题常量、`sendStocktakeAssignedToUser`（sendToUserWithBiz 带 biz+深链）、`sendStocktakeSubmittedToWarehouseAdmins`（发仓储部门 admin）；StocktakeService 6 处接线——create 按负责人分组发指派消息（describeStocktakeRows 助手，只列商品/规格不含账面数=与 D119 盲盘不冲突）、assign 撤旧重发（revokeUnreadByBiz 全撤→listDetails 按最新 assigneeId 分组重发）、submit 发「待审核」（只含已录/总行数）、review 生效/cancel 终态 revokeUnreadByBiz 全撤、reject 只按标题撤「待审核」（revokeUnreadByBizAndTitles，指派提醒保留仍准确）。
+- **问题 3 根因与修复（D133）**：真相=无自动跳转——MessageCenter 15s 轮询弹右下角 ElNotification（全前端唯一动态 router.push 源），浮层整块是点击热区、集中到达堆叠被误触（点击=静默已读+router.push targetRoute→拆分单页），点击已读销毁证据故感觉「无缘无故」。修复：MessageCenter 移除 ElNotification import/notifyNewMessages/基线 baselineUnreadIds+baselineUnreadTotal/notifiedMessageIds 全部逻辑，loadUnreadCount 简化为只更新角标（保留 silent 豁免）；BIZ_ROUTE_MAP +stocktake 兜底。轮询/角标/邮箱/卡片点击跳转全部保留。
+- **前端深链（决策 4b）**：StocktakeView +watch(route.query.stocktakeId)（immediate，沿用 ProductionOrderView 会话 58 范式）进页自动 openDetail({id})，消费后 router.replace 清 query 防刷新重复弹窗；MessageCenter BIZ_ROUTE_MAP 补 stocktake 回退。
+- **单测（472→479，+7）**：StocktakeServiceTest +@Mock MessageService +6 测（create 分组/assign 撤旧重发连续打桩/submit 行数断言/review 全撤/reject 只撤待审核标题/cancel 全撤）；PickListServiceTest +1 NPE 回归。MessageServiceTest 8 测不变全绿。
+- **文档**：CONTEXT.md 盘点单词条改口径（无跨部门审批层保留、删「不发站内消息」、补 D132 两点提醒+生命周期+深链）、盘点负责人词条补改派重发、消息章节新增「新消息提醒通道（D133）」词条。
+- **踩坑**：① 长内容 Edit 再次损坏 ×1（StocktakeServiceTest 追加测试时 JSON 流损坏，InputValidationError 拦截文件无损）——拆 4 个小 chunk Edit 逐段追加+锚点核对后成功；② bash 分类器间歇宕机，fuser/mysql/curl 写类被拦，期间完成文档与单测，恢复后重启后端。
+- **E2E（10/10 通过，/tmp/e2e_s65.sh + s65b.sh）**：T1 登录；T2 领料 page 第 1 页 200（问题 1 修复验证，含 id=22 拆分退料行）；T3 建盘点单 id=7（goods 1/38 均指派员工）；T4 员工收「盘点任务指派」targetRoute=/business/stocktake?stocktakeId=7；T5 内容含商品（规格）无账面数；T6 改派行2→admin(5) 后员工恰好 1 条（只含本人行「1」）、admin 收「手柄帽 01」——撤旧重发精确；T7 员工录入+提交 → admin 收「盘点单待审核」内容「已录 1/2 行」；T8 驳回后待审核撤、指派保留；T9 取消后 admin/employee 全部未读撤；T10 单据已取消终态、库存零变动（未走 review；review 撤回由单测覆盖）。IDE 诊断 error 清零（StocktakeService 仅预存 warning）。
+- **待办**：用户浏览器手测（后端已重启需重新登录+硬刷新；验证点：仓储进生产领料页正常、员工收盘点指派消息点卡片直达详情、右下角不再浮弹窗、拆分单跳转观感消失）→ git 提交（本会话未提交）。
+
+## 会话 64 — 2026-10-08
+
+### 甲方汇报材料启动：grilling 收敛需求口径 + HTML 汇报简版 11 页完成（document/WMS汇报简版-2026-10-08.html）
+
+- **grilling 收敛**（三轮 Q&A 确认交付形态）：今天=HTML 简版 10–12 页可直接汇报；详版 15–20 页 + 需求同步文档 v0（功能域分组正文 + 全量 D 编号附录）**等用户确认后再开工**（预计下周）。验收式汇报、混合受众业务为主、痛点总览+业务流分组叙事、亮点 8 条全上、AI 助手复测不合格不上亮点（进后续计划页）、无里程碑页。
+- **调研结论**：需求=5 痛点+3 目标（wms_v1.docx 原文）；交付盘点=21 ADR/472 单测/42 表（实测，弃 task_plan 的 43）/34 页面/37 路由/D1–D125/185 commits（自 2026-05-13 起 148）；AI 助手三种问法均返回同一本地 KB 兜底答案 → 未配 DeepSeek key，演示不可用。
+- **简版 11 页**（1280×720 HTML，dataviz 令牌，可 Ctrl+P 导 PDF）：封面→背景与目标（5 痛点+3 目标）→方案总览（8 步流程+11 域+34/11/42）→亮点 I 库存与盘点→II 销售协同→III 生产领料→治理与追溯（作废审批/价格审批/时间线/只读审计）→演示路线 4 站（role 徽章、无账号）→工作量 KPI 6 卡→后续计划 4 项→结尾。
+- **口径约束**（贯穿全稿）：不提开源，统一「在成熟仓储管理系统基础上深度定制开发」；占位符【甲方名称】【项目名称】【团队名称】【联系方式】（grep 验证 7 处，无账号密码）；业务数据示例不出现；署名团队名义不列个人统计；AI 助手「已开发完成，配置大模型服务后启用」。
+- **踩坑**：长中文内容 Edit 中途损坏 ×3（`</卡div>`、`</slide-note>`、`</本项目>`+KPI 行截断）——即写即 grep 即修，与 CLAUDE.md 会话 62/63 教训一致；S7 note 误入 grid2、锚点误写 SLES 各 1 处，已修；python 标签配平校验 BALANCED + IDE 诊断清零。
+- **待办**：① 用户浏览器打开简版预览（文件双击即可，键盘翻页）→ 核对口径与占位符 → Ctrl+P 导出 PDF（@page 1280×720 已配）；② 用户确认后补系统截图（当前为纯文字版）；③ **详版 + 需求文档 v0 等用户明确开工指令**。
+
+## 会话 63 — 2026-10-07
+
+### 两项权限优化（D119 员工盲盘 + D120/D121 价格审批权移交销售管理员），ADR-0021，472 单测全绿 + 前端 build 过，待 E2E 与手测
+
+- **grilling 收敛**（/grill-with-docs）：Feature A=D119 员工强制盲盘（后端按角色裁字段，不止导出）；Feature B=D120/D121 价格偏离审批+阈值设置权超管→销售管理员专属（Q3=A 超管完全失去；Q9 纠正「系统权限」指系统参数/阈值，用户管理不动；自我审批接受）。决策沉淀 `docs/adr/0021-employee-blind-count-and-price-approval-to-sales-admin.md`。
+- **后端实现（compile + 472/472 单测 BUILD SUCCESS，未提交）**：
+  - **D119 盲盘**：StocktakeService +isBlindViewer()（=authzService.isEmployee()）单点判定；page() 盈亏汇总置空、getById() 行 bookQty/finalBookQty/diffQty 置空+汇总置空（toDetailVO +blind 参数）、goodsOptions() stock 置空、export() 员工强制 blind=true（入参无效）。
+  - **D120/D121 审批**：ApprovalService +applyRoleActionScope()（销售管理员 eq price_deviation_confirm，其余 ne 只看作废类——顺带修复仓储管理员可见价格偏离行的潜在越权）+requireApprovalModuleAccess()（仓储 admin ∪ 销售 admin ∪ 超管）；requireApproverAccess() 价格分支改 requireDeptAdmin(DEPT_SALES)（无超管旁路）；approve()/reject() 价格行终态时 revokeUnreadByBizAndTitles(TITLE_PRICE_DEVIATION_PENDING)。
+  - **消息**：MessageService sendPriceDeviationToSuperAdmin→sendPriceDeviationToSalesAdmin（发销售部门管理员，D21 带 biz，新常量 TITLE_PRICE_DEVIATION_PENDING）；SalesService 5 处文案「需超管审批」→「需销售管理员审批」（L250/L760 超管字样无关保留）。
+  - **系统参数**：SysConfigService listAll()/updatePriceDeviationThreshold() 改 requireDeptAdmin(DEPT_SALES)（无超管旁路）+remark 更新；SystemConfigController 注释同步；db.sql 种子行 remark 同步。
+- **前端实现（npm run build ✓ 7.25s）**：
+  - StocktakeView：+isWarehouseEmployee；快照 alert/账面快照列/生效时账面列/差异列/盈亏 tag/预估行全部员工隐藏；盲盘提示 alert 新增；diffRowClass +bookQty!=null 守卫（防员工全行误标差异）；provisionalSummary +bookQty null 早退；列表行导出改 exportStocktakeAPI(id, isWarehouseEmployee)；盲盘 checkbox 员工隐藏×3。
+  - router：void-approval deptCodes +sales（单页共管）；system/config 改 roles:['admin'] deptCodes:['sales']；SUPERADMIN_ALLOWED_PATHS 移除 /system/config（保留 void-approval）。
+  - layout：销售管理员菜单 +价格偏离审批+系统参数；超管中心「价格偏离审批」→「作废审批」、移除系统参数。
+  - VoidApprovalView：+isSalesApprover 双 alert 角色说明；动作筛选项按角色收窄（actionFilterOptions computed）。
+  - SystemConfigView/SalesView 文案「超管」→「销售管理员」；AdminHome sales 快捷卡 +价格偏离审批+系统参数。
+- **单测（451→472，+21）**：StocktakeServiceTest +7（D119 getById/page/goodsOptions 员工-管理员对称 6 测 + 导出强制盲盘 1 测）；ApprovalServiceTest 重建（ corruption 后小 chunk 重写，215 行）+5（价格偏离销售审批+撤消息/超管 403/行级过滤 eq/ne 双测/销售员工 403）；SysConfigServiceTest +2（listAll/updateThreshold 销售守卫，never requireSuperAdmin）；MessageServiceTest 重写价格偏离发送断言；SalesServiceTest verify 更名。
+- **DB**：sys_config.price_deviation_threshold remark 已 UPDATE（超管→销售管理员）。
+- **踩坑**：① 测试裸 Configuration() 未开驼峰转下划线，wrapper SQL 列名是 requestAction 而非 request_action——断言按实际渲染写。② Write 长内容生成损坏 ×2（垃圾文件 /home/pangl/Wanager* + 覆盖 ApprovalServiceTest）——大文件一律小 chunk Edit（15–25 行）+ grep 计数复核；测试文件尾部类闭合大括号曾丢失，补齐。③ bash 分类器间歇不可用，rm 写操作持续被拦挂起（mysql/curl 正常）；④ `python3 - "$R" <<'EOF'` 模式 stdin/argv 混淆致 JSON 解析失败——改用 `RESP="$R" python3 <<'EOF'` + os.environ 读入。
+- **E2E（T0–T25 全部 25/25 通过，/tmp/e2e_d119_d120.sh + part2 + part3）**：D119 员工 getById/page/goods-options 三路径全剥离（bookQty/finalBookQty/diffQty/盈亏汇总/stock 全 null，进度行数与实盘数保留）+ 员工导出强制盲盘（xlsx sharedStrings 无「账面数」）+ 管理员/超管回归字段齐全 + 明盘导出回归；录入链路不变（建单→员工录本人行 200→录他人行 D85 拒→员工提交→admin 驳回→admin 取消清理，库存全程未动，测试单 id=5 已取消终态）；D120 超管读/改系统参数 403「仅销售管理员」、销售管理员读改 200（0.06 验证后还原 0.05）、超管/仓储审批价格行 403「价格偏离审批需销售部管理员处理」、审批页行级过滤（销售 18 行全价格行 / 仓储 8 行 / 超管 8 行均无价格行）、id=23 待审全程无副作用。
+- **待办**：用户浏览器手测（http://localhost:5173，后端已重启需重新登录+硬刷新）→ git 提交（本会话未提交）。
+
 ## 会话 62 — 2026-10-02
 
 ### 四项需求 grilling 定稿（D112–D116）+ ADR-0020 + CONTEXT 词条落地，进入实现

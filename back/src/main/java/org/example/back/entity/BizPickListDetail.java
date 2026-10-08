@@ -33,6 +33,9 @@ public class BizPickListDetail {
     /** 差异备注（需求二 Q16/Q7：RETURN 行退料量<已领未退时的损耗/丢失等原因，仓储确认时可见；其余行为空） */
     private String diffReason;
 
+    /** 应退量快照（会话68/D138，ADR-0022）：RETURN 行建单时点的「应该退多少」参照量——拆分退料=BOM需求量快照，终止/生产退料=建单时点已领未退净额；该功能前历史行为 NULL */
+    private Integer expectedQuantity;
+
     private Integer quantity;
 
     private Integer sortNo;

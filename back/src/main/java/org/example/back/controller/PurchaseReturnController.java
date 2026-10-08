@@ -3,7 +3,6 @@ package org.example.back.controller;
 import jakarta.validation.Valid;
 import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
-import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.PurchaseReturnQueryDTO;
@@ -70,7 +69,6 @@ public class PurchaseReturnController {
     @PutMapping("/{id}/void")
     @AuditLog(module = "进货退货管理", action = "作废", targetType = "进货退货单",
             detail = "'作废 进货退货单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
-    @RequireAdmin("仅管理员可作废进货退货单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {
         purchaseReturnService.voidDocument(id, dto);

@@ -53,6 +53,7 @@ public class ApprovalService {
     private static final String ACTION_PRICE_DEVIATION_CONFIRM = "price_deviation_confirm";
 
     private static final String ROLE_ADMIN = "admin";
+    private static final String ROLE_EMPLOYEE = "employee";
     private static final int APPROVAL_TEXT_MAX_LEN = 200;
 
     private static final DateTimeFormatter APPROVAL_NO_TIME_FMT = DateTimeFormatter.ofPattern("yyMMddHHmmss");
@@ -148,16 +149,34 @@ public class ApprovalService {
                 .like(StringUtils.hasText(queryDTO.getRequesterName()), BizApprovalOrder::getRequesterName, queryDTO.getRequesterName())
                 .orderByDesc(BizApprovalOrder::getCreateTime)
                 .orderByDesc(BizApprovalOrder::getId);
+        applyRoleActionScope(wrapper);
 
         Page<BizApprovalOrder> page = bizApprovalOrderMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         List<ApprovalOrderVO> records = page.getRecords().stream().map(this::toVO).toList();
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
+    /**
+     * 审批单详情（会话68/D137）：复用列表行级过滤口径——销售管理员仅可见价格偏离行，
+     * 仓储管理员/超管仅可见作废类行；越权访问报「审批单不存在」不泄露存在性。
+     */
+    public ApprovalOrderVO getById(Long id) {
+        requireApprovalModuleAccess();
+        LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizApprovalOrder::getId, id);
+        applyRoleActionScope(wrapper);
+        BizApprovalOrder entity = bizApprovalOrderMapper.selectOne(wrapper);
+        if (entity == null) {
+            throw BusinessException.notFound("审批单不存在");
+        }
+        return toVO(entity);
+    }
+
     public Long pendingCount() {
         requireApprovalModuleAccess();
         LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizApprovalOrder::getStatus, STATUS_PENDING);
+        applyRoleActionScope(wrapper);
         return bizApprovalOrderMapper.selectCount(wrapper);
     }
 
@@ -167,6 +186,7 @@ public class ApprovalService {
         LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizApprovalOrder::getStatus, STATUS_PENDING)
                 .orderByAsc(BizApprovalOrder::getId);
+        applyRoleActionScope(wrapper);
         List<BizApprovalOrder> orders = bizApprovalOrderMapper.selectList(wrapper);
         reminder.setCount((long) orders.size());
         reminder.setSignature(orders.stream()
@@ -174,6 +194,18 @@ public class ApprovalService {
                 .map(String::valueOf)
                 .collect(Collectors.joining(",")));
         return reminder;
+    }
+
+    /**
+     * D120 审批列表行级过滤（同页共管）：销售部管理员只看价格偏离审批行，
+     * 仓储管理员/超管只看作废类审批行（修复此前仓储管理员可见价格偏离行的越权）。
+     */
+    private void applyRoleActionScope(LambdaQueryWrapper<BizApprovalOrder> wrapper) {
+        if (authzService.isDeptAdmin(AuthzService.DEPT_SALES)) {
+            wrapper.eq(BizApprovalOrder::getRequestAction, ACTION_PRICE_DEVIATION_CONFIRM);
+        } else {
+            wrapper.ne(BizApprovalOrder::getRequestAction, ACTION_PRICE_DEVIATION_CONFIRM);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -193,6 +225,11 @@ public class ApprovalService {
         BizDocumentMeta afterMeta = resolveBizMeta(entity.getBizType(), entity.getBizId());
 
         finalizeApprove(entity.getId(), dto, beforeMeta, afterMeta);
+        // D120：价格偏离审批通过 → 撤回销售管理员侧未读的待审批消息（审批已终态，D21 范式）
+        if (ACTION_PRICE_DEVIATION_CONFIRM.equals(entity.getRequestAction())) {
+            messageService.revokeUnreadByBizAndTitles(entity.getBizType(), entity.getBizId(),
+                    List.of(MessageService.TITLE_PRICE_DEVIATION_PENDING));
+        }
         // D103：审批结果回执给申请人——在 executeVoidByApproval 撤未读之后发送，避免被当作待办撤回
         if (ACTION_VOID.equals(entity.getRequestAction())) {
             messageService.sendVoidApprovalResultToRequester(entity.getRequesterId(), bizTypeLabel(entity.getBizType()),
@@ -212,6 +249,11 @@ public class ApprovalService {
         entity.setBeforeBizSnapshot(currentMeta.snapshot());
 
         finalizeReject(entity.getId(), dto, currentMeta);
+        // D120：价格偏离审批驳回 → 按标题精确撤回未读待审批消息（D21 范式）
+        if (ACTION_PRICE_DEVIATION_CONFIRM.equals(entity.getRequestAction())) {
+            messageService.revokeUnreadByBizAndTitles(entity.getBizType(), entity.getBizId(),
+                    List.of(MessageService.TITLE_PRICE_DEVIATION_PENDING));
+        }
         // D103：驳回 → 按标题精确撤回待审批消息（不误伤同 biz 其他待办），并发结果回执给申请人
         if (ACTION_VOID.equals(entity.getRequestAction())) {
             messageService.revokeUnreadByBizAndTitles(entity.getBizType(), entity.getBizId(),
@@ -237,15 +279,16 @@ public class ApprovalService {
     }
 
     /**
-     * 按申请动作决定审批人权限：价格偏离审批需超管，作废审批限仓储管理员。
+     * 按申请动作决定审批人权限：价格偏离审批限销售部管理员（D120，超管已失权，D141 不放宽），
+     * 作废审批限仓储部门（admin+员工，D141 同权开放）/超管。
      */
     private LoginResponse.UserInfoVO requireApproverAccess(String requestAction) {
         LoginResponse.UserInfoVO user = requireLoginUser();
         if (ACTION_PRICE_DEVIATION_CONFIRM.equals(requestAction)) {
-            authzService.requireSuperAdmin("价格偏离审批需超级管理员处理");
+            authzService.requireDeptAdmin(AuthzService.DEPT_SALES, "价格偏离审批需销售部管理员处理");
             return user;
         }
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可执行审批操作");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可执行审批操作");
         return user;
     }
 
@@ -420,7 +463,11 @@ public class ApprovalService {
     }
 
     // D94：单据列表「作废审批中」行内状态——返回指定业务类型下处于待审批/处理中的作废类申请的业务单 id
+    // D141：摘控制器 @RA 后补 Service 守卫——四类单据页面（采购/销售/仓储 admin+员工）都要行内冻结徽标
     public List<Long> listPendingVoidBizIds(String bizType) {
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储/采购/销售部门可查看单据作废状态",
+                AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE, AuthzService.DEPT_SALES);
         validateBizType(bizType);
         LambdaQueryWrapper<BizApprovalOrder> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizApprovalOrder::getBizType, bizType)
@@ -464,9 +511,10 @@ public class ApprovalService {
         throw BusinessException.validateFail("不支持的申请动作: " + action);
     }
 
+    /** D141：作废审批发起权放宽至采购/销售部门（admin+员工）——本部门单据可发起，跨部门仍拒。 */
     private void ensureRequesterCanSubmitApproval(LoginResponse.UserInfoVO requester, String role, String bizType) {
-        if (!ROLE_ADMIN.equals(role)) {
-            throw BusinessException.forbidden("仅采购或销售部门管理员可提交该类作废审批申请");
+        if (!ROLE_ADMIN.equals(role) && !ROLE_EMPLOYEE.equals(role)) {
+            throw BusinessException.forbidden("仅采购或销售部门可提交该类作废审批申请");
         }
 
         String deptCode = authzService.normalizeDeptCode(requester.getDeptCode());
@@ -477,13 +525,21 @@ public class ApprovalService {
         if (purchaseAdminRequest || salesAdminRequest) {
             return;
         }
-        throw BusinessException.forbidden("仅采购或销售部门管理员可提交该类作废审批申请");
+        throw BusinessException.forbidden("仅采购或销售部门可提交该类作废审批申请");
     }
 
-    private LoginResponse.UserInfoVO requireApprovalModuleAccess() {
-        LoginResponse.UserInfoVO user = requireLoginUser();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可执行审批操作");
-        return user;
+    /**
+     * D120/D141 审批模块访问权：仓储部门（admin+员工，作废审批同权处理）/超管
+     * + 销售部管理员（价格偏离审批，同页共管；销售员工仍不可进审批页）。
+     */
+    private void requireApprovalModuleAccess() {
+        requireLoginUser();
+        boolean allowed = authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)
+                || authzService.isDeptAdmin(AuthzService.DEPT_SALES)
+                || authzService.isSuperAdmin();
+        if (!allowed) {
+            throw BusinessException.forbidden("仅仓储部门或销售管理员可查看审批");
+        }
     }
 
     private LoginResponse.UserInfoVO requireLoginUser() {

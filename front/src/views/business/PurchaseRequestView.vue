@@ -13,6 +13,7 @@
             <el-option label="待入库确认" :value="5" />
             <el-option label="已入库" :value="3" />
             <el-option label="已驳回" :value="4" />
+            <el-option label="已撤销" :value="6" />
           </el-select>
         </el-form-item>
         <el-form-item label="商品名">
@@ -26,14 +27,14 @@
           <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
           <!-- D130：创建权仓储→生产 -->
-          <el-button type="success" :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['production'] }" @click="handleManual">新建采购申请</el-button>
-          <el-button :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['production'] }" @click="handleShortage">缺货识别建单</el-button>
+          <el-button type="success" :icon="Plus" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }" @click="handleManual">新建采购申请</el-button>
+          <el-button :icon="Plus" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }" @click="handleShortage">缺货识别建单</el-button>
         </el-form-item>
       </el-form>
 
       <!-- 列表 -->
       <div style="margin-bottom: 12px;">
-        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['production'] }">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }">
           批量撤销{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
         </el-button>
       </div>
@@ -77,27 +78,27 @@
               <span style="cursor:not-allowed"><el-button link size="small" type="primary" disabled>认领</el-button></span>
             </el-tooltip>
             <el-button link size="small" type="primary" v-if="row.status === 1 && !row.salesFrozen"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleProcess(row)">认领</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" @click="handleProcess(row)">认领</el-button>
             <el-button link size="small" type="warning" v-if="row.status === 1"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleReject(row)">驳回</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" @click="handleReject(row)">驳回</el-button>
             <!-- 采购：采购中 → 到货提交（会话 58：任务单被销售取消冻结时禁用） -->
             <el-tooltip v-if="row.status === 2 && row.salesFrozen" content="关联销售已取消，该补料申请已冻结，禁止提交到货；可在任务单终止时一并撤销" placement="top">
               <span style="cursor:not-allowed"><el-button link size="small" type="success" disabled>到货提交</el-button></span>
             </el-tooltip>
             <el-button link size="small" type="success" v-if="row.status === 2 && !row.salesFrozen"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArrive(row)">到货提交</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" @click="handleArrive(row)">到货提交</el-button>
             <!-- 采购：采购中 → 修改到货计划（D61） -->
             <el-button link size="small" type="primary" v-if="row.status === 2"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleUpdatePlan(row)">修改到货计划</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" @click="handleUpdatePlan(row)">修改到货计划</el-button>
             <!-- 仓储：待入库确认 → 确认入库 -->
             <el-button link size="small" type="success" v-if="row.status === 5"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleConfirmReceive(row)">确认入库</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleConfirmReceive(row)">确认入库</el-button>
             <!-- 采购：待入库确认 → 撤回到货 -->
             <el-button link size="small" type="warning" v-if="row.status === 5"
-              v-permission="{ roles: ['admin'], deptCodes: ['purchase'] }" @click="handleArriveCancel(row)">撤回到货</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }" @click="handleArriveCancel(row)">撤回到货</el-button>
             <!-- 仓储：待入库确认 → 驳回入库 -->
             <el-button link size="small" type="danger" v-if="row.status === 5"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleArriveReject(row)">驳回入库</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleArriveReject(row)">驳回入库</el-button>
             <!-- D130：待采购且本人申请 → 撤销（申请人本人可撤，含补料草稿；按 userId 比对） -->
             <el-button link size="small" type="danger" v-if="row.status === 1 && isApplicant(row)" @click="handleDelete(row)">撤销</el-button>
           </template>
@@ -211,6 +212,9 @@
         <el-descriptions-item label="入库时间">{{ formatTime(viewData.confirmTime) }}</el-descriptions-item>
         <el-descriptions-item label="备注">{{ viewData.remark || '—' }}</el-descriptions-item>
         <el-descriptions-item label="驳回原因" :span="2" v-if="viewData.rejectReason">{{ viewData.rejectReason }}</el-descriptions-item>
+        <el-descriptions-item label="撤销信息" :span="2" v-if="viewData.status === 6">
+          {{ viewData.revokeReason || '—' }}（{{ viewData.revokerName || '—' }}，{{ formatTime(viewData.revokeTime) }}）
+        </el-descriptions-item>
       </el-descriptions>
       <!-- D60：生产补料单按「已有物料缺口 / 未知物料(新物料)」两组展示 -->
       <template v-if="viewData?.sourceType === 'production'">
@@ -611,7 +615,7 @@ const formatArrivalRange = (details) => {
 const isApplicant = (row) => row.applicantId != null && Number(row.applicantId) === Number(userStore.userId)
 
 const statusTagType = (status) => ({
-  1: 'info', 2: 'warning', 3: 'success', 4: 'danger', 5: 'warning'
+  1: 'info', 2: 'warning', 3: 'success', 4: 'danger', 5: 'warning', 6: 'info'
 }[status] || 'info')
 
 const formatTime = (t) => t ? String(t).replace('T', ' ').slice(0, 19) : '—'

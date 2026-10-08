@@ -3,7 +3,6 @@ package org.example.back.controller;
 import jakarta.validation.Valid;
 import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
-import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.PickListQueryDTO;
@@ -34,7 +33,6 @@ public class PickListController {
     }
 
     @PutMapping("/{id}/issue")
-    @RequireAdmin("仅仓储管理员可发料")
     @AuditLog(module = "生产领料", action = "发料", targetType = "领料单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交发料请求")
     public Result<Void> issue(@PathVariable Long id) {
@@ -50,7 +48,6 @@ public class PickListController {
     }
 
     @PutMapping("/{id}/reject")
-    @RequireAdmin("仅仓储管理员可驳回")
     @AuditLog(module = "生产领料", action = "驳回", targetType = "领料单",
             detail = "'驳回领料单 #' + #id + '，原因：' + #dto.reason")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交驳回请求")
@@ -68,6 +65,8 @@ public class PickListController {
     }
 
     @PostMapping("/batch-delete")
+    @AuditLog(module = "生产领料", action = "批量撤销", targetType = "领料单",
+            detail = "'批量撤销领料单，共 ' + #ids.size() + ' 张'")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
     public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
         return Result.success(pickListService.batchDelete(ids));

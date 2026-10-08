@@ -21,9 +21,9 @@
         <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
         <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
         <el-button v-if="isWarehouse" type="success" :icon="Plus" @click="handleAdd"
-          v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">{{ isProduct ? '新增成品' : '新增物料' }}</el-button>
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">{{ isProduct ? '新增成品' : '新增物料' }}</el-button>
         <el-button v-if="isWarehouse" type="danger" :icon="Delete" :disabled="selectedRows.length === 0" @click="handleBatchDelete"
-          v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">
           批量删除{{ selectedRows.length > 0 ? `（${selectedRows.length}）` : '' }}
         </el-button>
       </el-form-item>
@@ -93,14 +93,14 @@
           <el-button v-else-if="isProduct && isSales" link size="small" type="success" @click="handleEdit(scope.row)"
             v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }">售价编辑</el-button>
           <el-button v-else-if="isWarehouse" link size="small" type="success" @click="handleEdit(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">编辑</el-button>
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">编辑</el-button>
           <!-- D109：未知物料一键匹配供应商（仅仍挂系统默认供应商的物料，仅仓储管理员） -->
           <el-button v-if="!isProduct && isWarehouse && scope.row.supplierId === DEFAULT_SUPPLIER_ID" link size="small" type="warning"
             @click="handleMatchSupplier(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">匹配供应商</el-button>
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">匹配供应商</el-button>
           <el-button link size="small" type="danger" @click="handleDelete(scope.row)"
             v-if="isWarehouse"
-            v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">删除</el-button>
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

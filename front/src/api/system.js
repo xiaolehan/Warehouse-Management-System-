@@ -34,6 +34,8 @@ export const deleteEmployeeAPI = (id) => request.delete(`/system/employees/${id}
 export const batchDeleteEmployeesAPI = (ids) => request.post('/system/employees/batch-delete', ids)
 
 export const getApprovalOrderPageAPI = (params) => request.get('/system/approval-orders/page', { params })
+// D137：审批单详情（价格偏离快照 JSON 由详情弹窗解析展示）
+export const getApprovalOrderDetailAPI = (id) => request.get(`/system/approval-orders/${id}`)
 export const getApprovalPendingCountAPI = () => request.get('/system/approval-orders/pending-count')
 export const getApprovalPendingReminderAPI = () => request.get('/system/approval-orders/pending-reminder')
 export const createApprovalOrderAPI = (data) => request.post('/system/approval-orders', data)

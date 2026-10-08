@@ -311,7 +311,7 @@ class SalesReturnServiceTest {
     @Test
     void confirm_increasesStockPerLine() {
         when(bizSalesReturnMapper.selectById(601L)).thenReturn(pendingReturn());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizSalesReturnDetailMapper.selectList(any())).thenReturn(List.of(
                 returnLine(29L, "PTO153", 2), returnLine(30L, "轴承", 3)));
@@ -332,7 +332,7 @@ class SalesReturnServiceTest {
         BizSalesReturn entity = pendingReturn();
         entity.setConfirmStatus(SalesReturnService.CONFIRM_RECEIVED);
         when(bizSalesReturnMapper.selectById(601L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizSalesReturnMapper.update(isNull(), any())).thenReturn(1);
         when(bizSalesReturnDetailMapper.selectList(any())).thenReturn(List.of(
                 returnLine(29L, "PTO153", 2), returnLine(30L, "轴承", 3)));
@@ -353,7 +353,7 @@ class SalesReturnServiceTest {
     @Test
     void voidDocument_pending_noStockChange() {
         when(bizSalesReturnMapper.selectById(601L)).thenReturn(pendingReturn());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizSalesReturnMapper.update(isNull(), any())).thenReturn(1);
 
         service.voidDocument(601L, null);

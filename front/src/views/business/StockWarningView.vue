@@ -3,7 +3,7 @@
     <template #header>
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span>库存预警中心</span>
-        <el-tag v-if="isWarehouseAdmin" type="warning">仓储预警工作台</el-tag>
+        <el-tag v-if="isWarehouseMember" type="warning">仓储预警工作台</el-tag>
       </div>
     </template>
 
@@ -68,7 +68,7 @@ import { useRoute } from 'vue-router'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import { getStockWarningPageAPI, getSupplierOptionsAPI } from '@/api/base'
 import { useUserStore } from '@/stores/user'
-import { isAdminRole, normalizeDeptCode } from '@/utils/auth'
+import { normalizeDeptCode } from '@/utils/auth'
 
 const route = useRoute()
 const userStore = useUserStore()
@@ -78,9 +78,9 @@ const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
-// D92：预警中心放开员工只读后，供应商筛选/工作台标记须真按「仓储 admin」判定（此前仅看部门，员工会误得管理员视图）
-const isWarehouseAdmin = computed(() => isAdminRole(userStore.role) && normalizeDeptCode(userStore.deptCode) === 'warehouse')
-const canUseSupplierFilter = computed(() => isWarehouseAdmin.value)
+// D92/D141：供应商筛选/工作台标记按「仓储部门成员」判定（admin+员工同权，不再误伤员工）
+const isWarehouseMember = computed(() => ['admin', 'employee'].includes(userStore.role) && normalizeDeptCode(userStore.deptCode) === 'warehouse')
+const canUseSupplierFilter = computed(() => isWarehouseMember.value)
 
 const searchForm = reactive({
   warningType: '',

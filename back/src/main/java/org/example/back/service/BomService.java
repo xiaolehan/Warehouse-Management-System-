@@ -95,11 +95,11 @@ public class BomService {
         );
     }
 
-    // D41：BOM 维护（建/改/删）仅生产研发部管理员
+    // D41：BOM 维护（建/改/删/导）——D141 开放给生产研发部（admin+员工）
     private void requireBomWriteAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
+        authzService.requireDeptMemberOrSuperAdmin(
                 AuthzService.DEPT_PRODUCTION,
-                "仅生产研发部管理员可维护 BOM"
+                "仅生产研发部可维护 BOM"
         );
     }
 

@@ -1,5 +1,20 @@
 <template>
   <el-card>
+    <!-- D120 单页共管：销售管理员只看价格偏离确认行，仓储管理员/超管只看作废类行（行级由后端过滤） -->
+    <el-alert
+      v-if="isSalesApprover"
+      type="info"
+      :closable="false"
+      title="价格偏离审批：仅显示「价格偏离确认」类审批，通过后仓储方可确认出库"
+      style="margin-bottom: 12px"
+    />
+    <el-alert
+      v-else
+      type="info"
+      :closable="false"
+      title="作废审批：仅显示作废类审批（价格偏离审批由销售管理员处理）"
+      style="margin-bottom: 12px"
+    />
     <el-form :inline="true" :model="searchForm" class="search-form">
       <el-form-item label="审批单号">
         <el-input v-model="searchForm.approvalNo" placeholder="请输入审批单号" clearable />
@@ -11,7 +26,7 @@
       </el-form-item>
       <el-form-item label="申请动作">
         <el-select v-model="searchForm.requestAction" placeholder="全部" clearable style="width: 160px;">
-          <el-option v-for="item in actionOptions" :key="item.value" :label="item.label" :value="item.value" />
+          <el-option v-for="item in actionFilterOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
       <el-form-item label="状态">
@@ -56,8 +71,10 @@
         <template #default="scope">{{ formatDateTime(scope.row.approvedAt || scope.row.rejectedAt) }}</template>
       </el-table-column>
       <el-table-column prop="approveRemark" label="审批备注" min-width="160" show-overflow-tooltip />
-      <el-table-column label="操作" width="170" fixed="right">
+      <el-table-column label="操作" width="210" fixed="right">
         <template #default="scope">
+          <!-- D137：详情置首（ADR-0007），全部行可见——价格偏离行展示建单时点价格快照 -->
+          <el-button size="small" type="primary" link @click="openDetail(scope.row)">详情</el-button>
           <el-button
             v-if="scope.row.status === 1"
             size="small"
@@ -92,18 +109,75 @@
         @current-change="handleCurrentChange"
       />
     </div>
+
+    <!-- D137 审批详情弹窗（只读，动作仍在列表）：价格偏离行展示建单时点价格快照，作废类展示单据信息 -->
+    <el-dialog v-model="detailVisible" title="审批详情" width="780px">
+      <div v-loading="detailLoading">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="审批单号" :span="2">{{ detail?.approvalNo || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="业务类型">{{ bizTypeLabel(detail?.bizType) }}</el-descriptions-item>
+          <el-descriptions-item label="业务单号">{{ detail?.bizNo || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="申请动作">{{ actionLabel(detail?.requestAction) }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="statusTagType(detail?.status)">{{ statusLabel(detail?.status) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="审批人">{{ detail?.approverName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="审批时间">{{ formatDateTime(detail?.approvedAt || detail?.rejectedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="审批备注" :span="2">{{ detail?.approveRemark || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="申请原因" :span="2">{{ detail?.requestReason || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <!-- Q2a 建单时点快照：仅价格偏离确认类且有快照时展示（Q7a 无快照降级为仅原因文本） -->
+        <template v-if="snapshotRows.length">
+          <div class="snapshot-title">
+            价格偏离明细（建单时点快照，审批阈值 {{ snapshotThreshold ?? '-' }}%）
+          </div>
+          <el-table :data="snapshotRows" border size="small">
+            <el-table-column prop="lineNo" label="行号" width="60" />
+            <el-table-column prop="goodsName" label="商品" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="quantity" label="数量" width="80" />
+            <el-table-column label="本次售价" width="100">
+              <template #default="scope">{{ money(scope.row.unitPrice) }}</template>
+            </el-table-column>
+            <el-table-column label="标准售价" width="100">
+              <template #default="scope">{{ money(scope.row.standardSalePrice) }}</template>
+            </el-table-column>
+            <el-table-column label="偏离金额" width="110">
+              <template #default="scope">
+                <span :class="scope.row.deviationAmount > 0 ? 'deviation-up' : 'deviation-down'">
+                  {{ scope.row.deviationAmount > 0 ? '+' : '' }}{{ money(scope.row.deviationAmount) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="偏离%" width="90">
+              <template #default="scope">{{ scope.row.deviationPercent }}%</template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <div class="dialog-footer">
+          <el-button @click="detailVisible = false">关闭</el-button>
+        </div>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
 import {
   approveApprovalOrderAPI,
+  getApprovalOrderDetailAPI,
   getApprovalOrderPageAPI,
   rejectApprovalOrderAPI
 } from '@/api/system'
+import { getDeptCode, getRole } from '@/utils/auth'
+
+// D120：价格偏离审批行只归销售管理员处理（与后端 requireApproverAccess 行级过滤一致）
+const isSalesApprover = getRole() === 'admin' && getDeptCode() === 'sales'
 
 const bizTypeOptions = [
   { label: '进货单', value: 'purchase' },
@@ -117,6 +191,13 @@ const actionOptions = [
   { label: '价格偏离确认', value: 'price_deviation_confirm' }
 ]
 
+// D120：筛选项按角色收窄（行级数据仍由后端过滤兜底）
+const actionFilterOptions = computed(() =>
+  isSalesApprover
+    ? actionOptions.filter((o) => o.value === 'price_deviation_confirm')
+    : actionOptions.filter((o) => o.value !== 'price_deviation_confirm')
+)
+
 const searchForm = reactive({
   approvalNo: '',
   bizType: '',
@@ -129,6 +210,13 @@ const loading = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
+
+// D137 详情弹窗状态（只读，动作仍在列表）
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const detail = ref(null)
+
+const money = (val) => Number(val ?? 0).toFixed(2)
 
 const formatDateTime = (val) => {
   if (!val) return '-'
@@ -237,6 +325,51 @@ const handleReject = async (row) => {
   }
 }
 
+// D137 详情弹窗：按 id 拉取详情（行级过滤由后端保证，越权报「审批单不存在」）
+const openDetailById = async (id) => {
+  detailVisible.value = true
+  detailLoading.value = true
+  detail.value = null
+  try {
+    const res = await getApprovalOrderDetailAPI(id)
+    detail.value = res.data || null
+  } catch {
+    detailVisible.value = false
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+const openDetail = (row) => openDetailById(row.id)
+
+// Q2a/Q7a：requestDetail 快照 JSON 解析（存量无快照或解析失败时 rows 为空 → 仅展示原因文本）
+const snapshotData = computed(() => {
+  const raw = detail.value?.requestDetail
+  if (!raw) return null
+  try {
+    const obj = JSON.parse(raw)
+    if (!obj || !Array.isArray(obj.rows) || !obj.rows.length) return null
+    return obj
+  } catch {
+    return null
+  }
+})
+const snapshotRows = computed(() => snapshotData.value?.rows || [])
+const snapshotThreshold = computed(() => snapshotData.value?.thresholdPercent ?? null)
+
+// D75 深链范式：消息 ?approvalId= 直达详情，消费后清 query 防刷新重复弹窗
+const route = useRoute()
+const router = useRouter()
+watch(() => route.query.approvalId, (v) => {
+  if (v) {
+    const id = Number(v)
+    if (Number.isFinite(id)) {
+      openDetailById(id)
+    }
+    router.replace({ query: {} })
+  }
+}, { immediate: true })
+
 onMounted(() => {
   loadList()
 })
@@ -262,5 +395,21 @@ onMounted(() => {
 .muted-text {
   color: #909399;
   font-size: 12px;
+}
+
+.snapshot-title {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+}
+
+/* 红涨绿跌：高于标准价红、低于标准价绿 */
+.deviation-up { color: #f56c6c; }
+.deviation-down { color: #67c23a; }
+
+.dialog-footer {
+  margin-top: 16px;
+  text-align: right;
 }
 </style>

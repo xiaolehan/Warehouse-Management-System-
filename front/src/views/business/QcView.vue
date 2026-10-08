@@ -39,7 +39,7 @@
         <template #default="{ row }">
           <!-- 会话 58：关联销售已取消冻结时禁止质检记录/处置（后端守卫同口径） -->
           <el-tooltip v-if="row.salesFrozen" :content="`关联销售已取消（${row.salesFrozenReason || '已冻结'}），质检已暂停，请在生产任务单列表执行终止`" placement="top">
-            <span style="cursor:not-allowed"><el-button link size="small" type="info" disabled>质检</el-button></span>
+            <span style="cursor:not-allowed"><el-button link size="small" type="success" disabled>质检</el-button></span>
           </el-tooltip>
           <el-button v-else link size="small" type="success" @click="openQc(row)">质检</el-button>
         </template>

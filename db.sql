@@ -1533,10 +1533,10 @@ CREATE TABLE `sys_config` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统参数表';
 
 -- 种子：价格偏离审批阈值（比例小数，0.05 = 5%）
--- 注意：该行是超管「系统参数」页的功能载体，SysConfigService 启动自检会自动补齐
+-- 注意：该行是销售管理员「系统参数」页的功能载体（D120），SysConfigService 启动自检会自动补齐
 -- （物理缺失补默认行、逻辑删除则复活，D108）——清库后重启即恢复，无需手工重跑本种子。
 INSERT INTO `sys_config` (`config_key`, `config_value`, `config_name`, `remark`) VALUES
-('price_deviation_threshold', '0.05', '销售价格偏离阈值', '销售单价偏离标准售价超过此比例需超管审批(0.05=5%)');
+('price_deviation_threshold', '0.05', '销售价格偏离阈值', '销售单价偏离标准售价超过此比例需销售管理员审批(0.05=5%)');
 
 -- =============================================
 -- 脚本执行完成
@@ -2231,4 +2231,20 @@ ALTER TABLE `biz_purchase_request`
 -- D116 拆分退料 RETURN 单关联拆分单
 ALTER TABLE `biz_pick_list`
     ADD COLUMN `split_order_id` BIGINT NULL DEFAULT NULL COMMENT '关联成品拆分单ID(拆分退料RETURN单专用,ADR-0020)' AFTER `production_order_id`;
+
+-- 会话 67（决策 1a/2a）撤销改置终态：补料申请撤销留痕（不再逻辑删）
+ALTER TABLE `biz_purchase_request`
+    MODIFY COLUMN `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1-待采购, 2-采购中(部分入库派生文案「部分入库」,不另设状态值), 3-已入库, 4-已驳回, 5-待入库确认, 6-已撤销(终态,会话66)',
+    ADD COLUMN `revoke_reason` VARCHAR(255) NULL DEFAULT NULL COMMENT '撤销原因(会话66): 一键撤销自动生成/申请人自行撤销' AFTER `reject_reason`,
+    ADD COLUMN `revoker_id` BIGINT NULL DEFAULT NULL COMMENT '撤销人ID(申请人本人或生产管理员,会话66)' AFTER `revoke_reason`,
+    ADD COLUMN `revoker_name` VARCHAR(50) NULL DEFAULT NULL COMMENT '撤销人姓名(冗余,会话66)' AFTER `revoker_id`,
+    ADD COLUMN `revoke_time` DATETIME NULL DEFAULT NULL COMMENT '撤销时间(会话66)' AFTER `revoker_name`;
+
+-- 会话 68（D137）价格偏离审批详情：建单时点偏离行价格快照(JSON)，详情弹窗展示定价对照
+ALTER TABLE `biz_approval_order`
+    ADD COLUMN `request_detail` TEXT NULL COMMENT '价格偏离行快照(JSON,会话68/D137): {thresholdPercent, rows:[lineNo/goodsName/quantity/unitPrice/standardSalePrice/deviationAmount/deviationPercent]}，建单时点快照' AFTER `request_reason`;
+
+-- 会话 68（D138）退料单详情「应退量」快照列
+ALTER TABLE `biz_pick_list_detail`
+    ADD COLUMN `expected_quantity` INT NULL DEFAULT NULL COMMENT '应退量快照(会话68/D138,ADR-0022): RETURN行建单时点的「应该退多少」参照量——拆分退料=BOM需求量快照, 终止/生产退料=建单时点已领未退净额; 该功能前的历史行为NULL(前端显示—)' AFTER `diff_reason`;
 

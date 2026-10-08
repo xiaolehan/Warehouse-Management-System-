@@ -1203,7 +1203,7 @@ class PurchaseRequestServiceTest {
     @Test
     void create_rejectsNonProductionAdmin() {
         doThrow(new BusinessException("仅生产管理员可识别缺货并创建采购申请单"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.create(new PurchaseRequestSaveDTO()));
@@ -1241,7 +1241,7 @@ class PurchaseRequestServiceTest {
     @Test
     void listShortageGoods_rejectsNonProductionAdmin() {
         doThrow(new BusinessException("仅生产管理员可识别缺货并创建采购申请单"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.listShortageGoods());
         assertTrue(ex.getMessage().contains("仅生产管理员"), ex.getMessage());
@@ -1264,10 +1264,13 @@ class PurchaseRequestServiceTest {
         draft.setSourceType(PurchaseRequestService.SOURCE_PRODUCTION);
         when(bizPurchaseRequestMapper.selectById(8L)).thenReturn(draft);
         when(authService.getUserInfo()).thenReturn(productionUser());
+        // 会话 67：撤销=置终态，markRevoked 条件更新需命中 1 行
+        when(bizPurchaseRequestMapper.update(isNull(), any())).thenReturn(1);
 
         service.delete(8L);
 
-        verify(bizPurchaseRequestMapper).deleteById(8L);
+        verify(bizPurchaseRequestMapper).update(isNull(), any());
+        verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
         verify(messageService).revokeUnreadByBiz("purchase_request", 8L);
     }
 
@@ -1285,6 +1288,7 @@ class PurchaseRequestServiceTest {
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(8L));
         assertTrue(ex.getMessage().contains("仅申请人本人"), ex.getMessage());
+        verify(bizPurchaseRequestMapper, never()).update(isNull(), any());
         verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
     }
 
@@ -1294,6 +1298,7 @@ class PurchaseRequestServiceTest {
                 .when(authzService).requireNotSuperAdminForBusinessWrite();
 
         assertThrows(BusinessException.class, () -> service.delete(8L));
+        verify(bizPurchaseRequestMapper, never()).update(isNull(), any());
         verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
     }
 
@@ -1302,7 +1307,7 @@ class PurchaseRequestServiceTest {
     @Test
     void process_guardRequiresPurchaseAccess() {
         doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
 
         assertThrows(BusinessException.class, () -> service.process(5L, new PurchaseRequestProcessDTO()));
         verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
@@ -1311,7 +1316,7 @@ class PurchaseRequestServiceTest {
     @Test
     void arrive_guardRequiresPurchaseAccess() {
         doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
 
         assertThrows(BusinessException.class, () -> service.arrive(5L, new PurchaseRequestReceiveDTO()));
         verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
@@ -1320,7 +1325,7 @@ class PurchaseRequestServiceTest {
     @Test
     void reject_guardRequiresPurchaseAccess() {
         doThrow(new BusinessException("仅采购管理员可处理/入库/驳回采购申请单"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PURCHASE), anyString());
 
         assertThrows(BusinessException.class, () -> service.reject(5L, new PurchaseRequestRejectDTO()));
         verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
@@ -1329,7 +1334,7 @@ class PurchaseRequestServiceTest {
     @Test
     void confirmReceive_guardRequiresWarehouseAccess() {
         doThrow(new BusinessException("仅仓储管理员可确认采购入库"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
 
         assertThrows(BusinessException.class, () -> service.confirmReceive(5L));
         verify(bizPurchaseRequestMapper, never()).selectById(anyLong());
@@ -1364,6 +1369,8 @@ class PurchaseRequestServiceTest {
         othersRow.setApplicantId(99L);
         othersRow.setRequestNo("PR002");
         when(bizPurchaseRequestMapper.selectById(9L)).thenReturn(othersRow);
+        // 会话 67：撤销=置终态（update 命中 1 行），不再 deleteById
+        when(bizPurchaseRequestMapper.update(isNull(), any())).thenReturn(1);
 
         BatchDeleteResultVO result = service.batchDelete(List.of(8L, 9L));
 
@@ -1372,7 +1379,7 @@ class PurchaseRequestServiceTest {
         assertEquals(9L, result.getFailures().get(0).getId());
         assertEquals("PR002", result.getFailures().get(0).getName());
         assertTrue(result.getFailures().get(0).getReason().contains("仅申请人本人"), "实际: " + result.getFailures().get(0).getReason());
-        verify(bizPurchaseRequestMapper).deleteById(8L);
+        verify(bizPurchaseRequestMapper).update(isNull(), any());
         verify(bizPurchaseRequestMapper, never()).deleteById(9L);
     }
 
@@ -1382,6 +1389,61 @@ class PurchaseRequestServiceTest {
                 .when(authzService).requireNotSuperAdminForBusinessWrite();
 
         assertThrows(BusinessException.class, () -> service.batchDelete(List.of(8L, 9L)));
+        verify(bizPurchaseRequestMapper, never()).update(isNull(), any());
         verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
+    }
+
+    // ---------- 会话 67：撤销=置终态留痕（不再逻辑删）+ 入库进度跳过（决策 1a/2a/3a） ----------
+
+    @Test
+    void revokeByProductionOrderInternal_marksRevoked_keepsRowsVisible() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO007");
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BizPurchaseRequest req = new BizPurchaseRequest();
+        req.setId(20L);
+        req.setRequestNo("PR020");
+        req.setStatus(PurchaseRequestService.STATUS_PENDING);
+        req.setSourceType(PurchaseRequestService.SOURCE_PRODUCTION);
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of(req));
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of());
+        when(authService.getUserInfo()).thenReturn(productionUser());
+        when(bizPurchaseRequestMapper.update(isNull(), any())).thenReturn(1);
+
+        List<String> revoked = service.revokeByProductionOrderInternal(7L, true);
+
+        assertEquals(List.of("PR020"), revoked);
+        verify(bizPurchaseRequestMapper).update(isNull(), any());
+        verify(bizPurchaseRequestMapper, never()).deleteById(anyLong());
+        verify(bizPurchaseRequestDetailMapper, never()).delete(any());
+        verify(messageService).revokeUnreadByBiz("purchase_request", 20L);
+        verify(messageService).sendPurchaseRequestRevokedToPurchaseAdmins(eq("PO007"), any(), eq(7L));
+    }
+
+    @Test
+    void revokeByProductionOrderInternal_skipsRequestWithReceiveProgress() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("PO007");
+        when(bizProductionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BizPurchaseRequest req = new BizPurchaseRequest();
+        req.setId(20L);
+        req.setRequestNo("PR020");
+        req.setStatus(PurchaseRequestService.STATUS_PURCHASING);
+        when(bizPurchaseRequestMapper.selectList(any())).thenReturn(List.of(req));
+        // 行级已入库（RECEIVE_DONE）→ 决策 3a：跳过不撤，采购侧人工收尾
+        BizPurchaseRequestDetail done = new BizPurchaseRequestDetail();
+        done.setRequestId(20L);
+        done.setReceiveStatus(PurchaseRequestService.RECEIVE_DONE);
+        when(bizPurchaseRequestDetailMapper.selectList(any())).thenReturn(List.of(done));
+
+        List<String> revoked = service.revokeByProductionOrderInternal(7L, true);
+
+        assertTrue(revoked.isEmpty());
+        verify(bizPurchaseRequestMapper, never()).update(any(), any());
+        verify(messageService, never()).revokeUnreadByBiz(anyString(), anyLong());
     }
 }

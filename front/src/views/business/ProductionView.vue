@@ -33,13 +33,13 @@
           <el-form-item>
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
             <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
-            <el-button v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" type="success" :icon="Plus" @click="handleAdd">新增生产入库</el-button>
+            <el-button v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" type="success" :icon="Plus" @click="handleAdd">新增生产入库</el-button>
           </el-form-item>
         </el-form>
       </div>
 
       <div style="margin-bottom: 12px;">
-        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">
           批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
         </el-button>
       </div>
@@ -77,11 +77,11 @@
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="scope">
             <div class="action-group">
-              <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
+              <el-button size="small" type="primary" link @click="handleView(scope.row)">详情</el-button>
               <!-- D107：待确认申请 → 仓储管理员「确认入库 / 驳回」 -->
               <template v-if="isPendingConfirm(scope.row)">
                 <el-tooltip v-if="scope.row.salesFrozen" :content="`关联销售已取消（${scope.row.salesFrozenReason || '已冻结'}），禁止确认入库，请与生产协商终止`" placement="top">
-                  <span class="action-disabled" style="cursor:not-allowed">冻结禁入库</span>
+                  <span style="cursor:not-allowed"><el-button size="small" type="success" link disabled>确认入库</el-button></span>
                 </el-tooltip>
                 <el-button
                   v-else-if="isWarehouseAdmin" size="small" type="success" link
@@ -95,7 +95,7 @@
               </template>
               <el-tooltip v-else-if="showDeleteAction(scope.row)" content="当天错单可直接删除（不留痕）；历史错单请用作废（留痕）" placement="top">
                 <el-button
-                  v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                  v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }"
                   size="small"
                   type="danger"
                   link
@@ -108,7 +108,7 @@
                 <el-tooltip content="历史错单作废留痕，立即生效并冲减库存" placement="top">
                   <span>
                     <el-button
-                      v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                      v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }"
                       size="small"
                       type="warning"
                       link
@@ -570,10 +570,7 @@ onMounted(async () => {
   color: #909399;
 }
 
-.action-disabled {
-  color: #999;
-  font-size: 12px;
-}
+/* action-disabled / action-group 全局化至 assets/main.css（会话 67） */
 
 .state-success {
   color: #16a34a;
@@ -585,11 +582,6 @@ onMounted(async () => {
 
 .state-warning {
   color: #d97706;
-}
-
-.action-group {
-  display: flex;
-  align-items: center;
 }
 
 .void-help-icon {

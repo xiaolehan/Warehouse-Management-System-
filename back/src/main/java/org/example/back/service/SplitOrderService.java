@@ -365,6 +365,9 @@ public class SplitOrderService {
 
         Map<Long, BaseGoods> goodsMap = loadGoodsMap(
                 dto.getItems().stream().map(SplitReturnSubmitDTO.SplitReturnItemDTO::getGoodsId).toList());
+        // D138：应退量快照映射（goodsId → BOM 需求量；提交守卫已校验明细 ⊆ BOM 快照）
+        Map<Long, Integer> expectedMap = snapshot.stream().collect(Collectors.toMap(
+                BizSplitOrderDetail::getGoodsId, BizSplitOrderDetail::getRequiredQuantity, (a, b) -> a));
         int sortNo = 0;
         for (SplitReturnSubmitDTO.SplitReturnItemDTO item : dto.getItems()) {
             BaseGoods goods = goodsMap.get(item.getGoodsId());
@@ -378,6 +381,7 @@ public class SplitOrderService {
             det.setGoodsName(goods.getGoodsName());
             det.setQuantity(item.getQuantity());
             det.setDiffReason(item.getDiffReason()); // Q16：差异备注随退料单落库
+            det.setExpectedQuantity(expectedMap.get(item.getGoodsId())); // D138：应退量快照 = BOM 需求量
             det.setSpec(goods.getSpec());
             det.setMaterial(goods.getMaterial());
             det.setSortNo(sortNo++);
@@ -698,7 +702,8 @@ public class SplitOrderService {
     }
 
     private void requireWarehouseAdmin(String message) {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, message);
+        // D141：仓储同权开放——仓储部门（admin+员工）均可执行拆分单仓储动作
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, message);
     }
 
     private void requireProductionMember(String message) {
@@ -793,11 +798,25 @@ public class SplitOrderService {
             dv.setCreateTime(d.getCreateTime());
             return dv;
         }).toList());
-        // 附 RETURN 退料单号（列表标注「拆分退料」用）
+        // 附 RETURN 退料单号（列表标注「拆分退料」用）；D140：按物料对齐回填已退量/差异备注（退料单已撤销被逻辑删时不回填，前端显示「—」）
         if (entity.getReturnPickListId() != null) {
             BizPickList pick = bizPickListMapper.selectById(entity.getReturnPickListId());
             if (pick != null) {
                 vo.setReturnPickNo(pick.getPickNo());
+                // D140：拆分单详情回显退料明细——按 goodsId 对齐（前端预填一行/物料，防重键取首行）
+                Map<Long, BizPickListDetail> returnRows = bizPickListDetailMapper.selectList(
+                        new LambdaQueryWrapper<BizPickListDetail>()
+                                .eq(BizPickListDetail::getPickListId, pick.getId())
+                                .orderByAsc(BizPickListDetail::getSortNo))
+                        .stream()
+                        .collect(Collectors.toMap(BizPickListDetail::getGoodsId, d -> d, (a, b) -> a));
+                for (SplitOrderDetailVO dv : vo.getDetails()) {
+                    BizPickListDetail row = returnRows.get(dv.getGoodsId());
+                    if (row != null) {
+                        dv.setReturnedQuantity(row.getQuantity());
+                        dv.setReturnDiffReason(row.getDiffReason());
+                    }
+                }
             }
         }
         return vo;

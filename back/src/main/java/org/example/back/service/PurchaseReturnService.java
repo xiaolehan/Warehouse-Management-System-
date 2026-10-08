@@ -87,10 +87,10 @@ public class PurchaseReturnService {
     }
 
     /**
-     * 采购管理员权限（admin）：删除当天退货单收口 admin（D32：员工仅 create+read+确认退货成功）。
+     * D141 同权开放：删除/批量删除/作废发起开放给采购部门（admin+员工）。
      */
     private void requirePurchaseReturnAdminOrSuperAdmin() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购管理员可执行该操作");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_PURCHASE, "仅采购部门可执行该操作");
     }
 
     /**
@@ -441,17 +441,18 @@ public class PurchaseReturnService {
     }
 
     private void requirePurchaseReturnVoidExecutionAccess() {
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
             return;
         }
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_PURCHASE)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_PURCHASE)) {
             throw BusinessException.validateFail("历史进货退货单作废需提交仓储审批");
         }
-        throw BusinessException.forbidden("仅采购部门管理员可发起进货退货作废申请，且需由仓储部门审批");
+        throw BusinessException.forbidden("仅采购部门可发起进货退货作废申请，且需由仓储部门审批");
     }
 
+    // D141：仓储部门（admin+员工）确认退货出库
     private void requireWarehouseAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认退货出库");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可确认退货出库");
     }
 
     private String confirmStatusText(Integer confirmStatus) {

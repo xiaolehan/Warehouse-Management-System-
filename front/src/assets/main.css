@@ -60,3 +60,14 @@ body {
     width: 90% !important;
   }
 }
+
+/* 会话 67（ADR-0007 对齐）：操作列通用样式——各业务页统一，删除各页 scoped 本地副本 */
+.action-group {
+  display: flex;
+  align-items: center;
+}
+
+.action-disabled {
+  color: #999;
+  font-size: 12px;
+}

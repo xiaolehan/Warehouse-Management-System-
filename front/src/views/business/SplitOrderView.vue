@@ -59,23 +59,24 @@
         </el-table-column>
         <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 1" type="primary" size="small"
-              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }" @click="handleClaim(row)">领取</el-button>
-            <el-button v-if="row.status === 2" type="warning" size="small"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleConfirmOutbound(row)">确认成品出库</el-button>
-            <el-button v-if="row.status === 3 && canProductionSide(row)" type="primary" size="small"
-              @click="handleConfirmReceipt(row)">确认领到成品</el-button>
-            <el-button v-if="row.status === 4 && canProductionSide(row)" type="primary" size="small"
-              @click="openReturnDialog(row)">提交拆分退料</el-button>
-            <el-button v-if="[3, 4].includes(row.status) && canProductionSide(row)" type="warning" size="small" plain
-              @click="handleAbandon(row)">放弃拆分</el-button>
-            <el-button v-if="[1, 2].includes(row.status) && canProductionSide(row)" type="warning" size="small" plain
-              @click="handleAbandonEarly(row)">放弃拆分</el-button>
-            <el-button v-if="row.status === 7" type="success" size="small"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleConfirmRestock(row)">确认成品回库</el-button>
-            <el-button v-if="[1, 2].includes(row.status)" type="danger" size="small" plain
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleVoid(row)">作废</el-button>
             <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
+            <el-button v-if="row.status === 1" link type="primary" size="small"
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }" @click="handleClaim(row)">领取</el-button>
+            <el-button v-if="row.status === 2" link type="success" size="small"
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleConfirmOutbound(row)">确认成品出库</el-button>
+            <el-button v-if="row.status === 3 && canProductionSide(row)" link type="success" size="small"
+              @click="handleConfirmReceipt(row)">确认领到成品</el-button>
+            <!-- 会话 67：已提交退料单（returnPickNo 有值）后禁再提交，防重复退料 -->
+            <el-button v-if="row.status === 4 && canProductionSide(row) && !row.returnPickNo" link type="primary" size="small"
+              @click="openReturnDialog(row)">提交拆分退料</el-button>
+            <el-button v-if="[3, 4].includes(row.status) && canProductionSide(row)" link type="warning" size="small"
+              @click="handleAbandon(row)">放弃拆分</el-button>
+            <el-button v-if="[1, 2].includes(row.status) && canProductionSide(row)" link type="warning" size="small"
+              @click="handleAbandonEarly(row)">放弃拆分</el-button>
+            <el-button v-if="row.status === 7" link type="success" size="small"
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleConfirmRestock(row)">确认成品回库</el-button>
+            <el-button v-if="[1, 2].includes(row.status)" link type="danger" size="small"
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleVoid(row)">作废</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -109,6 +110,17 @@
         <el-descriptions-item label="放弃人">{{ detail.abandonUserName || '—' }}（{{ fmtTime(detail.abandonTime) }}）</el-descriptions-item>
       </el-descriptions>
       <div style="margin-top: 12px; font-weight: 600; font-size: 13px">拆分物料（BOM × 拆分数量快照）</div>
+      <!-- 会话 67：拆分中且已提交退料单时，仓储端在详情里得到收料入库引导（决策 7a——原状：仓储无处操作） -->
+      <el-alert
+        v-if="isWarehouseAdmin && detail.status === 4 && detail.returnPickNo"
+        type="warning" :closable="false" style="margin-top: 8px"
+      >
+        <template #title>
+          拆分退料单 {{ detail.returnPickNo }} 已提交，请前往
+          <el-link type="primary" style="vertical-align:baseline" @click="gotoPickList(detail)">领料单页</el-link>
+          对该退料单「收料」完成入库。
+        </template>
+      </el-alert>
       <el-table :data="detail.details || []" border size="small" style="margin-top: 8px">
         <el-table-column label="物料" min-width="150">
           <template #default="{ row }">
@@ -117,10 +129,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="requiredQuantity" label="需求量" width="100" align="center" />
+        <!-- D140：生产端详情回显退料明细——已退量/差异备注；未提交退料或退料已撤销显示「—」 -->
+        <el-table-column label="已退量" width="90" align="center">
+          <template #default="{ row }">{{ row.returnedQuantity ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column label="差异备注" min-width="140">
+          <template #default="{ row }">{{ row.returnDiffReason || '—' }}</template>
+        </el-table-column>
       </el-table>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
-        <el-button v-if="detail.status === 4 && canProductionSide(detail)" type="primary" size="small" @click="openReturnDialog(detail)">提交拆分退料</el-button>
+        <el-button v-if="detail.status === 4 && canProductionSide(detail) && !detail.returnPickNo" type="primary" size="small" @click="openReturnDialog(detail)">提交拆分退料</el-button>
       </template>
     </el-dialog>
 
@@ -137,7 +156,7 @@
             <span v-if="row.spec || row.material" style="color:#909399">（{{ [row.spec, row.material].filter(Boolean).join(' / ') }}）</span>
           </template>
         </el-table-column>
-        <el-table-column prop="requiredQuantity" label="需求量" width="90" align="center" />
+        <el-table-column prop="requiredQuantity" label="应退量" width="90" align="center" />
         <el-table-column label="退料数量" width="140">
           <template #default="{ row }">
             <el-input-number v-model="row.quantity" :min="0" :max="row.requiredQuantity" controls-position="right" style="width: 120px" />
@@ -159,9 +178,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   getSplitOrderPageAPI, getSplitOrderDetailAPI, claimSplitOrderAPI, confirmOutboundAPI,
   confirmReceiptAPI, abandonSplitOrderAPI, submitSplitReturnAPI, confirmRestockAPI, voidSplitOrderAPI
@@ -210,6 +230,14 @@ const canProductionSide = (row) => {
   return userStore.deptCode === 'production' && !!row.claimUserName && row.claimUserName === userStore.realName
 }
 
+// 会话 67（决策 7a）：仓储管理员标识——详情里对「拆分中+已提交退料单」给收料入库引导
+const isWarehouseAdmin = computed(() => userStore.role === 'admin' && userStore.deptCode === 'warehouse')
+const router = useRouter()
+const gotoPickList = (row) => {
+  detailVisible.value = false
+  router.push({ path: '/business/pick-list', query: { splitOrderId: String(row.id) } })
+}
+
 const load = async () => {
   loading.value = true
   try {
@@ -254,6 +282,15 @@ const openDetail = async (row) => {
     // 业务错误已由拦截器统一提示
   }
 }
+
+// 会话 67（决策 7a）：消息深链 ?splitOrderId= → 直接打开该拆分单详情后清 query（D75/ProductionOrderView 范式）
+const route = useRoute()
+watch(() => route.query.splitOrderId, (v) => {
+  if (v) {
+    openDetail({ id: Number(v) })
+    router.replace({ query: {} })
+  }
+}, { immediate: true })
 
 // 生产领取（状态 1→2）
 const handleClaim = async (row) => {

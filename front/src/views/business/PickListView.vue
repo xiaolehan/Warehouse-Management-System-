@@ -33,15 +33,19 @@
 
       <!-- 列表 -->
       <div style="margin-bottom: 12px;">
-        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }">
           批量撤销{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
         </el-button>
       </div>
       <el-table v-loading="loading" :data="tableData" border stripe @selection-change="handleBatchSelectionChange">
         <el-table-column type="selection" width="46" />
         <el-table-column prop="pickNo" label="单号" width="180" />
-        <el-table-column label="类型" width="80">
-          <template #default="{ row }">{{ row.pickTypeText }}</template>
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">
+            {{ row.pickTypeText }}
+            <!-- 会话 67（决策 7a）：拆分退料 RETURN 单（production_order_id 为空 + splitOrderId 关联）打标记，仓储可识别收料入口 -->
+            <el-tag v-if="row.pickType === 'RETURN' && row.splitOrderId" type="danger" size="small" style="margin-left:4px">拆分退料</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="明细">
           <template #default="{ row }">
@@ -64,10 +68,10 @@
           <template #default="{ row }">
             <el-button link size="small" type="primary" @click="handleView(row)">详情</el-button>
             <el-button link size="small" type="success" v-if="row.status === 1"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleIssue(row)">
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleIssue(row)">
               {{ row.pickType === 'RETURN' ? '收料' : '发料' }}</el-button>
             <el-button link size="small" type="warning" v-if="row.status === 1 && !isTerminatedReturn(row)"
-              v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleReject(row)">驳回</el-button>
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleReject(row)">驳回</el-button>
             <el-button link size="small" type="success" v-if="row.status === 2 && row.pickType !== 'RETURN' && isApplicant(row)"
               @click="handleConfirm(row)">确认收货</el-button>
             <el-button link size="small" type="danger" v-if="row.status === 1 && !isTerminatedReturn(row) && isApplicant(row)"
@@ -82,7 +86,7 @@
     </el-card>
 
     <!-- 详情对话框 -->
-    <el-dialog v-model="viewVisible" title="领料单详情" width="760px">
+    <el-dialog v-model="viewVisible" :title="`${viewData?.pickTypeText || '领料'}单详情`" width="760px">
       <el-descriptions :column="2" border v-if="viewData">
         <el-descriptions-item label="单号">{{ viewData.pickNo }}</el-descriptions-item>
         <el-descriptions-item label="类型">{{ viewData.pickTypeText }}</el-descriptions-item>
@@ -111,12 +115,16 @@
         <el-table-column label="差异备注" min-width="140">
           <template #default="{ row }">{{ row.diffReason || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="quantity" label="数量" width="70" />
+        <!-- D138：RETURN 行展示建单时点应退量快照；历史行 NULL 显示「—」 -->
+        <el-table-column v-if="viewData?.pickType === 'RETURN'" label="应退量" width="80">
+          <template #default="{ row }">{{ row.expectedQuantity ?? '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="quantity" :label="viewData?.pickType === 'RETURN' ? '退料数量' : '数量'" width="70" />
       </el-table>
     </el-dialog>
 
     <!-- 驳回对话框 -->
-    <el-dialog v-model="rejectVisible" title="驳回领料单" width="480px">
+    <el-dialog v-model="rejectVisible" :title="`驳回${rejectForm.typeWord}单`" width="480px">
       <el-form>
         <el-form-item label="驳回原因" required>
           <el-input v-model="rejectForm.reason" type="textarea" :rows="3" placeholder="请填写驳回原因" />
@@ -131,9 +139,10 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, h } from 'vue'
+import { ref, reactive, onMounted, computed, h, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import {
   getPickListPageAPI, getPickListDetailAPI,
@@ -157,7 +166,7 @@ const viewVisible = ref(false)
 const viewData = ref(null)
 
 const rejectVisible = ref(false)
-const rejectForm = reactive({ id: null, reason: '' })
+const rejectForm = reactive({ id: null, reason: '', typeWord: '领料' }) // typeWord：D139 驳回弹窗标题按单据类型
 
 const isApplicant = (row) => row.applicantName && row.applicantName === userStore.realName
 
@@ -210,6 +219,20 @@ const loadList = async () => {
 }
 
 const handleSearch = () => { currentPage.value = 1; loadList() }
+
+// 会话 67（决策 7a）：拆分单详情引导跳转带来的 ?splitOrderId= → 自动切「退料」过滤定位拆分退料单后清 query
+const route = useRoute()
+const router = useRouter()
+watch(() => route.query.splitOrderId, (v) => {
+  if (v) {
+    searchForm.pickType = 'RETURN'
+    currentPage.value = 1
+    loadList()
+    ElMessage.info('已为您过滤退料单，请按「拆分退料」标记定位对应单据')
+    router.replace({ query: {} })
+  }
+}, { immediate: true })
+
 const resetSearch = () => {
   Object.assign(searchForm, { pickNo: '', pickType: '', status: '', goodsName: '', dateRange: [] })
   currentPage.value = 1; loadList()
@@ -262,6 +285,7 @@ const handleConfirm = (row) => {
 const handleReject = (row) => {
   rejectForm.id = row.id
   rejectForm.reason = ''
+  rejectForm.typeWord = row.pickTypeText || '领料' // D139：驳回弹窗标题随单据类型（领料/补料/退料）
   rejectVisible.value = true
 }
 
@@ -287,7 +311,11 @@ const handleBatchSelectionChange = (val) => {
 }
 const handleBatchDelete = async () => {
   try {
-    await ElMessageBox.confirm(`确认批量撤销选中的 ${batchSelectedRows.value.length} 张领料单吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
+    // D139：选中行同类型时按类型显示（领料单/补料单/退料单），混合类型显示「单据」
+    const types = [...new Set(batchSelectedRows.value.map((r) => r.pickType))]
+    const wordMap = { PICK: '领料', SUPPLY: '补料', RETURN: '退料' }
+    const noun = types.length === 1 ? `${wordMap[types[0]] || '领料'}单` : '单据'
+    await ElMessageBox.confirm(`确认批量撤销选中的 ${batchSelectedRows.value.length} 张${noun}吗？不满足条件的将跳过并提示。`, '警告', { type: 'warning' })
     const res = await batchDeletePickListsAPI(batchSelectedRows.value.map((r) => r.id))
     const data = res.data || {}
     if (data.failureCount > 0) {
@@ -304,7 +332,7 @@ const handleBatchDelete = async () => {
 }
 
 const handleDelete = (row) => {
-  ElMessageBox.confirm('确认撤销该领料申请？', '警告', { type: 'warning' })
+  ElMessageBox.confirm(`确认撤销该${row.pickTypeText || '领料'}申请？`, '警告', { type: 'warning' })
     .then(async () => {
       await deletePickListAPI(row.id)
       ElMessage.success('已撤销')

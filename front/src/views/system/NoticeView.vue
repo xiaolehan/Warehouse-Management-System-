@@ -37,7 +37,7 @@
       <el-table-column prop="author" label="发布人" width="100" />
       <el-table-column label="操作" width="180" fixed="right">
         <template #default="scope">
-          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">详情</el-button>
           <el-button link size="small" type="success" :disabled="!canManage(scope.row)" @click="handleEdit(scope.row)">编辑</el-button>
           <el-button link size="small" type="danger" :disabled="!canManage(scope.row)" @click="handleDelete(scope.row)">删除</el-button>
         </template>

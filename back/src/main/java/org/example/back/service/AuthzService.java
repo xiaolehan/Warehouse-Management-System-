@@ -138,7 +138,7 @@ public class AuthzService {
 
     /**
      * D77/ADR-0009：超管 = 只读审计角色，业务写操作一律拒绝。
-     * 插入在各业务写方法入口（读接口与超管治理写权——用户/公告/系统参数/安全策略/三类审批——不加）。
+     * 插入在各业务写方法入口（读接口与超管治理写权——用户/公告/安全策略/作废审批——不加；D120 后系统参数/价格偏离审批已移销售管理员）。
      */
     public void requireNotSuperAdminForBusinessWrite() {
         if (isSuperAdmin()) {

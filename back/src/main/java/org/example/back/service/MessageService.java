@@ -44,6 +44,7 @@ public class MessageService {
     private static final String ROUTE_PRODUCTION = "/business/production";
     private static final String ROUTE_VOID_APPROVAL = "/system/void-approval";
     private static final String ROUTE_SPLIT_ORDER = "/business/split-order";
+    private static final String ROUTE_STOCKTAKE = "/business/stocktake";
 
     @Autowired
     private SysMessageMapper sysMessageMapper;
@@ -388,6 +389,54 @@ public class MessageService {
                 "production",
                 productionId,
                 ROUTE_PRODUCTION);
+    }
+
+    // ==================== 盘点消息（会话 64：ADR-0010「盘点不发站内消息」口径修订为指派/送审两点提醒） ====================
+
+    /** 盘点消息标题常量（发送与按标题撤回共用，跨类引用） */
+    public static final String TITLE_STOCKTAKE_ASSIGNED = "盘点任务指派";
+    public static final String TITLE_STOCKTAKE_PENDING_REVIEW = "盘点单待审核";
+
+    /**
+     * 盘点指派提醒 → 精准到负责人本人（决策 1a：按人分组每人一条，只列本人名下的行）。
+     * rowsDesc 为该负责人名下明细行描述（如「螺丝（M6）、轴承」），只含商品与规格、不含账面数（D119 盲盘口径）。
+     * 绑 biz_type=stocktake：改派撤旧重发（决策 2a）、生效/取消时随 D21 撤未读。
+     */
+    public void sendStocktakeAssignedToUser(Long assigneeId, String stocktakeNo, String rowsDesc, Long stocktakeId) {
+        sendToUserWithBiz(
+                assigneeId,
+                TITLE_STOCKTAKE_ASSIGNED,
+                String.format(
+                        Locale.ROOT,
+                        "盘点单 %s 已指派您负责盘点：%s。请及时录入实盘数，完成后提交送审。",
+                        stocktakeNo, rowsDesc
+                ),
+                "stocktake",
+                stocktakeId,
+                ROUTE_STOCKTAKE + "?stocktakeId=" + stocktakeId);
+    }
+
+    /**
+     * 盘点单提交送审 → 通知仓储管理员审核（决策 3b；D84：提交=成员级，审核=admin）。
+     * 绑 biz_type=stocktake：审核生效/驳回/取消时随 D21 范式撤未读。
+     */
+    public void sendStocktakeSubmittedToWarehouseAdmins(String stocktakeNo, String submitterName,
+                                                        int countedRows, int totalRows, Long stocktakeId) {
+        Long warehouseDeptId = resolveDeptIdByCode(AuthzService.DEPT_WAREHOUSE);
+        if (warehouseDeptId == null) {
+            return;
+        }
+        sendToDeptAdminsWithBiz(
+                warehouseDeptId,
+                TITLE_STOCKTAKE_PENDING_REVIEW,
+                String.format(
+                        Locale.ROOT,
+                        "盘点单 %s 已由 %s 提交送审（已录 %d/%d 行），请尽快审核。",
+                        stocktakeNo, submitterName, countedRows, totalRows
+                ),
+                "stocktake",
+                stocktakeId,
+                ROUTE_STOCKTAKE);
     }
 
     /**
@@ -1111,33 +1160,30 @@ public class MessageService {
                 ROUTE_PURCHASE_REQUEST);
     }
 
+    /** D120：价格偏离审批类消息标题——审批通过/驳回时按标题精确撤回未读待办 */
+    public static final String TITLE_PRICE_DEVIATION_PENDING = "待审批价格偏离销售单";
+
     /**
-     * 销售价偏离标准售价超阈值时通知超级管理员审批（绑 biz_type=sales，对齐 D21 范式）。
-     * deviationDesc 为偏离行描述（D110 决策④整单一笔：如「第1行 PTO153 偏离 20%；第3行 轴承 偏离 10%」）。
-     * 超管 dept_id 为空，不能走部门广播，按 role=salesadmin 单点投递。
+     * 销售价偏离标准售价超阈值时通知销售部管理员审批（D120：审批权由超管转移至销售管理员；
+     * 绑 biz_type=sales + biz_id，D21 范式）。deviationDesc 为偏离行描述（D110 决策④整单一笔：
+     * 如「第1行 PTO153 本次60.00/标准50.00 偏离 20%」）；approvalId 供消息深链 ？approvalId=
+     * 直达审批详情弹窗（会话68/D137）。
      */
-    public void sendPriceDeviationToSuperAdmin(String salesNo, String operatorName, String deviationDesc, Long salesId) {
-        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysUser::getRole, AuthzService.ROLE_SUPERADMIN)
-                .eq(SysUser::getStatus, USER_STATUS_ENABLED)
-                .last("LIMIT 1");
-        SysUser superadmin = sysUserMapper.selectOne(wrapper);
-        if (superadmin == null) {
+    public void sendPriceDeviationToSalesAdmin(String salesNo, String operatorName, String deviationDesc, Long salesId, Long approvalId) {
+        Long salesDeptId = resolveDeptIdByCode(AuthzService.DEPT_SALES);
+        if (salesDeptId == null) {
             return;
         }
         String operator = StringUtils.hasText(operatorName) ? operatorName : "销售管理员";
-        SysMessage message = new SysMessage();
-        message.setRecipientUserId(superadmin.getId());
-        message.setRecipientDeptId(superadmin.getDeptId());
-        message.setTitle("待审批价格偏离销售单");
-        message.setContent(String.format(Locale.ROOT,
-                "销售单 %s 由 %s 提交，销售价偏离标准售价：%s，超阈值，请审批后仓储方可确认出库。",
-                salesNo, operator, deviationDesc == null ? "-" : deviationDesc));
-        message.setIsRead(MESSAGE_UNREAD);
-        message.setBizType("sales");
-        message.setBizId(salesId);
-        message.setTargetRoute(ROUTE_VOID_APPROVAL);
-        sysMessageMapper.insert(message);
+        sendToDeptAdminsWithBiz(
+                salesDeptId,
+                TITLE_PRICE_DEVIATION_PENDING,
+                String.format(Locale.ROOT,
+                        "销售单 %s 由 %s 提交，销售价偏离标准售价：%s，超阈值，请审批后仓储方可确认出库。",
+                        salesNo, operator, deviationDesc == null ? "-" : deviationDesc),
+                "sales",
+                salesId,
+                ROUTE_VOID_APPROVAL + "?approvalId=" + approvalId);
     }
 
     // ==================== 作废审批消息（D103） ====================

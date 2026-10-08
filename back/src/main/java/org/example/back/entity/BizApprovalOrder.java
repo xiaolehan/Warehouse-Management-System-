@@ -28,6 +28,12 @@ public class BizApprovalOrder {
     private String requestReason;
 
     /**
+     * 价格偏离行快照(JSON,会话68/D137)：建单时点的本次售价/标准售价/偏离%对照，
+     * 详情弹窗按行展示；与 before/after_biz_snapshot（作废类业务单据快照）语义不同
+     */
+    private String requestDetail;
+
+    /**
      * 提交申请时的业务单据状态快照
      */
     private Integer beforeBizStatus;

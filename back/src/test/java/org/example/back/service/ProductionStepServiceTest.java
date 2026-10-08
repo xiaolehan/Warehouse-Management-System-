@@ -201,7 +201,7 @@ class ProductionStepServiceTest {
 
         service.revoke(7L, 3);
 
-        verify(authzService, never()).requireDeptAdminOrSuperAdmin(anyString(), anyString());
+        verify(authzService, never()).requireDeptMemberOrSuperAdmin(anyString(), anyString());
         verify(stepMapper).update(isNull(), any());
     }
 
@@ -214,7 +214,7 @@ class ProductionStepServiceTest {
 
         service.revoke(7L, 3);
 
-        verify(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+        verify(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
         verify(stepMapper).update(isNull(), any());
     }
 
@@ -224,7 +224,7 @@ class ProductionStepServiceTest {
         when(stepMapper.selectOne(any())).thenReturn(step(3, BizProductionOrderStep.STATUS_DONE, 8L));
         when(authService.getUserInfo()).thenReturn(user(9L));
         doThrow(BusinessException.validateFail("仅打卡本人或生产研发部管理员可撤销打卡"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_PRODUCTION), anyString());
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.revoke(7L, 3));
         assertTrue(ex.getMessage().contains("撤销"));

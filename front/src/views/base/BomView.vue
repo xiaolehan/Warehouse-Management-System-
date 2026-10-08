@@ -12,17 +12,17 @@
         <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
         <el-button
           type="success" :icon="Plus" @click="handleAdd"
-          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
         >新建 BOM</el-button>
         <el-button
           type="warning" :icon="Upload" @click="openImport"
-          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
         >BOM导入</el-button>
       </el-form-item>
     </el-form>
 
     <div style="margin-bottom: 12px;">
-      <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['production'] }">
+      <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }">
         批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
       </el-button>
     </div>
@@ -41,18 +41,18 @@
       <el-table-column prop="createTime" label="创建时间" width="170" />
       <el-table-column label="操作" width="230" fixed="right">
         <template #default="scope">
-          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">详情</el-button>
           <el-button
             link size="small" type="primary" @click="handleExport(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >导出</el-button>
           <el-button
             link size="small" type="success" @click="handleEdit(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >编辑</el-button>
           <el-button
             link size="small" type="danger" @click="handleDelete(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >删除</el-button>
         </template>
       </el-table-column>

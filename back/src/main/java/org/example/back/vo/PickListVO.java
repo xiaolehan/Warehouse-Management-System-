@@ -35,6 +35,11 @@ public class PickListVO {
     private Integer productionOrderStatus;
 
     /**
+     * 关联成品拆分单ID（拆分退料 RETURN 单专用，会话 67：前端据此打「拆分退料」标记）
+     */
+    private Long splitOrderId;
+
+    /**
      * 状态: 1-待发料/待收料, 2-已发料/已收料, 3-已完成, 4-已驳回（RETURN 类型按收料口径显示）
      */
     private Integer status;

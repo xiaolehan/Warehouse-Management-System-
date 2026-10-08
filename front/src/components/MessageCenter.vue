@@ -65,7 +65,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Finished, Delete, Check } from '@element-plus/icons-vue'
 import {
   deleteAllReadMessagesAPI,
@@ -88,10 +88,9 @@ const actionLoading = ref(false)
 const messageList = ref([])
 
 let pollingTimer = null
-// 浮窗基线 = 未读 id 集合 + 未读总数（id 级，可检出同窗口 +1/-1 抵消）；首轮拉取建立，存量未读不轰炸（非响应式，模板不用）
-let baselineUnreadIds = null
-let baselineUnreadTotal = 0
-const notifiedMessageIds = new Set()
+// 会话 64（决策 6a）：右下角 ElNotification 浮层整体移除——集中到达时堆叠误触（整块热区点击=静默已读+跳转），
+// 是「页面无缘无故跳转到拆分单」问题的根因；通知收敛为铃铛角标 + 站内邮箱单通道（ADR-0012 提示单通道口径）
+
 
 const unreadBadgeValue = computed(() => {
   if (unreadCount.value > 99) return '99+'
@@ -110,7 +109,8 @@ const BIZ_ROUTE_MAP = {
   purchase_return: ['/business/purchase-return'],
   purchase_request: ['/business/purchase-request'],
   pick_list: ['/business/pick-list', '/business/sales'],
-  production_order: ['/business/production-order', '/business/purchase-request']
+  production_order: ['/business/production-order', '/business/purchase-request'],
+  stocktake: ['/business/stocktake']
 }
 
 // 路由 meta 静态，鉴权结果按路径缓存，避免每卡片每轮渲染重复扫描路由表
@@ -164,67 +164,15 @@ const formatTime = (val) => {
   return String(val).replace('T', ' ').substring(0, 19)
 }
 
-// 新消息浮窗：≤3 条逐条弹（点击跳转），>3 条聚合一条（点击开邮箱）
-const notifyNewMessages = (fresh, displayCount) => {
-  fresh.forEach((m) => notifiedMessageIds.add(m.id))
-  if (fresh.length <= 3) {
-    fresh.forEach((m) => {
-      ElNotification({
-        title: m.title || '新消息',
-        message: m.content || '',
-        type: 'warning',
-        position: 'bottom-right',
-        duration: 6000,
-        onClick: () => {
-          if (m.jumpPath) {
-            handleMessageClick(m)
-          } else {
-            drawerVisible.value = true
-          }
-        }
-      })
-    })
-    return
-  }
-  ElNotification({
-    title: '新消息提醒',
-    message: `您有 ${displayCount} 条新未读消息，点击查看站内邮箱。`,
-    type: 'warning',
-    position: 'bottom-right',
-    duration: 6000,
-    onClick: () => {
-      drawerVisible.value = true
-    }
-  })
-}
-
 const loadUnreadCount = async () => {
   if (!showMessageCenter.value) return
   try {
-    // 角标轮询（15s）属有意静默场景：silent 豁免全局错误提示，失败保持上次基线（ADR-0012 豁免口）
+    // 角标轮询（15s）属有意静默场景：silent 豁免全局错误提示，失败保持上次角标（ADR-0012 豁免口）
     const res = await getMessagePageAPI({ pageNum: 1, pageSize: 10, read: false }, { silent: true })
     const records = res.data?.records || []
-    const total = Number(res.data?.total ?? records.length)
-    const currentIds = new Set(records.map((m) => m.id))
-    unreadCount.value = total
-    if (baselineUnreadIds === null) {
-      // 首轮仅建基线，存量未读不轰炸
-      baselineUnreadIds = currentIds
-      baselineUnreadTotal = total
-      return
-    }
-    const fresh = records
-      .filter((m) => !baselineUnreadIds.has(m.id) && !notifiedMessageIds.has(m.id))
-      .map(withJumpPath)
-    const delta = total - baselineUnreadTotal
-    // 先更新基线再弹窗，避免慢请求期间下一轮轮询重入重复拉取
-    baselineUnreadIds = currentIds
-    baselineUnreadTotal = total
-    if (fresh.length) {
-      notifyNewMessages(fresh, Math.max(fresh.length, delta))
-    }
+    unreadCount.value = Number(res.data?.total ?? records.length)
   } catch {
-    // 瞬时失败保持上一次基线与角标，不清零
+    // 瞬时失败保持上一次角标，不清零
   }
 }
 
@@ -254,7 +202,6 @@ const handleRead = async (message) => {
   actionLoading.value = true
   try {
     const res = await markMessageReadAPI(message.id)
-    notifiedMessageIds.delete(message.id)
     await refreshMessageState(true)
     return true
   } catch {
@@ -288,7 +235,6 @@ const handleReadAll = async () => {
   actionLoading.value = true
   try {
     const res = await markAllMessagesReadAPI()
-    notifiedMessageIds.clear()
     ElMessage.success('全部未读消息已标记为已读')
     await refreshMessageState(true)
   } catch {
@@ -348,9 +294,6 @@ watch(showMessageCenter, (visible) => {
   }
   stopPolling()
   unreadCount.value = 0
-  baselineUnreadIds = null
-  baselineUnreadTotal = 0
-  notifiedMessageIds.clear()
   routeAccessCache.clear()
   messageList.value = []
   drawerVisible.value = false

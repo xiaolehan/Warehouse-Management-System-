@@ -97,12 +97,12 @@
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="scope">
             <div class="action-group">
-              <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
+              <el-button size="small" type="primary" link @click="handleView(scope.row)">详情</el-button>
               <!-- D98：作废审批中冻结主流程（禁用+提示）；已作废/冲抵单据不再出现确认按钮 -->
               <el-tooltip v-if="scope.row.confirmStatus === 1 && scope.row.bizStatus === 1 && !isBizDocumentDeleted(scope.row)" :disabled="!voidPendingIds.has(scope.row.id)" content="作废审批中，待仓储管理员处理" placement="top">
                 <span>
                   <el-button
-                    v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                    v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }"
                     size="small"
                     type="success"
                     link
@@ -143,7 +143,7 @@
                 <el-tooltip :content="voidPendingIds.has(scope.row.id) ? '作废审批中，待仓储管理员处理' : '已生效或历史错单作废留痕，仓储审批通过后生效'" placement="top">
                   <span>
                     <el-button
-                      v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
+                      v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }"
                       size="small"
                       type="warning"
                       link
@@ -330,7 +330,7 @@
             </div>
             <div v-for="(hint, idx) in lineHints" :key="idx" class="line-hints">
               <div v-if="hint.shortage" class="shortage-hint">⚠ 第{{ idx + 1 }}行库存不足（需 {{ hint.quantity }} / 现存 {{ hint.stock }}），建单后将通知生产排产</div>
-              <div v-if="hint.deviated" class="price-deviation-hint">⚠ 第{{ idx + 1 }}行销售价偏离标准售价 {{ hint.deviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，整单提交后将需超管审批后仓储方可确认出库</div>
+              <div v-if="hint.deviated" class="price-deviation-hint">⚠ 第{{ idx + 1 }}行销售价偏离标准售价 {{ hint.deviationPct }}%，超 {{ priceDeviationThresholdPct }}% 阈值，整单提交后将需销售管理员审批后仓储方可确认出库</div>
             </div>
           </div>
         </el-form-item>
@@ -455,7 +455,7 @@ import VoidConfirmDialog from '@/components/VoidConfirmDialog.vue'
 import { getPriceDeviationThresholdAPI } from '@/api/config'
 import { hasBizDocumentWorkflowState, isBizDocumentDeleted, resolveBizDocumentState } from '@/utils/bizDocumentState'
 import { getRole } from '@/utils/auth'
-import { getDeptCode, getUserId, isSuperAdmin } from '@/utils/auth'
+import { getDeptCode, isSuperAdmin } from '@/utils/auth'
 import SalesTimeline from '@/components/SalesTimeline.vue'
 import {
   createSalesAPI,
@@ -477,10 +477,7 @@ const voidDialogVisible = ref(false)
 const voidTarget = ref(null)
 const voidSubmitting = ref(false)
 const voidPendingIds = ref(new Set())
-const isSalesAdmin = userRole === 'admin' && userDept === 'sales'
-const isWarehouseAdmin = userRole === 'admin' && userDept === 'warehouse'
-// 需求一 Q3/Q23：销售部门成员才可见终止入口（admin 全部单 / 员工仅本人单，后端兜底）
-const currentUserId = getUserId()
+// 需求一 Q3/Q23 + D141：销售部门（admin+员工）才可见终止入口，可终止本部门所有单（后端兜底）
 const isSalesDeptMember = userDept === 'sales'
 const voidStockEffect = computed(() => {
   const row = voidTarget.value
@@ -602,7 +599,7 @@ const onGoodsSelected = (row) => {
   }
 }
 
-// 价格偏离比例（D30：阈值由超管在系统参数页配置，默认 5%；D110 决策④：整单一笔审批，逐行提示）
+// 价格偏离比例（D30：D120 后阈值由销售管理员在系统参数页配置，默认 5%；D110 决策④：整单一笔审批，逐行提示）
 const priceDeviationThreshold = ref(0.05) // 比例小数，如 0.05
 const priceDeviationThresholdPct = computed(() => Math.round(priceDeviationThreshold.value * 100))
 const lineHints = computed(() =>
@@ -676,7 +673,7 @@ const stateTextClass = (row) => {
   return ''
 }
 
-// 价格偏离审批被超管驳回（单子退回销售人员，列表展示驳回原因）
+// 价格偏离审批被销售管理员驳回（单子退回销售人员，列表展示驳回原因）
 const isPriceDeviationRejectedRow = (row) =>
   Number(row?.approvalStatus) === 3 && String(row?.approvalRequestAction || '').toLowerCase() === 'price_deviation_confirm'
 
@@ -684,13 +681,12 @@ const showDeleteAction = (row) => !hasBizDocumentWorkflowState(row) && canDelete
 
 const showVoidActions = (row) => !hasBizDocumentWorkflowState(row) && canVoid(row)
 
-// 需求一 Q4/Q21：终止入口——未确认出库的有效单；销售 admin 可终止本部门所有单，员工仅本人所建单
+// 需求一 Q4/Q21 + D141：终止入口——未确认出库的有效单；销售部门（admin+员工）同权，可终止本部门所有单
 const canTerminate = (row) =>
   isSalesDeptMember &&
   Number(row?.bizStatus) === 1 &&
   Number(row?.confirmStatus) === 1 &&
-  !isBizDocumentDeleted(row) &&
-  (isSalesAdmin || Number(row?.operatorId) === currentUserId)
+  !isBizDocumentDeleted(row)
 
 // 需求一 Q22：明细行是否已终止（terminate_status=2）
 const isLineTerminated = (line) => Number(line?.terminateStatus) === 2
@@ -742,8 +738,8 @@ const loadList = async () => {
 }
 
 const loadVoidPendingIds = async () => {
-  // D98：仓储 admin 也拉取——「确认出库」主操作者，作废审批中需禁用+提示（端点 @RequireAdmin 仓储可过）
-  if (!isSalesAdmin && !isWarehouseAdmin) {
+  // D98/D141：销售/仓储部门（admin+员工）都拉取——确认出库主操作者与发起方，作废审批中需禁用+提示
+  if (!(('admin' === userRole || 'employee' === userRole) && (userDept === 'sales' || userDept === 'warehouse'))) {
     voidPendingIds.value = new Set()
     return
   }
@@ -1054,11 +1050,6 @@ onMounted(async () => {
   color: #909399;
 }
 
-.action-disabled {
-  color: #999;
-  font-size: 12px;
-}
-
 .state-success {
   color: #16a34a;
 }
@@ -1071,10 +1062,7 @@ onMounted(async () => {
   color: #d97706;
 }
 
-.action-group {
-  display: flex;
-  align-items: center;
-}
+/* action-group 全局化至 assets/main.css（会话 67） */
 
 .void-help-icon {
   color: #909399;

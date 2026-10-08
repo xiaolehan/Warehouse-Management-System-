@@ -2,14 +2,12 @@ package org.example.back.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
 import org.example.back.common.aspect.RequireAdminAspect;
-import org.example.back.common.exception.BusinessException;
 import org.example.back.common.exception.GlobalExceptionHandler;
 import org.example.back.config.SaTokenConfig;
 import org.example.back.config.StpInterfaceImpl;
 import org.example.back.mapper.SysErrorLogMapper;
 import org.example.back.service.ApprovalService;
 import org.example.back.service.AuthzService;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -26,14 +24,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -76,21 +70,10 @@ class ApprovalControllerAuthTest {
     @org.springframework.beans.factory.annotation.Autowired
     private MockMvc mockMvc;
 
-    @BeforeEach
-    void setUpAuthz() {
-        doAnswer(invocation -> {
-            String message = invocation.getArgument(0, String.class);
-            Object roleObj = StpUtil.getSession().get("role");
-            String role = roleObj == null ? "" : String.valueOf(roleObj).trim().toLowerCase(Locale.ROOT);
-            if (!"admin".equals(role) && !"superadmin".equals(role)) {
-                throw BusinessException.forbidden(message);
-            }
-            return null;
-        }).when(authzService).requireAdminOrSuperAdmin(anyString());
-    }
-
     @Test
-    void create_shouldRejectEmployeeAccess() throws Exception {
+    void create_employeeReachesService_guardMovedToServiceLayer() throws Exception {
+        // D141：控制器 @RequireAdmin 摘除，员工可直达 service（发起权守卫 ensureRequesterCanSubmitApproval
+        // 在 ApprovalService 单测覆盖——采购/销售员工放行，其余 403）；此处验证控制器层不再拦截。
         String token = loginWithRole("employee");
 
         mockMvc.perform(post("/system/approval-orders")
@@ -100,9 +83,9 @@ class ApprovalControllerAuthTest {
                                 {"bizType":"purchase","bizId":1,"requestAction":"void","reason":"test"}
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(403));
+                .andExpect(jsonPath("$.code").value(200));
 
-        verifyNoInteractions(approvalService);
+        verify(approvalService).create(any());
     }
 
     @Test

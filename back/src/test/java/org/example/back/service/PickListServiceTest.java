@@ -439,4 +439,80 @@ class PickListServiceTest {
         assertNull(vo.getDetails().get(0).getMaterial());
         assertNull(vo.getDetails().get(0).getRemark());
     }
+
+    @Test
+    void getById_returnDetail_mapsExpectedQuantity() {
+        BizPickList pick = pendingPickOwnedByWarehouseUser(14L);
+        pick.setPickType(PickListService.TYPE_RETURN);
+        when(bizPickListMapper.selectById(14L)).thenReturn(pick);
+
+        BizPickListDetail detail = new BizPickListDetail();
+        detail.setId(140L);
+        detail.setPickListId(14L);
+        detail.setGoodsId(50L);
+        detail.setGoodsName("螺丝");
+        detail.setQuantity(2);
+        detail.setExpectedQuantity(4); // D138：建单时点应退量快照
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of(detail));
+
+        mockWarehouseUser();
+
+        org.example.back.vo.PickListVO vo = service.getById(14L);
+
+        assertEquals(4, vo.getDetails().get(0).getExpectedQuantity());
+    }
+
+    // ========================== page - 会话 64 回归：拆分单退料行不再 NPE ==========================
+
+    @Test
+    void page_returnRowWithoutProductionOrder_doesNotThrowNpe() {
+        // 会话 64：拆分单退料行按 splitOrderId 关联，production_order_id 为 NULL（SplitOrderService 设计如此）。
+        // 旧代码在列表无其他生产来源行时 orderMap = Map.of()，对 null key 调 get 抛 NPE → 领料列表页 500「系统异常」
+        mockWarehouseUser();
+        BizPickList splitReturn = new BizPickList();
+        splitReturn.setId(22L);
+        splitReturn.setPickNo("PK-022");
+        splitReturn.setPickType(PickListService.TYPE_RETURN);
+        splitReturn.setStatus(PickListService.STATUS_PENDING);
+        splitReturn.setProductionOrderId(null);
+        splitReturn.setApplicantId(20L);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<BizPickList> mpPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        mpPage.setRecords(List.of(splitReturn));
+        mpPage.setTotal(1);
+        when(bizPickListMapper.selectPage(any(), any())).thenReturn(mpPage);
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of());
+
+        org.example.back.common.result.PageResult<org.example.back.vo.PickListVO> result =
+                service.page(new org.example.back.dto.PickListQueryDTO());
+
+        assertEquals(1, result.getTotal());
+        assertEquals(1, result.getRecords().size());
+        assertNull(result.getRecords().get(0).getProductionOrderStatus(), "拆分退料行无生产单状态，兜底为 null");
+    }
+
+    @Test
+    void page_returnRowWithSplitOrder_exposesSplitOrderId() {
+        // 会话 67（决策 7a）：拆分退料 RETURN 行透出 splitOrderId，前端据此打「拆分退料」标记
+        mockWarehouseUser();
+        BizPickList splitReturn = new BizPickList();
+        splitReturn.setId(23L);
+        splitReturn.setPickNo("PK-023");
+        splitReturn.setPickType(PickListService.TYPE_RETURN);
+        splitReturn.setStatus(PickListService.STATUS_PENDING);
+        splitReturn.setProductionOrderId(null);
+        splitReturn.setSplitOrderId(9L);
+        splitReturn.setApplicantId(20L);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<BizPickList> mpPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        mpPage.setRecords(List.of(splitReturn));
+        mpPage.setTotal(1);
+        when(bizPickListMapper.selectPage(any(), any())).thenReturn(mpPage);
+        when(bizPickListDetailMapper.selectList(any())).thenReturn(List.of());
+
+        org.example.back.common.result.PageResult<org.example.back.vo.PickListVO> result =
+                service.page(new org.example.back.dto.PickListQueryDTO());
+
+        assertEquals(9L, result.getRecords().get(0).getSplitOrderId());
+    }
 }

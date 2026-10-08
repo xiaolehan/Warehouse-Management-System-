@@ -160,7 +160,10 @@ const quickActions = computed(() => {
     sales: [
       { path: '/business/sales', title: '商品销售', description: '处理销售单据与审批结果回看' },
       { path: '/business/sales-return', title: '销售退货', description: '处理销售退货业务与状态追踪' },
-      { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存商品明细' }
+      { path: '/business/stock-warning', title: '预警中心', description: '查看低库存与零库存商品明细' },
+      // D120：价格偏离审批与系统参数（价格偏离阈值）设置权由超管移至销售管理员
+      { path: '/system/void-approval', title: '价格偏离审批', description: '审批价格偏离确认申请，通过后仓储方可出库' },
+      { path: '/system/config', title: '系统参数', description: '配置价格偏离审批触发阈值' }
     ],
     warehouse: [
       { path: '/base/products', title: '成品管理', description: '维护成品资料与 BOM 配方信息' },

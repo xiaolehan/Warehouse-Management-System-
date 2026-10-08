@@ -12,7 +12,7 @@
         <el-button type="primary" :icon="Search" @click="loadList">查询</el-button>
         <el-button :icon="Refresh" @click="handleReset">重置</el-button>
         <div class="filter-bar-right">
-          <el-button type="primary" :icon="Plus" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="openCreate">
+          <el-button type="primary" :icon="Plus" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="openCreate">
             新建盘点单
           </el-button>
         </div>
@@ -29,7 +29,7 @@
         </el-table-column>
         <el-table-column label="盘点进度" width="110" align="center">
           <template #default="scope">
-            <span v-if="scope.row.status === 3">
+            <span v-if="scope.row.status === 3 && !isWarehouseEmployee">
               盈{{ scope.row.overRows }}/亏{{ scope.row.shortRows }}/平{{ scope.row.matchRows }}
             </span>
             <span v-else>{{ scope.row.countedRows }}/{{ scope.row.totalRows }} 行</span>
@@ -48,8 +48,8 @@
         <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="130" fixed="right" align="center">
           <template #default="scope">
-            <el-button link type="primary" @click="openDetail(scope.row)">详情</el-button>
-            <el-button link type="primary" :icon="Download" :loading="exportingId === scope.row.id" @click="handleListExport(scope.row)">导出</el-button>
+            <el-button link size="small" type="primary" @click="openDetail(scope.row)">详情</el-button>
+            <el-button link size="small" type="primary" :loading="exportingId === scope.row.id" @click="handleListExport(scope.row)">导出</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -158,24 +158,34 @@
         </el-descriptions>
 
         <el-alert
-          v-if="detail.status === 1 || detail.status === 2"
+          v-if="(detail.status === 1 || detail.status === 2) && !isWarehouseEmployee"
           class="snapshot-alert"
           type="info"
           :closable="false"
           :title="`账面快照定格于建单时点（${fmtTime(detail.operationTime)}）；盘点期间业务正常出入库，实际差异以审核生效时实时库存为准（ADR-0010）`"
         />
+        <!-- D119 员工盲盘提示：账面对盘点人不可见 -->
+        <el-alert
+          v-if="isWarehouseEmployee"
+          class="snapshot-alert"
+          type="info"
+          :closable="false"
+          title="盲盘模式：账面库存对盘点人不可见，请独立清点实物后录入实盘数（差异由仓储管理员审核时核定）"
+        />
 
         <div class="summary-bar">
           <template v-if="detail.status === 3">
-            <el-tag type="success">盘盈 {{ detail.overRows }} 行</el-tag>
-            <el-tag type="danger">盘亏 {{ detail.shortRows }} 行</el-tag>
-            <el-tag type="info">账实一致 {{ detail.matchRows }} 行</el-tag>
+            <template v-if="!isWarehouseEmployee">
+              <el-tag type="success">盘盈 {{ detail.overRows }} 行</el-tag>
+              <el-tag type="danger">盘亏 {{ detail.shortRows }} 行</el-tag>
+              <el-tag type="info">账实一致 {{ detail.matchRows }} 行</el-tag>
+            </template>
             <el-tag type="warning">未盘 {{ detail.unscannedRows }} 行</el-tag>
           </template>
           <template v-else>
             <el-tag type="primary">已盘 {{ detail.countedRows }} 行</el-tag>
             <el-tag type="warning">未盘 {{ detail.unscannedRows }} 行</el-tag>
-            <span v-if="provisionalSummary.counted > 0" class="provisional-text">
+            <span v-if="!isWarehouseEmployee && provisionalSummary.counted > 0" class="provisional-text">
               按快照预估：盈 {{ provisionalSummary.over }} / 亏 {{ provisionalSummary.short }} / 平 {{ provisionalSummary.match }}（以审核时实时库存为准）
             </span>
           </template>
@@ -188,7 +198,7 @@
           <el-table-column prop="spec" label="规格" width="90" show-overflow-tooltip />
           <el-table-column prop="material" label="材质" width="90" show-overflow-tooltip />
           <el-table-column prop="unit" label="单位" width="70" align="center" />
-          <el-table-column prop="bookQty" label="账面快照" width="90" align="right" />
+          <el-table-column v-if="!isWarehouseEmployee" prop="bookQty" label="账面快照" width="90" align="right" />
           <!-- D85：负责人——盘点中 admin 可改派（人不在岗时调整），其余只读展示 -->
           <el-table-column label="负责人" width="150" align="center">
             <template #default="scope">
@@ -235,10 +245,10 @@
               <span v-else>—</span>
             </template>
           </el-table-column>
-          <el-table-column v-if="detail.status === 3" prop="finalBookQty" label="生效时账面" width="100" align="right">
+          <el-table-column v-if="detail.status === 3 && !isWarehouseEmployee" prop="finalBookQty" label="生效时账面" width="100" align="right">
             <template #default="scope">{{ scope.row.finalBookQty ?? '—' }}</template>
           </el-table-column>
-          <el-table-column v-if="detail.status === 3" label="差异" width="90" align="right">
+          <el-table-column v-if="detail.status === 3 && !isWarehouseEmployee" label="差异" width="90" align="right">
             <template #default="scope">
               <span v-if="scope.row.diffQty == null">—</span>
               <span v-else-if="scope.row.diffQty > 0" class="diff-over">+{{ scope.row.diffQty }}</span>
@@ -250,7 +260,7 @@
 
         <div class="detail-actions">
           <template v-if="detail.status === 1">
-            <el-checkbox v-model="exportBlind" label="盲盘导出（不含账面数）" />
+            <el-checkbox v-if="!isWarehouseEmployee" v-model="exportBlind" label="盲盘导出（不含账面数）" />
             <el-button :icon="Download" :loading="exporting" @click="handleExport">导出盘点表</el-button>
             <el-upload
               :http-request="importRequest"
@@ -269,12 +279,12 @@
             <el-button type="success" v-permission="{ deptCodes: ['warehouse'] }" @click="handleSubmit">
               提交审核
             </el-button>
-            <el-button type="danger" plain v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleCancel">
+            <el-button type="danger" plain v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleCancel">
               取消盘点单
             </el-button>
           </template>
           <template v-else-if="detail.status === 2">
-            <el-checkbox v-model="exportBlind" label="盲盘导出（不含账面数）" />
+            <el-checkbox v-if="!isWarehouseEmployee" v-model="exportBlind" label="盲盘导出（不含账面数）" />
             <el-button :icon="Download" :loading="exporting" @click="handleExport">导出盘点表</el-button>
             <el-button type="success" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleReview">
               审核生效
@@ -282,12 +292,12 @@
             <el-button type="warning" v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleReject">
               驳回重录
             </el-button>
-            <el-button type="danger" plain v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }" @click="handleCancel">
+            <el-button type="danger" plain v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }" @click="handleCancel">
               取消盘点单
             </el-button>
           </template>
           <template v-else>
-            <el-checkbox v-model="exportBlind" label="盲盘导出（不含账面数）" />
+            <el-checkbox v-if="!isWarehouseEmployee" v-model="exportBlind" label="盲盘导出（不含账面数）" />
             <el-button :icon="Download" :loading="exporting" @click="handleExport">导出盘点表</el-button>
           </template>
         </div>
@@ -297,7 +307,8 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Download, Plus, Refresh, Search, Upload } from '@element-plus/icons-vue'
 import {
@@ -321,6 +332,8 @@ import { getDeptCode, getRole, getUserId } from '@/utils/auth'
 // D85：当前用户角色/id——员工限录本人负责行（与后端硬校验一致，前端只做交互兜底）
 const currentUserId = getUserId()
 const isWarehouseAdmin = getRole() === 'admin' && getDeptCode() === 'warehouse'
+// D119 员工盲盘：员工视角不展示账面快照/差异及盈亏（后端已按角色裁字段，前端只做展示兜底）
+const isWarehouseEmployee = getRole() === 'employee' && getDeptCode() === 'warehouse'
 
 const query = reactive({ pageNum: 1, pageSize: 10, status: null, stocktakeNo: '' })
 const tableData = ref([])
@@ -476,6 +489,20 @@ const reloadDetail = async () => {
   loadList()
 }
 
+// 会话 64（决策 4b）：盘点指派/送审消息深链——?stocktakeId= 进页自动打开该单详情，消费后清空 query 防刷新重复弹窗
+// 监听 query.stocktakeId（首次进入与页内跳转都覆盖）；详情不存在（已删除/无权限）时静默忽略（拦截器已提示）
+const route = useRoute()
+const router = useRouter()
+watch(() => route.query.stocktakeId, async (stocktakeId) => {
+  if (!stocktakeId) return
+  try {
+    await openDetail({ id: Number(stocktakeId) })
+  } catch {
+    // 详情拉取失败不阻断页面加载
+  }
+  router.replace({ path: route.path, query: {} })
+}, { immediate: true })
+
 const provisionalSummary = computed(() => {
   const list = detail.value?.detailList || []
   let over = 0
@@ -485,7 +512,8 @@ const provisionalSummary = computed(() => {
   list.forEach((d) => {
     if (d.actualQty == null) return
     counted++
-    const diff = d.actualQty - (d.bookQty ?? 0)
+    if (d.bookQty == null) return // D119 员工盲盘：无账面快照，无法预估差异
+    const diff = d.actualQty - d.bookQty
     if (diff > 0) over++
     else if (diff < 0) short++
     else match++
@@ -495,7 +523,8 @@ const provisionalSummary = computed(() => {
 
 const diffRowClass = ({ row }) => {
   if (detail.value?.status === 3 && row.diffQty != null && row.diffQty !== 0) return 'diff-row'
-  if (detail.value?.status !== 3 && row.actualQty != null && row.actualQty !== row.bookQty) return 'diff-row'
+  // D119：bookQty 为空（员工盲盘）时不比对，避免全行误标差异
+  if (detail.value?.status !== 3 && row.actualQty != null && row.bookQty != null && row.actualQty !== row.bookQty) return 'diff-row'
   return ''
 }
 
@@ -581,12 +610,12 @@ const handleCancel = async () => {
 
 // ---------- 导出 / 导入 ----------
 
-// D118：列表行直接导出明盘表（含账面数）；盲盘/导入仍在详情弹窗
+// D118：列表行直接导出；盲盘/导入仍在详情弹窗。D119：员工一律盲盘导出（后端亦强制）
 const exportingId = ref(null)
 const handleListExport = async (row) => {
   exportingId.value = row.id
   try {
-    const blob = await exportStocktakeAPI(row.id, false)
+    const blob = await exportStocktakeAPI(row.id, isWarehouseEmployee)
     await saveBlobAs(blob, `盘点表-${row.stocktakeNo}-${localDateString()}.xlsx`)
   } catch (e) {
     if (!e?.isAxiosError) ElMessage.error(e.message || '导出失败')

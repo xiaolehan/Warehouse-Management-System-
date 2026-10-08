@@ -72,8 +72,9 @@ public class PickListService {
         requirePickListModuleAccess();
 
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
+        // D141：仓储部门（admin+员工）与超管看全部，生产成员看生产来源，其余仅本人
         boolean isWarehouseOrSuper = authzService.isSuperAdmin()
-                || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE);
+                || authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE);
         boolean isProductionMember = authzService.isDeptMember(AuthzService.DEPT_PRODUCTION);
 
         LocalDateTime startTime = queryDTO.getStartDate() == null ? null : queryDTO.getStartDate().atStartOfDay();
@@ -120,7 +121,9 @@ public class PickListService {
                 : bizProductionOrderMapper.selectBatchIds(orderIds).stream()
                         .collect(Collectors.toMap(BizProductionOrder::getId, o -> o));
         List<PickListVO> records = rows.stream()
-                .map(e -> toVO(e, orderMap.get(e.getProductionOrderId())))
+                // 拆分单退料行 production_order_id 为 NULL（按 splitOrderId 关联，SplitOrderService 设计如此），
+                // 空不可变 Map 对 null key 调 get 会抛 NPE——判空兜底（会话 64 修复「生产领料页 500」）
+                .map(e -> toVO(e, e.getProductionOrderId() == null ? null : orderMap.get(e.getProductionOrderId())))
                 .toList();
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
@@ -334,13 +337,14 @@ public class PickListService {
     }
 
     private void requireWarehouseIssueAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可发料/驳回");
+        // D141：仓储同权开放——仓储部门（admin+员工）均可发料/驳回
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_WAREHOUSE, "仅仓储部门可发料/驳回");
     }
 
     private void ensureViewAccess(BizPickList entity) {
-        // 仓储管理员/超管全权；生产部门成员可看生产来源全部类型（PICK/SUPPLY/RETURN，与列表数据范围一致）
-        if (authzService.isSuperAdmin() || authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)
+        // 仓储部门（admin+员工，D141）/超管全权；生产部门成员可看生产来源全部类型（PICK/SUPPLY/RETURN，与列表数据范围一致）
+        if (authzService.isSuperAdmin() || authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)
                 || authzService.isDeptMember(AuthzService.DEPT_PRODUCTION)) {
             return;
         }
@@ -403,6 +407,7 @@ public class PickListService {
         if (productionOrder != null) {
             vo.setProductionOrderStatus(productionOrder.getStatus());
         }
+        vo.setSplitOrderId(entity.getSplitOrderId());
         vo.setStatus(entity.getStatus());
         vo.setStatusText(statusText(entity.getPickType(), entity.getStatus()));
         vo.setApplicantId(entity.getApplicantId());
@@ -447,6 +452,7 @@ public class PickListService {
         vo.setQuantity(detail.getQuantity());
         vo.setSortNo(detail.getSortNo());
         vo.setDiffReason(detail.getDiffReason()); // 需求二 Q16：RETURN 行差异备注透出
+        vo.setExpectedQuantity(detail.getExpectedQuantity()); // D138：RETURN 行应退量快照透出（该功能前历史行为 null，前端显示「—」）
         if (fallbackGoods != null) {
             vo.setSpec(fallbackGoods.getSpec());
             vo.setMaterial(fallbackGoods.getMaterial());

@@ -181,6 +181,11 @@ public class ProductionPickService {
         pick.setRemark(remark);
         pickListMapper.insert(pick);
 
+        // D138：应退量快照 = 建单时点「已领未退」净额（与 createReturn/terminate 的可退量守卫同口径，computeNetReturnableItems）
+        Map<Long, Integer> returnable = new HashMap<>();
+        for (ProductionPickItemVO vo : computeNetReturnableItems(order.getId())) {
+            returnable.put(vo.getGoodsId(), vo.getQuantity());
+        }
         int sortNo = 0;
         for (ProductionReturnItemDTO item : items) {
             BaseGoods goods = baseGoodsMapper.selectById(item.getGoodsId());
@@ -194,6 +199,7 @@ public class ProductionPickService {
             det.setGoodsName(goods.getGoodsName());
             det.setQuantity(item.getQuantity());
             det.setDiffReason(item.getDiffReason()); // 需求二 Q16：差异备注随退料单落库，仓储确认时可见
+            det.setExpectedQuantity(returnable.get(item.getGoodsId())); // D138：应退量快照 = 建单时点已领未退净额
             applyGoodsSnapshot(det, goods);
             det.setSortNo(sortNo++);
             pickListDetailMapper.insert(det);
@@ -213,8 +219,8 @@ public class ProductionPickService {
     @Transactional(rollbackFor = Exception.class)
     public void terminate(Long orderId, ProductionTerminateDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_PRODUCTION, "仅生产研发部管理员可终止生产任务单");
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_PRODUCTION, "仅生产部门可终止生产任务单");
         BizProductionOrder order = productionOrderMapper.selectById(orderId);
         if (order == null) {
             throw BusinessException.notFound("生产任务单不存在");

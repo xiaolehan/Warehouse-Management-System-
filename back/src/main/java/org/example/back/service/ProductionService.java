@@ -79,12 +79,12 @@ public class ProductionService {
     }
 
     private void requireProductionWriteAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可维护生产入库单");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可维护生产入库单");
     }
 
     /** D107：确认/驳回入库申请 = 仓储管理员专属（读权限之外的单独写权限，对齐其他确认动作） */
     private void requireInboundConfirmAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认成品入库");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可确认成品入库");
     }
 
     public PageResult<ProductionVO> page(ProductionQueryDTO queryDTO) {

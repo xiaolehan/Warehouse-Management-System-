@@ -87,8 +87,9 @@ public class SalesReturnService {
     /**
      * 销售管理员权限（admin）：删除当天退货单收口 admin（D32：员工仅 create+read）。
      */
+    // D141：删除/批量删除开放给销售部门（admin+员工）
     private void requireSalesReturnAdminOrSuperAdmin() {
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售管理员可执行该操作");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_SALES, "仅销售部门可执行该操作");
     }
 
     /**
@@ -385,18 +386,22 @@ public class SalesReturnService {
         }
     }
 
+    /**
+     * D141 同权开放：仓储部门（admin+员工）= 确认入库/作废执行权；销售部门（admin+员工）= 作废转审批发起权。
+     */
     private void requireSalesReturnVoidExecutionAccess() {
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
             return;
         }
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
             throw BusinessException.validateFail("历史销售退货单作废需提交仓储审批");
         }
-        throw BusinessException.forbidden("仅销售部门管理员可发起销售退货作废申请，且需由仓储部门审批");
+        throw BusinessException.forbidden("仅销售部门可发起销售退货作废申请，且需由仓储部门审批");
     }
 
+    // D141：仓储部门（admin+员工）确认销售退货入库
     private void requireWarehouseAdminOrSuperAdmin(String message) {
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
             return;
         }
         throw BusinessException.forbidden(message);

@@ -286,7 +286,7 @@ class GoodsServiceTest {
     @Test
     void batchDelete_warehouseGuardBlockedWholeRequest() {
         doThrow(new BusinessException("仅仓储部门管理员可删除物料/成品"))
-                .when(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+                .when(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
 
         assertThrows(BusinessException.class, () -> service.batchDelete(java.util.List.of(1L, 2L)));
         verify(baseGoodsMapper, never()).selectById(anyLong());
@@ -463,7 +463,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_happyPath_writesBackAndReturnsVO() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("华强电子/顺丰到付");
         when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(20L, "华强电子")));
@@ -485,16 +485,16 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_nonWarehouseAdmin_forbidden() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(false);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(false);
 
         BusinessException ex = assertThrows(BusinessException.class, () -> service.matchSupplier(50L));
-        assertTrue(ex.getMessage().contains("仅仓储管理员"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("仅仓储部门"), "实际: " + ex.getMessage());
         verify(baseGoodsMapper, never()).update(any(), any());
     }
 
     @Test
     void matchSupplier_product_notSupported() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         BaseGoods product = new BaseGoods();
         product.setId(51L);
         product.setType(GoodsService.GOODS_TYPE_PRODUCT);
@@ -508,7 +508,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_alreadyBound_rejected() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         BaseGoods g = unmatchedMaterial();
         g.setSupplierId(20L);
         when(baseGoodsMapper.selectById(50L)).thenReturn(g);
@@ -521,7 +521,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_noArrivalRemark_guidesPurchaseFill() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         when(purchaseRequestDetailMapper.selectList(any())).thenReturn(java.util.List.of());
 
@@ -535,7 +535,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_blankBeforeSlash_rejectedWithRawTextAndRequestNo() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("/货到付款");
 
@@ -548,7 +548,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_supplierNotFound_retryableWithoutWrite() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("华强电子");
         when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of());
@@ -563,7 +563,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_duplicateSupplierNames_rejected() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("华强电子");
         when(baseSupplierMapper.selectList(any()))
@@ -576,7 +576,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_placeholderDefaultSupplier_rejectedWithoutWrite() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("系统默认供应商/待定");
         when(baseSupplierMapper.selectList(any()))
@@ -589,7 +589,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_concurrentManualEdit_losesAndThrows() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         stubRemarkSource("华强电子");
         when(baseSupplierMapper.selectList(any())).thenReturn(java.util.List.of(supplier(20L, "华强电子")));
@@ -602,7 +602,7 @@ class GoodsServiceTest {
     @Test
     void matchSupplier_picksNewestRequest_thenNewestDetail() {
         // 三张备注：旧单 R100（即便被就地"修正"也不优先）、新单 R101 两条明细取 id 大者
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         when(purchaseRequestDetailMapper.selectList(any())).thenReturn(java.util.List.of(
                 detailWithRemark(700L, 100L, "供应商A/旧单"),
@@ -623,7 +623,7 @@ class GoodsServiceTest {
 
     @Test
     void matchSupplier_remarksOnlyOnDeletedRequests_treatedAsNoRemark() {
-        when(authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(baseGoodsMapper.selectById(50L)).thenReturn(unmatchedMaterial());
         when(purchaseRequestDetailMapper.selectList(any()))
                 .thenReturn(java.util.List.of(detailWithRemark(700L, 100L, "华强电子")));

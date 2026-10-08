@@ -14,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -95,7 +96,7 @@ class SysConfigServiceTest {
 
         verify(sysConfigMapper).reviveLogicalDeletedRow(
                 SysConfigService.KEY_PRICE_DEVIATION_THRESHOLD, "0.05",
-                "销售价格偏离阈值", "销售单价偏离标准售价超过此比例需超管审批(0.05=5%)");
+                "销售价格偏离阈值", "销售单价偏离标准售价超过此比例需销售管理员审批(0.05=5%)");
         assertEquals(0, new BigDecimal("0.05").compareTo(sysConfigService.getPriceDeviationThreshold()));
     }
 
@@ -123,12 +124,38 @@ class SysConfigServiceTest {
     void updateThreshold_rowMissing_throwsNotFound() {
         LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
         user.setId(99L);
-        user.setRealName("超管");
+        user.setRealName("销售管理员");
         when(authService.getUserInfo()).thenReturn(user);
         when(sysConfigMapper.update(any(), any())).thenReturn(0);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> sysConfigService.updatePriceDeviationThreshold(new BigDecimal("0.10")));
         assertEquals("价格偏离阈值参数不存在", ex.getMessage());
+    }
+
+    // ---------- D120：系统参数/阈值设置权 超管→销售管理员 ----------
+
+    @Test
+    void listAll_salesAdminGuardOnly() {
+        when(sysConfigMapper.selectList(any())).thenReturn(List.of());
+
+        sysConfigService.listAll();
+
+        verify(authzService).requireDeptAdmin(AuthzService.DEPT_SALES, "仅销售管理员可查看系统参数");
+        verify(authzService, never()).requireSuperAdmin(anyString());
+    }
+
+    @Test
+    void updateThreshold_salesAdminGuardOnly() {
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(99L);
+        user.setRealName("销售管理员");
+        when(authService.getUserInfo()).thenReturn(user);
+        when(sysConfigMapper.update(any(), any())).thenReturn(1);
+
+        sysConfigService.updatePriceDeviationThreshold(new BigDecimal("0.10"));
+
+        verify(authzService).requireDeptAdmin(AuthzService.DEPT_SALES, "仅销售管理员可配置价格偏离阈值");
+        verify(authzService, never()).requireSuperAdmin(anyString());
     }
 }

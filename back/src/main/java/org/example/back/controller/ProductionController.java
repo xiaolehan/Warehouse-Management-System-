@@ -3,7 +3,6 @@ package org.example.back.controller;
 import jakarta.validation.Valid;
 import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
-import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.DocumentVoidDTO;
@@ -59,7 +58,6 @@ public class ProductionController {
     @PutMapping("/{id}/void")
     @AuditLog(module = "生产入库", action = "作废", targetType = "生产入库单",
             detail = "'作废 生产入库单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
-    @RequireAdmin("仅管理员可作废生产入库单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {
         productionService.voidDocument(id, dto);
@@ -70,7 +68,6 @@ public class ProductionController {
     @PutMapping("/{id}/confirm-inbound")
     @AuditLog(module = "生产入库", action = "确认入库", targetType = "生产入库单",
             detail = "'确认入库：生产入库单 #' + #id")
-    @RequireAdmin("仅仓储管理员可确认成品入库")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认请求")
     public Result<Void> confirmInbound(@PathVariable Long id) {
         productionService.confirmInbound(id);
@@ -81,7 +78,6 @@ public class ProductionController {
     @PutMapping("/{id}/reject-inbound")
     @AuditLog(module = "生产入库", action = "驳回入库申请", targetType = "生产入库单",
             detail = "'驳回入库申请：生产入库单 #' + #id + '，原因：' + #dto.reason")
-    @RequireAdmin("仅仓储管理员可驳回入库申请")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交驳回请求")
     public Result<Void> rejectInbound(@PathVariable Long id, @Valid @RequestBody InboundRejectDTO dto) {
         productionService.rejectInbound(id, dto.getReason());

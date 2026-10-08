@@ -142,15 +142,22 @@ class MessageServiceTest {
 
     @Test
     void sendPriceDeviation_writesVoidApprovalRoute() {
-        SysUser superadmin = new SysUser();
-        superadmin.setId(1L);
-        when(sysUserMapper.selectOne(any())).thenReturn(superadmin);
+        SysDept dept = new SysDept();
+        dept.setId(2L);
+        when(sysDeptMapper.selectOne(any())).thenReturn(dept);
+        SysUser admin = new SysUser();
+        admin.setId(21L);
+        when(sysUserMapper.selectList(any())).thenReturn(List.of(admin));
 
-        service.sendPriceDeviationToSuperAdmin("XS-1", "销售甲", "第1行 PTO153 偏离 8%", 55L); // D110：整单偏离行明细
+        service.sendPriceDeviationToSalesAdmin("XS-1", "销售甲", "第1行 PTO153 偏离 8%", 55L, 77L); // D110 整单偏离行明细 + D120 收件人=销售管理员 + D137 深链审批单 id
 
         ArgumentCaptor<SysMessage> captor = ArgumentCaptor.forClass(SysMessage.class);
         verify(sysMessageMapper).insert(captor.capture());
-        assertEquals("/system/void-approval", captor.getValue().getTargetRoute());
+        SysMessage msg = captor.getValue();
+        assertEquals("/system/void-approval?approvalId=77", msg.getTargetRoute()); // D137 深链直达审批详情弹窗
+        assertEquals(MessageService.TITLE_PRICE_DEVIATION_PENDING, msg.getTitle());
+        assertEquals("sales", msg.getBizType());
+        assertEquals(55L, msg.getBizId());
     }
 
     // ---------- D87：部分到货仍缺料通知 + 齐套类通知按标题白名单撤销 ----------

@@ -3,7 +3,6 @@ package org.example.back.controller;
 import jakarta.validation.Valid;
 import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
-import org.example.back.common.annotation.RequireAdmin;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
 import org.example.back.dto.SalesReturnQueryDTO;
@@ -70,7 +69,6 @@ public class SalesReturnController {
     @PutMapping("/{id}/void")
     @AuditLog(module = "销售退货管理", action = "作废", targetType = "销售退货单",
             detail = "'作废 销售退货单 #' + #id + (#dto?.reason != null ? '，原因：' + #dto.reason : '')")
-    @RequireAdmin("仅管理员可作废客退单")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交作废请求")
     public Result<Void> voidDocument(@PathVariable Long id, @RequestBody(required = false) DocumentVoidDTO dto) {
         salesReturnService.voidDocument(id, dto);
@@ -79,7 +77,6 @@ public class SalesReturnController {
 
     @PutMapping("/{id}/confirm")
     @AuditLog(module = "销售退货管理", action = "确认入库", targetType = "销售退货单")
-    @RequireAdmin("仅仓储管理员可确认销售退货入库")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交确认请求")
     public Result<Void> confirm(@PathVariable Long id) {
         salesReturnService.confirm(id);

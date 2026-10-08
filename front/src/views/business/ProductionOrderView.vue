@@ -20,11 +20,11 @@
         <el-button :icon="Refresh" @click="resetSearch">重置</el-button>
         <el-button
           type="success" :icon="Plus" @click="handleAdd"
-          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
         >下达生产任务单</el-button>
         <el-button
           type="success" plain :icon="Plus" @click="openBatchRelease"
-          v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+          v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
         >按销售单下达</el-button>
       </el-form-item>
     </el-form>
@@ -58,28 +58,28 @@
       <el-table-column prop="createTime" label="下达时间" width="170" />
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="scope">
-          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">详情</el-button>
           <el-button v-if="scope.row.status === 1" link size="small" type="success" :disabled="scope.row.salesFrozen" @click="handleStart(scope.row)">开工</el-button>
           <el-button
             v-if="(scope.row.status === 1) && (scope.row.kitStatus === 'partial' || scope.row.kitStatus === 'block')"
             link size="small" type="warning" :disabled="scope.row.salesFrozen" @click="openDraftDialog(scope.row)"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >补料</el-button>
           <!-- D107 两段式：待入库状态下提交入库申请（不加库存），仓储确认后本单才完成；已提交可撤销 -->
           <el-button v-if="scope.row.status === 3 && !scope.row.pendingInboundId" link size="small" type="success" :disabled="scope.row.salesFrozen" @click="handleReceipt(scope.row)">提交入库申请</el-button>
           <el-button
-            v-if="scope.row.status === 3 && scope.row.pendingInboundId" link size="small" type="warning"
+            v-if="scope.row.status === 3 && scope.row.pendingInboundId" link size="small" type="danger"
             @click="handleCancelReceipt(scope.row)"
           >撤销申请</el-button>
           <el-tooltip content="错单作废留痕，立即生效，不涉及库存变动" placement="top">
             <el-button
               v-if="scope.row.status === 1 || scope.row.status === 2" link size="small" type="warning"
-              @click="handleVoid(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+              @click="handleVoid(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
             >作废</el-button>
           </el-tooltip>
           <el-button
             v-if="[1, 2, 3].includes(scope.row.status)" link size="small" type="danger"
-            @click="openTerminate(scope.row)" v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            @click="openTerminate(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >终止</el-button>
         </template>
       </el-table-column>
@@ -304,7 +304,7 @@
             <span v-else style="color:#909399">未设定（销售端按系统推算展示）</span>
             <el-button
               v-if="[1, 2, 3].includes(detail.status)" link type="primary" size="small" style="margin-left: 8px"
-              v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+              v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
               @click="openEcDialog"
             >修正</el-button>
           </el-descriptions-item>
@@ -365,7 +365,7 @@
                 <!-- D125：门禁锁定工序灰置打卡并提示原因（operable 已由后端置 false；tooltip 用 span 包裹兼容 disabled 按钮，不自定义间距——ADR-0007） -->
                 <el-tooltip v-if="s.row.lockReason" :content="s.row.lockReason" placement="top">
                   <span style="cursor: not-allowed">
-                    <el-button link type="info" size="small" disabled>打卡</el-button>
+                    <el-button link type="primary" size="small" disabled>打卡</el-button>
                   </span>
                 </el-tooltip>
                 <el-button
@@ -424,7 +424,7 @@
             :disabled="detail.salesFrozen"
             :loading="pickSubmitting"
             @click="doApplyPick"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
           >申请领料</el-button>
           <el-tag v-if="pickListStatus != null" :type="pickListTagType" size="medium">领料{{ pickListTagText }}</el-tag>
           <el-button
@@ -437,7 +437,7 @@
           <el-button
             v-if="detail.status === 2"
             type="warning"
-            v-permission="{ roles: ['admin'], deptCodes: ['production'] }"
+            v-permission="{ roles: ['admin', 'employee'], deptCodes: ['production'] }"
             @click="doOpenReturn"
           >生产退料</el-button>
         </div>

@@ -34,7 +34,7 @@
       <el-table-column prop="address" label="联系地址" min-width="160" />
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="scope">
-          <el-button link size="small" type="primary" @click="handleView(scope.row)">查看</el-button>
+          <el-button link size="small" type="primary" @click="handleView(scope.row)">详情</el-button>
           <el-button link size="small" type="success" @click="handleEdit(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">编辑</el-button>
           <el-button link size="small" type="danger" @click="handleDelete(scope.row)" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['purchase'] }">删除</el-button>
         </template>

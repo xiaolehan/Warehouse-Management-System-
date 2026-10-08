@@ -63,6 +63,17 @@ public class PurchaseRequestVO {
 
     private String rejectReason;
 
+    /**
+     * 会话 67：撤销留痕（status=6「已撤销」时有值）
+     */
+    private String revokeReason;
+
+    private Long revokerId;
+
+    private String revokerName;
+
+    private LocalDateTime revokeTime;
+
     private String remark;
 
     private LocalDateTime createTime;

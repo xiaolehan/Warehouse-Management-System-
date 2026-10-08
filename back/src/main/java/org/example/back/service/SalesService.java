@@ -1,5 +1,6 @@
 package org.example.back.service;
 
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -57,8 +58,8 @@ public class SalesService {
     public static final int CONFIRM_SHIPPED = 2;
 
     /**
-     * 销售价偏离标准售价的审批动作（D29）：偏离需超管审批，仓储确认出库前置校验。
-     * 偏离阈值由超管在系统参数页配置（sys_config.price_deviation_threshold，D30 兑现），见 SysConfigService。
+     * 销售价偏离标准售价的审批动作（D29）：偏离需销售管理员审批（D120），仓储确认出库前置校验。
+     * 偏离阈值由销售管理员在系统参数页配置（sys_config.price_deviation_threshold，D30/D120 兑现），见 SysConfigService。
      */
     private static final String PRICE_DEVIATION_APPROVAL_ACTION = "price_deviation_confirm";
 
@@ -141,7 +142,7 @@ public class SalesService {
 
         Page<BizSales> page = bizSalesMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizSales::getId).toList());
-        // D 价格偏离审批：超管驳回后单子退回销售人员，仓储视角列表不再展示被驳回的偏离单
+        // D 价格偏离审批：销售管理员驳回后单子退回销售人员，仓储视角列表不再展示被驳回的偏离单
         boolean warehouseView = isWarehouseView();
         List<SalesVO> records = page.getRecords().stream()
                 .map(item -> toVO(item, approvalMap.get(item.getId())))
@@ -465,10 +466,7 @@ public class SalesService {
         }
 
         // 价格偏离探测（D29/D30，D110 决策④整单一笔）：任一行偏离即建一张审批单，request_reason 列出偏离行
-        List<String> deviationDescs = buildDeviationDescs(detailEntities, goodsMap);
-        if (!deviationDescs.isEmpty()) {
-            createPriceDeviationApproval(entity, deviationDescs, loginUser.getRealName(), loginUser.getRole());
-        }
+        createPriceDeviationApproval(entity, detailEntities, goodsMap, loginUser.getRealName(), loginUser.getRole());
 
         // 销售下单后不立即扣库存，待仓库管理员确认出库时再按行扣减；同时通知仓储管理员有待确认单据
         messageService.sendSalesPendingConfirmToWarehouseAdmins(
@@ -497,7 +495,7 @@ public class SalesService {
     }
 
     /**
-     * D110 决策④：逐行对照标准售价判偏离，返回「第N行 品名 偏离 X%」描述列表。
+     * D110 决策④：逐行对照标准售价判偏离，返回「第N行 品名 本次X/标准Y 偏离Z%」描述列表（会话68/D137 带价格）。
      */
     private List<String> buildDeviationDescs(List<BizSalesDetail> details, Map<Long, BaseGoods> goodsMap) {
         List<String> descs = new ArrayList<>();
@@ -507,6 +505,8 @@ public class SalesService {
             BaseGoods goods = goodsMap.get(detail.getGoodsId());
             if (isPriceDeviated(detail.getUnitPrice(), goods.getSalePrice())) {
                 descs.add("第" + lineNo + "行 " + detail.getGoodsName()
+                        + " 本次" + detail.getUnitPrice().setScale(2, RoundingMode.HALF_UP)
+                        + "/标准" + goods.getSalePrice().setScale(2, RoundingMode.HALF_UP)
                         + " 偏离 " + deviationRatio(detail.getUnitPrice(), goods.getSalePrice())
                         .multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP) + "%");
             }
@@ -663,17 +663,12 @@ public class SalesService {
         }
     }
 
-    /** 终止权限（Q3/Q23）：销售管理员可终止本部门所有单；销售员工仅可终止本人所建单。 */
+    /** 终止权限（Q3/Q23；D141 同权开放）：销售部门（admin+员工）可终止本部门所有单。 */
     private void ensureCanTerminateSales(BizSales entity) {
-        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
             return;
         }
-        if (authzService.isDeptMember(AuthzService.DEPT_SALES)
-                && loginUser.getId() != null && loginUser.getId().equals(entity.getOperatorId())) {
-            return;
-        }
-        throw BusinessException.forbidden("仅可终止本人所建的销售单（部门内其他单据需销售管理员操作）");
+        throw BusinessException.forbidden("仅销售部门可终止销售单");
     }
 
     /** 需求一：明细行是否已终止（terminate_status=2） */
@@ -745,7 +740,7 @@ public class SalesService {
         }
         // 撤销该单未读待确认消息（待确认单被删除后，仓储侧不再有悬挂通知）
         messageService.revokeUnreadByBiz("sales", id);
-        // 撤销价格偏离审批待办（单据已删除，超管不再需要审批）
+        // 撤销价格偏离审批待办（单据已删除，销售管理员不再需要审批）
         revokePriceDeviationApprovals(id);
         notifyLinkedProductionOrderIfUnfinished(entity, "删除");
         bizSalesMapper.deleteById(id);
@@ -757,26 +752,17 @@ public class SalesService {
     }
 
     /**
-     * 删除权限：销售管理员/超管可删本人部门当天单（D32）；销售员工仅可删自己建的、未出库的当天单（用于价格偏离被驳回后改价重提）。
-     * 员工不触碰库存：未出库单(confirm_status=1)未扣库存，删除仅撤销审批/消息，与 D32 职责分离兼容。
-     * D95：与进货/销退统一口径——已确认出库的单据不可无痕删除（admin 亦然），请走作废留痕+审批；
-     * 由此 delete 内「已出库回补库存」分支成为兜底防御，正常流程不可达。
+     * 删除权限（D141 同权开放）：销售部门（admin+员工）可删本部门当天未出库单（D32 原员工仅限本人单，现与管理员同口径）。
+     * 员工不触碰库存：未出库单(confirm_status=1)未扣库存，删除仅撤销审批/消息。
+     * D95：与进货/销退统一口径——已确认出库的单据不可无痕删除（admin/员工亦然），请走作废留痕+审批。
      */
     private void ensureCanDeleteSales(BizSales entity) {
-        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
-            if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
-                throw BusinessException.validateFail("已出库的销售单不可删除，请走作废流程");
-            }
-            return;
+        if (!authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+            throw BusinessException.forbidden("仅销售部门可删除销售单");
         }
-        // 销售员工分支：必须是销售部门员工、单据本人所建、且未出库
-        if (authzService.isDeptMember(AuthzService.DEPT_SALES)
-                && loginUser.getId() != null && loginUser.getId().equals(entity.getOperatorId())
-                && entity.getConfirmStatus() != null && entity.getConfirmStatus() == CONFIRM_PENDING) {
-            return;
+        if (entity.getConfirmStatus() != null && entity.getConfirmStatus() != CONFIRM_PENDING) {
+            throw BusinessException.validateFail("已出库的销售单不可删除，请走作废流程");
         }
-        throw BusinessException.forbidden("仅销售管理员可删除销售单（员工仅可删除自己未出库的当天单）");
     }
 
     /**
@@ -832,7 +818,7 @@ public class SalesService {
 
         // 作废后撤销该单未读待确认消息（单据已失效，仓储侧不再需要处理）
         messageService.revokeUnreadByBiz("sales", id);
-        // 撤销价格偏离审批待办（单据已作废，超管不再需要审批）
+        // 撤销价格偏离审批待办（单据已作废，销售管理员不再需要审批）
         revokePriceDeviationApprovals(id);
 
         // 仅已确认出库（已扣库存）的销售单作废时需按行回补库存；待确认单据尚未扣库存，不回补
@@ -850,14 +836,18 @@ public class SalesService {
         notifyLinkedProductionOrderIfUnfinished(entity, "作废");
     }
 
+    /**
+     * D141 同权开放：仓储部门（admin+员工）= 确认出库/作废执行权；销售部门（admin+员工）= 作废转审批发起权。
+     * confirm（确认出库）与 voidDocument（作废执行）共用本守卫——仓储侧动作，销售侧调用即引导走审批。
+     */
     private void requireSalesVoidExecutionAccess() {
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)) {
             return;
         }
-        if (authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
+        if (authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)) {
             throw BusinessException.validateFail("历史销售单作废需提交仓储审批");
         }
-        throw BusinessException.forbidden("仅销售部门管理员可发起销售作废申请，且需由仓储部门审批");
+        throw BusinessException.forbidden("仅销售部门可发起销售作废申请，且需由仓储部门审批");
     }
 
     private BizSales requireEntity(Long id) {
@@ -1022,7 +1012,7 @@ public class SalesService {
     // ============================== 价格偏离审批（D29/D30，D110 决策④整单一笔） ==============================
 
     /**
-     * 判断销售价是否偏离标准售价超阈值（阈值由超管配置，默认 5%）。
+     * 判断销售价是否偏离标准售价超阈值（阈值由销售管理员配置，D120，默认 5%）。
      * 偏离比例 = |unitPrice - salePrice| / salePrice，salePrice 为空或 <=0 时视为无法判定，不触发。
      */
     private boolean isPriceDeviated(BigDecimal unitPrice, BigDecimal standardSalePrice) {
@@ -1036,10 +1026,16 @@ public class SalesService {
     }
 
     /**
-     * 建价格偏离超管审批单（biz_type=sales, action=price_deviation_confirm, status=pending；整单一笔）。
-     * request_reason 列出全部偏离行（行号+成品+偏离幅度）；超管一次批准/驳回整单。
+     * 建价格偏离审批单（biz_type=sales, action=price_deviation_confirm, status=pending；整单一笔）。
+     * 无偏离行时不建单不发消息。request_reason 列出偏离行（行号+品名+本次/标准价+偏离%），
+     * 拼接超 200 字符（request_reason 列宽）时退化为行数汇总——完整价格对照在 request_detail
+     * 快照 JSON（会话68/D137）。request_detail 存建单时点偏离行价格快照；销售管理员一次批准/驳回整单（D120）。
      */
-    private void createPriceDeviationApproval(BizSales entity, List<String> deviationDescs, String operatorName, String operatorRole) {
+    private void createPriceDeviationApproval(BizSales entity, List<BizSalesDetail> details, Map<Long, BaseGoods> goodsMap, String operatorName, String operatorRole) {
+        List<String> deviationDescs = buildDeviationDescs(details, goodsMap);
+        if (deviationDescs.isEmpty()) {
+            return;
+        }
         BizApprovalOrder approval = new BizApprovalOrder();
         approval.setApprovalNo(CodeGenerator.approvalNo());
         approval.setBizType("sales");
@@ -1047,7 +1043,13 @@ public class SalesService {
         approval.setBizNo(entity.getSalesNo());
         approval.setRequestAction(PRICE_DEVIATION_APPROVAL_ACTION);
         BigDecimal thresholdPct = sysConfigService.getPriceDeviationThreshold().multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP);
-        approval.setRequestReason("销售价偏离标准售价（" + String.join("；", deviationDescs) + "），超 " + thresholdPct + "% 阈值，需超管审批");
+        String reason = "销售价偏离标准售价（" + String.join("；", deviationDescs) + "），超 " + thresholdPct + "% 阈值，需销售管理员审批";
+        if (reason.length() > 200) {
+            // request_reason 列宽 200：多偏离行带价格超长时退化为行数汇总，完整对照见 request_detail 快照
+            reason = "销售价偏离标准售价（共 " + deviationDescs.size() + " 行），超 " + thresholdPct + "% 阈值，需销售管理员审批";
+        }
+        approval.setRequestReason(reason);
+        approval.setRequestDetail(buildDeviationSnapshot(details, goodsMap, thresholdPct));
         approval.setBeforeBizStatus(entity.getBizStatus());
         approval.setAfterBizStatus(entity.getBizStatus());
         approval.setStatus(1);
@@ -1060,7 +1062,39 @@ public class SalesService {
             // pending 唯一约束：已存在待审批，忽略（避免重复建单时报错）
             return;
         }
-        messageService.sendPriceDeviationToSuperAdmin(entity.getSalesNo(), operatorName, String.join("；", deviationDescs), entity.getId());
+        messageService.sendPriceDeviationToSalesAdmin(entity.getSalesNo(), operatorName, String.join("；", deviationDescs), entity.getId(), approval.getId());
+    }
+
+    /**
+     * 建单时点偏离行价格快照 JSON（会话68/D137）：{thresholdPercent, rows:[lineNo/goodsName/quantity/
+     * unitPrice/standardSalePrice/deviationAmount/deviationPercent]}，deviationAmount/Percent 带符号。
+     */
+    private String buildDeviationSnapshot(List<BizSalesDetail> details, Map<Long, BaseGoods> goodsMap, BigDecimal thresholdPct) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int lineNo = 0;
+        for (BizSalesDetail detail : details) {
+            lineNo++;
+            BaseGoods goods = goodsMap.get(detail.getGoodsId());
+            if (!isPriceDeviated(detail.getUnitPrice(), goods.getSalePrice())) {
+                continue;
+            }
+            BigDecimal deviationAmount = detail.getUnitPrice().subtract(goods.getSalePrice());
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("lineNo", lineNo);
+            row.put("goodsName", detail.getGoodsName());
+            row.put("quantity", detail.getQuantity());
+            row.put("unitPrice", detail.getUnitPrice().setScale(2, RoundingMode.HALF_UP));
+            row.put("standardSalePrice", goods.getSalePrice().setScale(2, RoundingMode.HALF_UP));
+            row.put("deviationAmount", deviationAmount.setScale(2, RoundingMode.HALF_UP));
+            row.put("deviationPercent", deviationAmount.abs()
+                    .divide(goods.getSalePrice(), 4, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100)).setScale(0, RoundingMode.HALF_UP));
+            rows.add(row);
+        }
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("thresholdPercent", thresholdPct);
+        snapshot.put("rows", rows);
+        return JSONUtil.toJsonStr(snapshot);
     }
 
     /**
@@ -1079,7 +1113,7 @@ public class SalesService {
         }
         boolean anyApproved = approvals.stream().anyMatch(a -> Integer.valueOf(2).equals(a.getStatus()));
         if (!anyApproved) {
-            throw BusinessException.validateFail("销售价偏离标准售价，需超管审批通过后仓储方可确认出库");
+            throw BusinessException.validateFail("销售价偏离标准售价，需销售管理员审批通过后仓储方可确认出库");
         }
     }
 

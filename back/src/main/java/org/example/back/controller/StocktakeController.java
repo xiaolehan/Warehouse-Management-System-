@@ -59,7 +59,6 @@ public class StocktakeController {
     }
 
     @PostMapping
-    @RequireAdmin("仅仓储管理员可创建盘点单")
     @AuditLog(module = "库存盘点", action = "建单", targetType = "盘点单",
             detail = "'创建盘点单，商品数：' + #dto.items.size()")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复创建盘点单")
@@ -72,9 +71,8 @@ public class StocktakeController {
         return Result.success(stocktakeService.assigneeOptions());
     }
 
-    // D85：改派负责人（盘点中，admin 级）
+    // D85：改派负责人（盘点中；D141 放宽至仓储部门 admin+员工，守卫在 Service）
     @PutMapping("/{id}/assign")
-    @RequireAdmin("仅仓储管理员可改派负责人")
     @AuditLog(module = "库存盘点", action = "改派负责人", targetType = "盘点单",
             detail = "'盘点单 #' + #id + ' 明细 #' + #dto.detailId + ' 改派负责人为 #' + #dto.assigneeId")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复改派")
@@ -132,7 +130,6 @@ public class StocktakeController {
     }
 
     @PutMapping("/{id}/cancel")
-    @RequireAdmin("仅仓储管理员可取消盘点单")
     @AuditLog(module = "库存盘点", action = "取消", targetType = "盘点单",
             detail = "'取消盘点单 #' + #id")
     @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复取消")

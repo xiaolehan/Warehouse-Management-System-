@@ -14,6 +14,7 @@ import org.example.back.entity.BizStocktakeDetail;
 import org.example.back.mapper.BaseGoodsMapper;
 import org.example.back.mapper.BizStocktakeDetailMapper;
 import org.example.back.mapper.BizStocktakeMapper;
+import org.example.back.vo.StocktakeDetailVO;
 import org.example.back.vo.StocktakeGoodsOptionVO;
 import org.example.back.vo.StocktakeVO;
 import org.apache.poi.ss.usermodel.Row;
@@ -38,6 +39,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
@@ -66,6 +68,7 @@ class StocktakeServiceTest {
     @Mock private AuthzService authzService;
     @Mock private org.example.back.mapper.SysUserMapper sysUserMapper;
     @Mock private org.example.back.mapper.SysDeptMapper sysDeptMapper;
+    @Mock private MessageService messageService;
 
     @InjectMocks private StocktakeService service;
 
@@ -205,7 +208,7 @@ class StocktakeServiceTest {
 
         // D77 超管禁写守卫 + 仓储 admin 守卫
         verify(authzService).requireNotSuperAdminForBusinessWrite();
-        verify(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+        verify(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
     }
 
     @Test
@@ -695,7 +698,7 @@ class StocktakeServiceTest {
         assertEquals("仓储员工", captor.getValue().getAssigneeName());
         // 改派 = 仓储 admin 级
         verify(authzService).requireNotSuperAdminForBusinessWrite();
-        verify(authzService).requireDeptAdminOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
+        verify(authzService).requireDeptMemberOrSuperAdmin(eq(AuthzService.DEPT_WAREHOUSE), anyString());
     }
 
     @Test
@@ -812,5 +815,237 @@ class StocktakeServiceTest {
 
         assertThrows(BusinessException.class, () -> service.export(2L, true));
         verify(bizStocktakeMapper, never()).selectById(2L);
+    }
+
+    // ---------- D119 员工盲盘：员工视角一律剥离账面快照/差异与盈亏汇总 ----------
+
+    @Test
+    void d119_getById_employeeStripsBookValuesAndProfitLossSummary() {
+        when(authzService.isEmployee()).thenReturn(true);
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 3));
+        BizStocktakeDetail counted = detail(101L, 1L, 51L, 12);
+        counted.setFinalBookQty(10);
+        counted.setDiffQty(2);
+        when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(counted));
+
+        StocktakeVO vo = service.getById(1L);
+
+        StocktakeDetailVO row = vo.getDetailList().get(0);
+        assertNull(row.getBookQty(), "员工不得见账面快照");
+        assertNull(row.getFinalBookQty(), "员工不得见生效账面数");
+        assertNull(row.getDiffQty(), "员工不得见差异");
+        assertEquals(12, row.getActualQty(), "实盘数必须可见");
+        assertNull(vo.getOverRows(), "员工不得见盘盈汇总");
+        assertNull(vo.getShortRows(), "员工不得见盘亏汇总");
+        assertNull(vo.getMatchRows(), "员工不得见相符汇总");
+    }
+
+    @Test
+    void d119_getById_adminKeepsBookValuesAndSummary() {
+        when(authzService.isEmployee()).thenReturn(false);
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 3));
+        BizStocktakeDetail counted = detail(101L, 1L, 51L, 12);
+        counted.setFinalBookQty(10);
+        counted.setDiffQty(2);
+        when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(counted));
+
+        StocktakeVO vo = service.getById(1L);
+
+        // 管理员（含复核）不受盲盘影响，字段与汇总完整
+        StocktakeDetailVO row = vo.getDetailList().get(0);
+        assertEquals(10, row.getBookQty(), "管理员保留账面快照");
+        assertEquals(10, row.getFinalBookQty());
+        assertEquals(2, row.getDiffQty());
+        assertEquals(1, vo.getOverRows());
+        assertEquals(0, vo.getShortRows());
+        assertEquals(0, vo.getMatchRows());
+    }
+
+    @Test
+    void d119_page_employeeSeesNoProfitLossSummary() {
+        when(authzService.isEmployee()).thenReturn(true);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<BizStocktake> mpPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        mpPage.setRecords(List.of(order(1L, 1)));
+        mpPage.setTotal(1);
+        when(bizStocktakeMapper.selectPage(any(), any())).thenReturn(mpPage);
+        BizStocktakeDetail d = detail(101L, 1L, 51L, 12);
+        d.setDiffQty(2);
+        lenient().when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(d));
+
+        PageResult<StocktakeVO> result = service.page(new StocktakeQueryDTO());
+
+        assertNull(result.getRecords().get(0).getOverRows(), "列表盈亏汇总对员工隐藏");
+        assertNull(result.getRecords().get(0).getShortRows());
+        assertNull(result.getRecords().get(0).getMatchRows());
+    }
+
+    @Test
+    void d119_page_adminKeepsProfitLossSummary() {
+        when(authzService.isEmployee()).thenReturn(false);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<BizStocktake> mpPage =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        mpPage.setRecords(List.of(order(1L, 1)));
+        mpPage.setTotal(1);
+        when(bizStocktakeMapper.selectPage(any(), any())).thenReturn(mpPage);
+        BizStocktakeDetail d = detail(101L, 1L, 51L, 12);
+        d.setDiffQty(2);
+        lenient().when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(d));
+
+        PageResult<StocktakeVO> result = service.page(new StocktakeQueryDTO());
+
+        assertEquals(1, result.getRecords().get(0).getOverRows(), "管理员列表汇总不裁剪");
+    }
+
+    @Test
+    void d119_goodsOptions_employeeStockHidden() {
+        when(authzService.isEmployee()).thenReturn(true);
+        when(baseGoodsMapper.selectList(any())).thenReturn(List.of(goods(51L, "GD51", "板1", "material", 100)));
+        when(bizStocktakeMapper.selectLastStocktakeTimes()).thenReturn(List.of());
+        when(bizStocktakeMapper.selectList(any())).thenReturn(List.of());
+
+        List<StocktakeGoodsOptionVO> options = service.goodsOptions(null);
+
+        assertNull(options.get(0).getStock(), "员工建单勾选不得见实时库存");
+    }
+
+    @Test
+    void d119_goodsOptions_adminStockVisible() {
+        when(authzService.isEmployee()).thenReturn(false);
+        when(baseGoodsMapper.selectList(any())).thenReturn(List.of(goods(51L, "GD51", "板1", "material", 100)));
+        when(bizStocktakeMapper.selectLastStocktakeTimes()).thenReturn(List.of());
+        when(bizStocktakeMapper.selectList(any())).thenReturn(List.of());
+
+        List<StocktakeGoodsOptionVO> options = service.goodsOptions(null);
+
+        assertEquals(100, options.get(0).getStock(), "管理员勾选列表保留实时库存");
+    }
+
+    @Test
+    void d119_export_employeeForcedBlindEvenIfRevealRequested() throws Exception {
+        when(authzService.isEmployee()).thenReturn(true);
+        stubExportData();
+
+        byte[] bytes = service.export(2L, false);
+
+        try (XSSFWorkbook wb = new XSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            assertEquals("实盘数", sheet.getRow(0).getCell(5).getStringCellValue());
+            for (int c = 0; c <= 5; c++) {
+                assertNotEquals("账面数", sheet.getRow(0).getCell(c).getStringCellValue());
+            }
+        }
+    }
+
+    // ---------- 会话 64：盘点指派/送审站内消息（ADR-0010「盘点不发站内消息」口径修订） ----------
+
+    @Test
+    void create_sendsAssignMessagePerAssignee_groupedByAssignee() {
+        when(authService.getUserInfo()).thenReturn(warehouseAdmin());
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(
+                goods(51L, "GD51", "板1", "material", 100),
+                goods(52L, "GD52", "PTO153", "product", 7)));
+        when(bizStocktakeMapper.selectList(any())).thenReturn(List.of());
+        stubWarehouseMembers();
+
+        StocktakeCreateDTO dto = new StocktakeCreateDTO();
+        StocktakeCreateDTO.Item i1 = new StocktakeCreateDTO.Item();
+        i1.setGoodsId(51L);
+        i1.setAssigneeId(10L);
+        StocktakeCreateDTO.Item i2 = new StocktakeCreateDTO.Item();
+        i2.setGoodsId(52L);
+        i2.setAssigneeId(20L);
+        dto.setItems(List.of(i1, i2));
+        service.create(dto);
+
+        // 决策 1a：按负责人分组每人一条，内容只含商品（规格）、不含账面数（D119 盲盘口径）
+        verify(messageService).sendStocktakeAssignedToUser(
+                eq(10L), anyString(), contains("板1（规格51）"), any());
+        verify(messageService).sendStocktakeAssignedToUser(
+                eq(20L), anyString(), contains("PTO153（规格52）"), any());
+        verify(messageService, times(2)).sendStocktakeAssignedToUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void assign_revokesUnreadThenResendsToAllCurrentAssignees() {
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 1));
+        // 第一次读（定位被改派行）两行都在 admin(10) 名下；第二次读（重发分组）行 101 已改派员工(20)
+        BizStocktakeDetail before101 = detail(101L, 1L, 51L, null);
+        BizStocktakeDetail before102 = detail(102L, 1L, 52L, null);
+        BizStocktakeDetail after101 = detail(101L, 1L, 51L, null);
+        after101.setAssigneeId(20L);
+        after101.setAssigneeName("仓储员工");
+        when(bizStocktakeDetailMapper.selectList(any()))
+                .thenReturn(List.of(before101, before102))
+                .thenReturn(List.of(after101, before102));
+        stubWarehouseMembers();
+
+        org.example.back.dto.StocktakeAssignDTO dto = new org.example.back.dto.StocktakeAssignDTO();
+        dto.setDetailId(101L);
+        dto.setAssigneeId(20L);
+        service.assign(1L, dto);
+
+        // 决策 2a：撤该单全部未读指派消息，按最新指派分组重发全部当前负责人（每人一条，内容=最新指派）
+        verify(messageService).revokeUnreadByBiz("stocktake", 1L);
+        verify(messageService).sendStocktakeAssignedToUser(
+                eq(20L), eq("ST260913000001001"), contains("商品51"), eq(1L));
+        verify(messageService).sendStocktakeAssignedToUser(
+                eq(10L), eq("ST260913000001001"), contains("商品52"), eq(1L));
+        verify(messageService, times(2)).sendStocktakeAssignedToUser(any(), any(), any(), any());
+    }
+
+    @Test
+    void submit_sendsPendingReviewMessageToWarehouseAdmins() {
+        when(authService.getUserInfo()).thenReturn(warehouseEmployee());
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 1));
+        when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(
+                detail(101L, 1L, 51L, 7), detail(102L, 1L, 52L, 5)));
+
+        service.submit(1L);
+
+        // 决策 3b：送审提醒仓储管理员，内容只含行数（已录 2/2），不含账面/差异数
+        verify(messageService).sendStocktakeSubmittedToWarehouseAdmins(
+                eq("ST260913000001001"), eq("仓储员工"), eq(2), eq(2), eq(1L));
+    }
+
+    @Test
+    void review_completedRevokesAllUnreadMessages() {
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 2));
+        when(bizStocktakeDetailMapper.selectList(any())).thenReturn(List.of(detail(101L, 1L, 51L, 8)));
+        when(baseGoodsMapper.selectBatchIds(any())).thenReturn(List.of(goods(51L, "GD51", "板1", "material", 10)));
+        when(baseGoodsMapper.update(eq(null), any())).thenReturn(1);
+        when(authService.getUserInfo()).thenReturn(warehouseAdmin());
+
+        service.review(1L);
+
+        // 终态（审核生效）：撤该单全部未读消息（指派 + 待审核）
+        verify(messageService).revokeUnreadByBiz("stocktake", 1L);
+    }
+
+    @Test
+    void reject_revokesOnlyPendingReviewTitle_keepsAssignNotice() {
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 2));
+
+        StocktakeRejectDTO dto = new StocktakeRejectDTO();
+        dto.setReason("A区数量存疑，复盘");
+        service.reject(1L, dto);
+
+        // 驳回回盘点中：只撤「盘点单待审核」（按标题），指派提醒保留（负责人与内容仍准确）
+        verify(messageService).revokeUnreadByBizAndTitles(
+                eq("stocktake"), eq(1L), eq(List.of(MessageService.TITLE_STOCKTAKE_PENDING_REVIEW)));
+        verify(messageService, never()).revokeUnreadByBiz(any(), any());
+    }
+
+    @Test
+    void cancel_canceledRevokesAllUnreadMessages() {
+        when(authService.getUserInfo()).thenReturn(warehouseAdmin());
+        when(bizStocktakeMapper.selectById(1L)).thenReturn(order(1L, 1));
+
+        StocktakeCancelDTO dto = new StocktakeCancelDTO();
+        dto.setReason("建错范围");
+        service.cancel(1L, dto);
+
+        // 终态（取消）：撤该单全部未读消息
+        verify(messageService).revokeUnreadByBiz("stocktake", 1L);
     }
 }

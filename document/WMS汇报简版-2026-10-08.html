@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>【项目名称】仓储管理系统 · 汇报简版 2026-10</title>
+<style>
+:root{
+  --surface:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --accent:#2a78d6; --deep:#1c5cab; --ring:rgba(11,11,11,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:#3d4046;color:var(--ink)}
+/*CSS-A*/
+.slide{display:none;width:1280px;height:720px;background:var(--surface);padding:50px 64px 54px;position:relative;flex-direction:column}
+.slide.active{display:flex}
+.kick{font-size:12px;letter-spacing:.16em;color:var(--deep);font-weight:700;margin-bottom:8px}
+h2{font-size:29px;font-weight:700;margin-bottom:6px}
+.sub{font-size:14px;color:var(--ink2);margin-bottom:18px}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;gap:16px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.card{background:#fff;border:1px solid var(--grid);border-radius:10px;padding:16px 18px}
+.card h3{font-size:16.5px;font-weight:700;margin-bottom:8px}
+.card p,.card li{font-size:13.5px;line-height:1.62;color:var(--ink2)}
+.card ul{padding-left:1.15em}
+.card li{margin-bottom:4px}
+.tag{display:inline-block;font-size:11.5px;color:var(--deep);border:1px solid #b7d3f6;background:#eef5fd;border-radius:999px;padding:2px 9px;margin-left:8px;vertical-align:2px;font-weight:600}
+.klist{list-style:none}
+.klist li{display:flex;gap:10px;margin-bottom:9px;font-size:13.5px;line-height:1.6;color:var(--ink2)}
+.klist b{color:var(--accent);font-weight:700;flex:none}
+.note{font-size:12px;color:var(--muted);margin-top:12px;line-height:1.5}
+/*CSS-B*/
+.flow{display:flex;align-items:stretch;gap:7px}
+.fstep{flex:1;background:#fff;border:1px solid var(--grid);border-radius:8px;padding:10px 6px;text-align:center}
+.fstep b{display:block;font-size:13px;color:var(--ink)}
+.fstep span{font-size:10.5px;color:var(--muted)}
+.farrow{align-self:center;color:#9ec5f4;font-size:15px;font-weight:700;flex:none}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-size:12.5px;color:var(--ink2);border:1px solid var(--grid);background:#fff;border-radius:8px;padding:6px 12px}
+.chip b{color:var(--ink)}
+.stats{display:flex;gap:34px}
+.stat .v{font-size:23px;font-weight:700;color:var(--ink)}
+.stat .l{font-size:11.5px;color:var(--muted);margin-top:2px}
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px}
+.kpi{background:#fff;border:1px solid var(--grid);border-radius:10px;padding:16px 16px 14px}
+.kpi .v{font-size:29px;font-weight:600;color:var(--ink)}
+.kpi .l{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.45}
+.plan{list-style:none}
+.plan li{display:flex;gap:12px;margin-bottom:13px;font-size:14px;line-height:1.6;color:var(--ink2)}
+.plan b{color:var(--ink);font-weight:700}
+.plan .dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:8px}
+.role{font-size:11px;background:#eef5fd;color:var(--deep);border-radius:4px;padding:1px 6px;margin-right:6px;font-weight:600}
+.cover{justify-content:center;gap:16px}
+.cover-kick{font-size:14px;letter-spacing:.22em;color:var(--deep);font-weight:700}
+.cover h1{font-size:46px;font-weight:700;letter-spacing:.01em}
+.cover-sub{font-size:17px;color:var(--ink2)}
+.cover-meta{font-size:14px;color:var(--ink2);margin-top:22px}
+.cover-foot{position:absolute;bottom:30px;left:64px;right:64px;font-size:12px;color:var(--muted)}
+/*CSS-C*/
+.nav{position:fixed;right:18px;bottom:14px;display:flex;align-items:center;gap:8px;z-index:9}
+.nav button{width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff;font-size:18px;cursor:pointer}
+.nav button:hover{background:rgba(255,255,255,.18)}
+.nav #ctr{color:rgba(255,255,255,.75);font-size:12px;min-width:52px;text-align:center}
+@media print{
+  body{background:#fff}
+  .nav{display:none}
+  .deck{height:auto;display:block}
+  .stage{transform:none!important;box-shadow:none}
+  .slide{display:flex;page-break-after:always}
+  @page{size:1280px 720px;margin:0}
+}
+.deck{height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.stage{width:1280px;height:720px;flex:none;transform-origin:center center;box-shadow:0 8px 40px rgba(0,0,0,.35)}
+/*v2-css-1*/
+.slide.active{animation:fadeUp .38s ease both}
+@keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+.dark{background:#17181a;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.dark h1,.dark h2{color:#fff}
+.dark .kick{color:#86b6ef}
+.dark .sub{color:#c3c2b7}
+.dark .cover-sub,.dark .cover-meta{color:#c3c2b7}
+.dark .cover-foot{color:#898781}
+.dark .pgchip,.dark .note{color:#898781}
+.dark .kpi{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.14)}
+.dark .kpi .v{color:#fff}
+.dark .kpi .l{color:#c3c2b7}
+.pgchip{position:absolute;top:22px;right:28px;font-size:11px;letter-spacing:.08em;color:var(--muted)}
+.ph{border:1.5px dashed #b9b8b0;border-radius:10px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted)}
+.ph .t{font-size:12.5px;font-weight:600;color:var(--ink2)}
+.ph .s{font-size:11px}
+.painrow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.pain{background:#fff;border:1px solid var(--grid);border-radius:10px;padding:14px 13px;display:flex;flex-direction:column;gap:7px}
+.pain .no{width:30px;height:30px;border-radius:50%;background:var(--deep);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+.pain h4{font-size:14.5px;line-height:1.3}
+.pain p{font-size:11.5px;line-height:1.58;color:var(--ink2)}
+.gbar{display:flex;gap:12px}
+.g{flex:1;background:var(--deep);color:#fff;border-radius:10px;padding:11px 15px}
+.g b{display:block;font-size:15px}
+.g span{font-size:11.5px;color:#cde2fb}
+.gateflow{display:flex;align-items:stretch;gap:7px}
+.gate{flex:1;background:#fff;border:1px solid var(--grid);border-radius:10px;padding:12px 10px;text-align:center}
+.gate .gk{display:inline-flex;width:26px;height:26px;border-radius:50%;background:#eef5fd;border:1.5px solid var(--accent);color:var(--deep);font-weight:700;font-size:12px;align-items:center;justify-content:center;margin-bottom:6px}
+.gate b{display:block;font-size:13px}
+.gate span{font-size:10.5px;color:var(--muted)}
+.tl{display:flex;justify-content:space-between;position:relative;margin-top:4px}
+.tl::before{content:'';position:absolute;left:36px;right:36px;top:8px;height:2px;background:var(--grid)}
+.tln{position:relative;width:22%;text-align:center}
+.tlnd{width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #eef5fd;margin:2px auto 7px}
+.tlnd.done{background:var(--deep)}
+.tln b{display:block;font-size:12.5px;color:var(--ink)}
+.tln span{font-size:10.5px;color:var(--muted)}
+.jrn{width:34px;height:34px;border-radius:50%;background:var(--deep);color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;margin:0 auto 8px}
+.mrow{display:flex;gap:12px;align-items:flex-start;margin-bottom:13px}
+.mic{flex:none;width:34px;height:34px;border-radius:50%;background:#eef5fd;color:var(--deep);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+.mrow b{display:block;font-size:14.5px;margin-bottom:2px}
+.mrow p{font-size:12.5px;color:var(--ink2);line-height:1.55}
+.msg{background:#fff;border:1px solid var(--grid);border-radius:10px;padding:12px 14px;box-shadow:0 6px 18px rgba(11,11,11,.06)}
+.msg .mt{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:6px}
+.msg .mb{font-size:13px;line-height:1.65;color:var(--ink)}
+.vroad{position:relative;padding-left:30px;flex:1}
+.vroad::before{content:'';position:absolute;left:9px;top:10px;bottom:6px;width:2px;background:var(--grid)}
+.vi{position:relative;margin-bottom:16px}
+.vi::before{content:'';position:absolute;left:-27px;top:5px;width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px #eef5fd}
+.vi b{font-size:14.5px;color:var(--ink)}
+.vi p{font-size:12.5px;color:var(--ink2);margin-top:3px;line-height:1.55}
+</style>
+</head>
+<body>
+<div class="deck">
+  <div class="stage" id="stage">
+<section class="slide cover dark active" id="s1">
+  <div class="pgchip">01 · 汇报封面</div>
+  <div class="cover-kick">项目成果汇报 · 简版</div>
+  <h1>【项目名称】仓储管理系统</h1>
+  <p class="cover-sub">从纸质单据到全流程数字化协同 —— 在成熟系统基础上深度定制开发</p>
+  <div class="cover-meta">【甲方名称】&nbsp;&nbsp;·&nbsp;&nbsp;承建：【团队名称】&nbsp;&nbsp;·&nbsp;&nbsp;2026 年 10 月</div>
+  <div class="cover-foot">指标与内容截至 2026-10-08 · 简版共 11 页 · 详细版另附</div>
+</section>
+
+<section class="slide" id="s2">
+  <div class="pgchip">02 · 背景与目标</div>
+  <div class="kick">背景与目标</div>
+  <h2>痛点总览：五类库存管理难题</h2>
+  <p class="sub">均摘自甲方需求文档——日常运营中反复发生、人工手段难以根治的问题</p>
+  <div class="body">
+    <div class="painrow">
+      <div class="pain">
+        <div class="no">01</div>
+        <h4>库存管理混乱</h4>
+        <p>台账靠手工/Excel 更新，滞后失真；超储与缺货并存，仓库利用率低。</p>
+      </div>
+      <div class="pain">
+        <div class="no">02</div>
+        <h4>生产领料耗时久</h4>
+        <p>凭经验领料、往返仓库反复确认；错领漏领后二次补领，工期被迫延长。</p>
+      </div>
+      <div class="pain">
+        <div class="no">03</div>
+        <h4>销售与库存脱节</h4>
+        <p>靠电话/微信问库存，响应慢、易出错；超卖违约风险与丢单并存。</p>
+      </div>
+      <div class="pain">
+        <div class="no">04</div>
+        <h4>库存盘点效率低</h4>
+        <p>人工核对费时费力且易出错，差异缺少系统记录，复盘追责无据可查。</p>
+      </div>
+      <div class="pain">
+        <div class="no">05</div>
+        <h4>余料管理不足</h4>
+        <p>余料无台账、状态不明，有料不敢用、有料找不到，无法再利用持续浪费。</p>
+      </div>
+    </div>
+    <div class="gbar">
+      <div class="g"><b>准</b><span>建立统一库存台账，账实一致、数据实时准确</span></div>
+      <div class="g"><b>快</b><span>单据全流程线上流转，部门间自动协同</span></div>
+      <div class="g"><b>明</b><span>库存变动全程留痕，经营过程可追溯</span></div>
+    </div>
+    <p class="note">后续亮点页右上角以「回应痛点 N」角标逐一对应。</p>
+  </div>
+</section>
+<section class="slide" id="s3">
+  <div class="pgchip">03 · 方案总览</div>
+  <div class="kick">方案总览</div>
+  <h2>一条主线贯通八步业务流</h2>
+  <p class="sub">从销售订单到确认出库，库存由各业务环节自动联动增减，全程单据化</p>
+  <div class="body">
+    <div class="flow">
+      <div class="fstep"><b>销售订单</b><span>销售开单</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>缺货转采购</b><span>自动汇总</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>采购申请</b><span>采购员处理</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>进货入库</b><span>供应商到货</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>生产任务</b><span>BOM 齐套</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>齐套领料</b><span>三段复核</span></div>
+      <div><div class="farrow">→</div></div>
+      <div class="fstep"><b>生产入库</b><span>两段式确认</span></div>
+      <div class="farrow">→</div>
+      <div class="fstep"><b>确认出库</b><span>仓储复核</span></div>
+    </div>
+    <div class="grid2" style="margin-top:14px;align-items:stretch">
+      <div>
+        <div class="chips">
+          <span class="chip">商品资料<b>（主数据）</b></span>
+          <span class="chip">供应商管理</span>
+          <span class="chip">进货管理</span>
+          <span class="chip">采购申请</span>
+          <span class="chip">销售管理</span>
+          <span class="chip">销售退货</span>
+          <span class="chip">生产任务（BOM）</span>
+          <span class="chip">生产领料</span>
+          <span class="chip">库存盘点</span>
+          <span class="chip">库存预警中心</span>
+          <span class="chip">作废审批 + 站内消息</span>
+        </div>
+        <div class="stats" style="margin-top:14px">
+          <div class="stat"><div class="v">34</div><div class="l">功能页面</div></div>
+          <div class="stat"><div class="v">11</div><div class="l">业务功能域</div></div>
+          <div class="stat"><div class="v">42</div><div class="l">数据表</div></div>
+        </div>
+        <p class="note">在成熟仓储管理系统基础上深度定制开发：流程、权限与数据模型均按甲方需求重构。</p>
+      </div>
+      <div class="ph" style="min-height:300px">
+        <div class="t">系统首页全景截图（此处插入）</div>
+        <div class="s">建议：登录后首页全景，含预警卡片与快捷入口</div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="slide" id="s4">
+  <div class="pgchip">04 · 亮点 I 库存与盘点</div>
+  <div class="kick">亮点 I · 库存与盘点</div>
+  <h2>账实一致：预警前置，盘点闭环<span class="tag">回应痛点 1</span><span class="tag">回应痛点 4</span></h2>
+  <p class="sub">库存风险在预警中心先看见，盘点结果可核、差异可追</p>
+  <div class="body">
+    <div class="grid2" style="align-items:stretch">
+      <div>
+        <div class="card">
+          <h3>库存预警 + 动态供应商匹配</h3>
+          <ul>
+            <li>库存低于安全线自动进入预警中心，首页卡片可点直达</li>
+            <li>缺货物料自动匹配供应商，催采路径从「找人查」变「点开办」</li>
+            <li>预警读权限覆盖四部门成员，风险信息不再滞留仓库内部</li>
+          </ul>
+        </div>
+        <div class="ph" style="min-height:215px;margin-top:12px">
+          <div class="t">库存预警中心截图（此处插入）</div>
+          <div class="s">建议：预警列表含物料/当前量/安全线/建议供应商</div>
+        </div>
+      </div>
+      <div>
+        <div class="card">
+          <h3>四态盘点 + 强制盲盘</h3>
+          <ul>
+            <li>草稿 / 进行中 / 已完成 / 已作废全生命周期管理</li>
+            <li>员工盘点端强制盲盘：全程不可见账面数与差异，杜绝「照账抄数」</li>
+            <li>盘后系统自动生成差异，复盘有据可查</li>
+          </ul>
+        </div>
+        <div class="ph" style="min-height:215px;margin-top:12px">
+          <div class="t">盘点盲盘录入页截图（此处插入）</div>
+          <div class="s">建议：员工端录入界面，隐去账面数列</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="slide" id="s5">
+  <div class="pgchip">05 · 亮点 II 销售协同</div>
+  <div class="kick">亮点 II · 销售协同</div>
+  <h2>销售-仓储-采购一线牵<span class="tag">回应痛点 3</span></h2>
+  <p class="sub">销售端看得见库存、出库有人复核、缺货自动找到采购</p>
+  <div class="body">
+    <div class="grid2" style="align-items:stretch">
+      <div>
+        <div class="mrow">
+          <div class="mic">出</div>
+          <div><b>确认出库闭环</b><p>销售开单后由仓储管理员逐单确认出库，库存即时扣减，权责清晰、防超卖。</p></div>
+        </div>
+        <div class="mrow">
+          <div class="mic">型</div>
+          <div><b>一单多型号</b><p>一张销售单支持多成品行，同成品自动合并为一行；整单一次确认出库，不拆单。</p></div>
+        </div>
+        <div class="mrow">
+          <div class="mic">采</div>
+          <div><b>缺货自动转采购</b><p>下单即识别缺货，按单汇总成一条站内消息直达采购，到货后预警自动解除。</p></div>
+        </div>
+        <p class="note">另有价格偏离审批（超阈值需销售管理员审批）与全流程履约时间线，见「治理与追溯」页。</p>
+      </div>
+      <div>
+        <div class="msg">
+          <div class="mt"><span>站内消息 · 缺货通知（示例）</span><span>2026-10-08 10:24</span></div>
+          <div class="mb">销售订单 SO-20261008-001 缺货汇总：成品 A 缺 <b>40</b>、成品 B 缺 <b>15</b>（已按单合并为一条通知）——已自动生成采购申请待处理，到货后预警自动解除。</div>
+        </div>
+        <div class="ph" style="min-height:210px;margin-top:12px">
+          <div class="t">销售订单页面截图（此处插入）</div>
+          <div class="s">建议：销售单编辑页，多成品行 + 缺货列标红</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="slide" id="s6">
+  <div class="pgchip">06 · 亮点 III 生产领料</div>
+  <div class="kick">亮点 III · 生产领料</div>
+  <h2>错领漏领双闸拦截<span class="tag">回应痛点 2</span></h2>
+  <p class="sub">齐套先算清楚，发料三段复核，产线质量有闸门</p>
+  <div class="body">
+    <div class="gateflow">
+      <div class="gate"><div class="gk">闸 1 · 事前</div><b>BOM 齐套核算</b><span>按生产任务自动算齐套，缺料即预警；齐套领料按单事实显示，防止先领后补</span></div>
+      <div class="gate"><div class="gk">闸 2 · 申请</div><b>领料人申请</b><span>按任务单选物料提交申请，事前明确「领什么、领多少」</span></div>
+      <div class="gate"><div class="gk">闸 3 · 发料</div><b>仓库按单发料</b><span>仓管员照申请单发料核对，品项数量差错当场暴露</span></div>
+      <div class="gate"><div class="gk">闸 4 · 复核</div><b>领料人确认收料</b><span>领料人复核收料才闭环，三段留痕、双向确认</span></div>
+    </div>
+    <div class="grid2" style="margin-top:14px;align-items:stretch">
+      <div>
+        <div class="card">
+          <h3>工序打卡与质检闸</h3>
+          <p>产线工序流转打卡闸门，上道不合格不得流入下道；质检结果驱动任务状态推进。补料、退料同样走三段复核。</p>
+        </div>
+        <p class="note">生产任务单联动销售单；成品入库走「生产申请 + 仓储确认」两段式，不带病入库。</p>
+      </div>
+      <div class="ph" style="min-height:200px">
+        <div class="t">生产领料单页面截图（此处插入）</div>
+        <div class="s">建议：领料单详情，含三段状态与时间线</div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="slide" id="s7">
+  <div class="pgchip">07 · 治理与追溯</div>
+  <div class="kick">治理与追溯</div>
+  <h2>单据有审批、过程有留痕、数据有人守<span class="tag">回应痛点 1</span></h2>
+  <p class="sub">把「谁能动数据、动过没有」变成系统里的硬规则</p>
+  <div class="body">
+    <div class="grid2" style="align-items:stretch">
+      <div class="msg" style="flex:1;display:flex;flex-direction:column">
+        <div class="mt"><span>销售履约时间线 · 脱敏示例</span><span>单号 SO-2026***-001</span></div>
+        <div class="tl" style="margin-top:10px">
+          <div class="tln done"><b>10:02 销售开单</b><span>销售管理员创建订单，一单多型号</span></div>
+          <div class="tln done"><b>10:02 缺货自动汇总</b><span>站内消息直达采购管理员，附缺料清单</span></div>
+          <div class="tln done"><b>14:30 采购到货入库</b><span>库存回升，销售缺货预警自动解除</span></div>
+          <div class="tln done"><b>16:45 仓储确认出库</b><span>逐单复核扣减库存，履约闭环</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="margin-bottom:10px">
+          <h3>作废审批 + 取消联动冻结</h3>
+          <ul>
+            <li>重要单据不可直接删除，作废须走审批流；审批期间单据冻结不可操作</li>
+            <li>销售单取消/终止后，在途下游单据（采购、补料、入库、质检）联动冻结</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>价格审批 + 审计 + 权限隔离</h3>
+          <ul>
+            <li>售价偏离阈值自动送销售管理员审批；审计角色真只读，看得见、改不了</li>
+            <li>四部门按角色授权，读写权限分开；跨部门单据两侧各有门禁</li>
+          </ul>
+        </div>
+        <div class="ph" style="min-height:110px;margin-top:10px">
+          <div class="t">单据时间线展开效果截图（此处插入）</div>
+          <div class="s">建议：任意业务单据详情页底部时间线</div>
+        </div>
+      </div>
+    </div>
+    <p class="note">当前为单据级全程留痕；件级（序列号级）追溯在后续计划中。</p>
+  </div>
+</section>
+<section class="slide" id="s8">
+  <div class="pgchip">08 · 演示路线</div>
+  <div class="kick">演示路线</div>
+  <h2>四站走完核心业务闭环</h2>
+  <p class="sub">演示按真实角色、真实流程走；每站约 3–5 分钟，可按甲方关注点调整顺序</p>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:stretch">
+      <div class="card" style="text-align:center">
+        <div class="jrn">1</div>
+        <div style="margin-bottom:6px"><span class="role">销售管理员</span></div>
+        <b style="font-size:14.5px">销售下单与协同</b>
+        <p style="font-size:12.5px;color:var(--ink2);line-height:1.6;text-align:left;margin-top:6px">新建销售单（一单多型号）→ 缺货自动提示并汇总消息转采购 → 提交后由仓储确认出库。</p>
+      </div>
+      <div class="card" style="text-align:center">
+        <div class="jrn">2</div>
+        <div style="margin-bottom:6px"><span class="role">采购管理员</span></div>
+        <b style="font-size:14.5px">采购与到货</b>
+        <p style="font-size:12.5px;color:var(--ink2);line-height:1.6;text-align:left;margin-top:6px">处理采购申请 → 生成进货单 → 到货入库后库存回升，销售缺货预警自动解除。</p>
+      </div>
+      <div class="card" style="text-align:center">
+        <div class="jrn">3</div>
+        <div style="margin-bottom:6px"><span class="role">仓储 + 生产</span></div>
+        <b style="font-size:14.5px">生产领料三段复核</b>
+        <p style="font-size:12.5px;color:var(--ink2);line-height:1.6;text-align:left;margin-top:6px">生产任务齐套预警 → 领料人申请 → 仓库发料 → 领料人确认收料，全程时间线可回看。</p>
+      </div>
+      <div class="card" style="text-align:center">
+        <div class="jrn">4</div>
+        <div style="margin-bottom:6px"><span class="role">仓储管理员</span></div>
+        <b style="font-size:14.5px">盘点与治理</b>
+        <p style="font-size:12.5px;color:var(--ink2);line-height:1.6;text-align:left;margin-top:6px">发起盘点 → 员工强制盲盘录入 → 自动生成差异 → 作废审批与联动冻结、时间线追溯。</p>
+      </div>
+    </div>
+    <p class="note">演示使用脱敏示例数据；账号按演示现场临时登录，不在材料中出现。</p>
+  </div>
+</section>
+<section class="slide dark" id="s9">
+  <div class="pgchip">09 · 工作量与质量</div>
+  <div class="kick">工作量与质量</div>
+  <h2>约 5 个月的定制开发成果</h2>
+  <p class="sub">数据截至 2026-10-08，全部可在版本库与测试报告中核对</p>
+  <div class="body">
+    <div class="kpis">
+      <div class="kpi"><div class="v">约 5 个月</div><div class="l">开发周期 2026-05-13 起</div></div>
+      <div class="kpi"><div class="v">148</div><div class="l">代码提交（Git）</div></div>
+      <div class="kpi"><div class="v">472</div><div class="l">单元测试全部通过</div></div>
+      <div class="kpi"><div class="v">34</div><div class="l">功能页面（侧边菜单）</div></div>
+      <div class="kpi"><div class="v">42</div><div class="l">数据库数据表</div></div>
+      <div class="kpi"><div class="v">21</div><div class="l">架构决策记录（ADR）</div></div>
+    </div>
+  </div>
+</section>
+<section class="slide" id="s10">
+  <div class="pgchip">10 · 后续计划</div>
+  <div class="kick">后续计划</div>
+  <h2>已规划的四项下一步</h2>
+  <p class="sub">均不阻塞当前系统交付使用，按优先级滚动推进</p>
+  <div class="body">
+    <div class="grid2" style="align-items:stretch">
+      <div class="vroad" style="padding-left:34px">
+        <div class="vi"><b>余料台账</b><p>余料退库建账、再利用追踪，持续补齐痛点 5</p></div>
+        <div class="vi"><b>件级追溯</b><p>在现有单据级全程留痕之上，细化到序列号级追溯</p></div>
+        <div class="vi"><b>联合验收（UAT）</b><p>上线前与各部门按真实业务场景联合验证</p></div>
+        <div class="vi"><b>AI 使用助手启用</b><p>已开发完成，配置大模型服务后即可启用，帮助新员工自助查询操作方法</p></div>
+      </div>
+      <div class="ph" style="min-height:300px">
+        <div class="t">AI 使用助手界面截图（此处插入）</div>
+        <div class="s">建议：助手问答界面 + 一组典型问答示例（脱敏）</div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="slide cover dark" id="s11">
+  <div class="pgchip">11 · 结束页</div>
+  <div class="cover-kick">THANK YOU</div>
+  <h1>谢谢观看，期待指导</h1>
+  <p class="cover-sub">【项目名称】仓储管理系统 · 项目成果汇报</p>
+  <div class="cover-meta">联系方式：【联系方式】</div>
+  <div class="cover-foot">【团队名称】 · 2026 年 10 月</div>
+</section>
+  </div>
+</div>
+<div class="nav">
+  <button id="prev" title="上一页">‹</button>
+  <span id="ctr">1 / 11</span>
+  <button id="next" title="下一页">›</button>
+</div>
+<script>
+const slides=[...document.querySelectorAll('.slide')];
+let cur=0;
+function show(i){
+  cur=Math.max(0,Math.min(slides.length-1,i));
+  slides.forEach((s,idx)=>s.classList.toggle('active',idx===cur));
+  document.getElementById('ctr').textContent=(cur+1)+' / '+slides.length;
+}
+function fit(){
+  const st=document.getElementById('stage');
+  const s=Math.min(innerWidth/1280,innerHeight/720)*0.96;
+  st.style.transform='scale('+s+')';
+}
+document.getElementById('prev').onclick=()=>show(cur-1);
+document.getElementById('next').onclick=()=>show(cur+1);
+addEventListener('keydown',e=>{
+  if(['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){e.preventDefault();show(cur+1);}
+  else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();show(cur-1);}
+  else if(e.key==='Home'){show(0);}
+  else if(e.key==='End'){show(slides.length-1);}
+});
+addEventListener('resize',fit);
+fit();
+show(0);
+</script>
+</body>
+</html>

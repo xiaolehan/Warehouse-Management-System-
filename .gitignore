@@ -49,3 +49,7 @@ yarn-error.log*
 # ===== 临时/调试文件 =====
 *.tmp
 *.bak
+
+# ===== 本地工具与汇报生成工作区（不入库） =====
+.claude/skills/
+document/pptx-build/

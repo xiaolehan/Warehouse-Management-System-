@@ -21,6 +21,11 @@ public class ApprovalOrderVO {
 
     private String requestReason;
 
+    /**
+     * 价格偏离行快照(JSON,会话68/D137)，仅 price_deviation_confirm 类审批单有值
+     */
+    private String requestDetail;
+
     private Integer beforeBizStatus;
 
     private String beforeBizSnapshot;

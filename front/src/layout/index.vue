@@ -52,6 +52,9 @@
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
+          <!-- D120：价格偏离审批与系统参数（价格偏离阈值）设置权由超管移至销售管理员 -->
+          <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>价格偏离审批</span></el-menu-item>
+          <el-menu-item index="/system/config"><el-icon><Setting /></el-icon><span>系统参数</span></el-menu-item>
           <el-sub-menu index="/notification">
             <template #title><el-icon><Promotion /></el-icon><span class="menu-title-text">发布</span></template>
             <el-menu-item index="/system/work-requirement"><el-icon><Tickets /></el-icon><span>工作要求</span></el-menu-item>
@@ -109,37 +112,64 @@
           <!-- D130：普通采购申请创建权从仓储移到生产 -->
           <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
+          <!-- D142：生产管理员与其他部门管理员同款发布功能 -->
+          <el-sub-menu index="/notification">
+            <template #title><el-icon><Promotion /></el-icon><span class="menu-title-text">发布</span></template>
+            <el-menu-item index="/system/work-requirement"><el-icon><Tickets /></el-icon><span>工作要求</span></el-menu-item>
+            <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>
+          </el-sub-menu>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户部门管理</span></el-menu-item>
         </template>
         <template v-else-if="isProductionEmployee">
+          <!-- D141：生产员工同权（菜单 = 管理员 − 发布 − 用户部门管理） -->
+          <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
+          <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/production-order"><el-icon><Notebook /></el-icon><span>生产任务单</span></el-menu-item>
           <el-menu-item index="/business/qc"><el-icon><DocumentChecked /></el-icon><span>质检记录</span></el-menu-item>
           <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
           <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
           <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
+          <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
+          <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
         </template>
 
         <!-- 业务部门员工（D32）：销售/采购员工可建单与查看，库存变更仍由仓储/admin 确认 -->
         <template v-else-if="isSalesEmployee">
-          <!-- D68：销售员工同样可见物料/成品（只读+售价维护） -->
+          <!-- D141：销售员工同权（菜单 = 管理员 − 发布 − 用户部门管理 − 价格偏离审批 − 系统参数） -->
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>商品销售</span></el-menu-item>
           <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货</span></el-menu-item>
+          <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
         </template>
         <template v-else-if="isPurchaseEmployee">
+          <!-- D141：采购员工同权（菜单 = 管理员 − 发布 − 用户部门管理） -->
           <el-menu-item index="/base/supplier"><el-icon><Van /></el-icon><span>供应商管理</span></el-menu-item>
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
           <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料进货</span></el-menu-item>
           <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货</span></el-menu-item>
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请处理</span></el-menu-item>
+          <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
         </template>
         <template v-else-if="isWarehouseEmployee">
-          <!-- D84：仓储员工录入实盘数（建单/审核仍 admin）；D93：开放物料/成品/预警中心只读视图 -->
+          <!-- D141：仓储员工与管理员完全同权（菜单 = 管理员 − 发布 − 用户部门管理） -->
           <el-menu-item index="/base/goods"><el-icon><GoodsFilled /></el-icon><span>物料管理</span></el-menu-item>
           <el-menu-item index="/base/products"><el-icon><Goods /></el-icon><span>成品管理</span></el-menu-item>
+          <el-menu-item index="/base/bom"><el-icon><List /></el-icon><span>BOM 管理</span></el-menu-item>
+          <el-menu-item index="/business/production"><el-icon><Download /></el-icon><span>生产入库</span></el-menu-item>
+          <el-menu-item index="/business/pick-list"><el-icon><Box /></el-icon><span>生产领料</span></el-menu-item>
+          <!-- ADR-0020/D116：成品拆分单（仓储确认成品出库/回库/作废） -->
+          <el-menu-item index="/business/split-order"><el-icon><Box /></el-icon><span>成品拆分单</span></el-menu-item>
+          <el-menu-item index="/business/sales"><el-icon><Sell /></el-icon><span>销售出库确认</span></el-menu-item>
+          <el-menu-item index="/business/sales-return"><el-icon><RefreshRight /></el-icon><span>销售退货入库确认</span></el-menu-item>
+          <el-menu-item index="/business/purchase"><el-icon><ShoppingCart /></el-icon><span>物料入库确认</span></el-menu-item>
+          <el-menu-item index="/business/purchase-return"><el-icon><RefreshLeft /></el-icon><span>物料退货出库确认</span></el-menu-item>
+          <el-menu-item index="/business/purchase-request"><el-icon><List /></el-icon><span>采购申请</span></el-menu-item>
           <el-menu-item index="/business/stocktake"><el-icon><DocumentChecked /></el-icon><span>库存盘点</span></el-menu-item>
           <el-menu-item index="/business/stock-warning"><el-icon><WarningFilled /></el-icon><span>预警中心</span></el-menu-item>
+          <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>作废审批</span></el-menu-item>
         </template>
 
         <template v-else-if="showSuperAdminCenter">
@@ -153,8 +183,8 @@
             <el-menu-item index="/system/login-log"><el-icon><Notebook /></el-icon><span>登录日志</span></el-menu-item>
             <el-menu-item index="/system/operation-log"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
             <el-menu-item index="/system/dept-approval"><el-icon><Stamp /></el-icon><span>部门审批</span></el-menu-item>
-            <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>价格偏离审批</span></el-menu-item>
-            <el-menu-item index="/system/config"><el-icon><Setting /></el-icon><span>系统参数</span></el-menu-item>
+            <!-- D120：价格偏离审批权已移销售管理员，超管仅保留作废类审批查看 -->
+            <el-menu-item index="/system/void-approval"><el-icon><DocumentChecked /></el-icon><span>作废审批</span></el-menu-item>
           </el-sub-menu>
           <el-menu-item index="/system/user"><el-icon><UserFilled /></el-icon><span>用户管理</span></el-menu-item>
           <el-menu-item index="/system/notice"><el-icon><Bell /></el-icon><span>公告管理</span></el-menu-item>

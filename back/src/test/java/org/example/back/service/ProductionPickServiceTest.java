@@ -219,6 +219,45 @@ class ProductionPickServiceTest {
     }
 
     @Test
+    void createReturn_writesExpectedQuantitySnapshotFromNetReturnable() {
+        BizProductionOrder order = new BizProductionOrder();
+        order.setId(7L);
+        order.setOrderNo("SC-0001");
+        order.setStatus(BizProductionOrder.STATUS_IN_PROGRESS);
+        when(productionOrderMapper.selectById(7L)).thenReturn(order);
+
+        BaseGoods goods = new BaseGoods();
+        goods.setId(50L);
+        goods.setGoodsName("螺丝");
+        when(baseGoodsMapper.selectById(50L)).thenReturn(goods);
+
+        LoginResponse.UserInfoVO user = new LoginResponse.UserInfoVO();
+        user.setId(10L);
+        user.setRealName("生产甲");
+        when(authService.getUserInfo()).thenReturn(user);
+
+        // 已领未退净额=5：一张 ISSUED 领料单领了 5，无 RETURN 流入
+        BizPickList issued = pickListOf(1L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED);
+        when(pickListMapper.selectList(any())).thenReturn(List.of(issued));
+        when(pickListDetailMapper.selectList(any()))
+                .thenReturn(List.of(detailOf(1L, 50L, "螺丝", 5)));
+
+        ProductionReturnItemDTO item = new ProductionReturnItemDTO();
+        item.setGoodsId(50L);
+        item.setQuantity(2);
+        ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
+        dto.setItems(List.of(item));
+
+        service.createReturn(7L, dto);
+
+        ArgumentCaptor<BizPickListDetail> dcap = ArgumentCaptor.forClass(BizPickListDetail.class);
+        verify(pickListDetailMapper).insert(dcap.capture());
+        // D138：应退量 = 建单时点「已领未退」净额（computeNetReturnableItems 同口径）
+        assertEquals(5, dcap.getValue().getExpectedQuantity());
+        assertEquals(2, dcap.getValue().getQuantity());
+    }
+
+    @Test
     void createReturn_rejectsWhenNotInProgress() {
         BizProductionOrder order = new BizProductionOrder();
         order.setId(7L);

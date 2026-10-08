@@ -36,6 +36,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -316,6 +317,10 @@ class SalesServiceTest {
             inv.getArgument(0, BizSales.class).setId(501L);
             return 1;
         });
+        when(bizApprovalOrderMapper.insert(any(BizApprovalOrder.class))).thenAnswer(inv -> {
+            inv.getArgument(0, BizApprovalOrder.class).setId(999L);
+            return 1;
+        });
 
         // 两行均偏离标准售价（+50% / -25%）
         service.create(dto(List.of(item(29L, 5, "150.00"), item(30L, 4, "30.00"))));
@@ -324,12 +329,26 @@ class SalesServiceTest {
         verify(bizApprovalOrderMapper, times(1)).insert(approvalCaptor.capture()); // 整单一笔
         BizApprovalOrder approval = approvalCaptor.getValue();
         assertEquals("sales", approval.getBizType());
-        assertTrue(approval.getRequestReason().contains("第1行 PTO153 偏离 50%"),
+        // D137：原因文本带本次/标准价对照
+        assertTrue(approval.getRequestReason().contains("第1行 PTO153 本次150.00/标准100.00 偏离 50%"),
                 "实际: " + approval.getRequestReason());
-        assertTrue(approval.getRequestReason().contains("第2行 轴承 偏离 25%"),
+        assertTrue(approval.getRequestReason().contains("第2行 轴承 本次30.00/标准40.00 偏离 25%"),
                 "实际: " + approval.getRequestReason());
-        verify(messageService).sendPriceDeviationToSuperAdmin(
-                anyString(), eq("销售管理员"), anyString(), eq(501L));
+        // D137：建单时点价格快照 JSON（thresholdPercent 已 ×100；偏离金额带符号、偏离% 绝对值；
+        // hutool 序列化 BigDecimal 去尾零：150.00 → 150）
+        String snapshot = approval.getRequestDetail();
+        assertNotNull(snapshot, "偏离建单应写入 request_detail 快照");
+        assertTrue(snapshot.contains("\"thresholdPercent\":5"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"goodsName\":\"PTO153\""), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"unitPrice\":150"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"standardSalePrice\":100"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"deviationAmount\":50"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"deviationAmount\":-10"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"deviationPercent\":50"), "实际: " + snapshot);
+        assertTrue(snapshot.contains("\"deviationPercent\":25"), "实际: " + snapshot);
+        // D137：消息第 5 参 = 审批单 id（insert 回填后透出，深链 ？approvalId= 用）
+        verify(messageService).sendPriceDeviationToSalesAdmin(
+                anyString(), eq("销售管理员"), anyString(), eq(501L), anyLong());
     }
 
     // ---------- D110 决策②：确认出库逐行扣库存（任一行不足整单失败） ----------
@@ -357,7 +376,7 @@ class SalesServiceTest {
     @Test
     void confirm_decreasesStockPerLine() {
         when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizApprovalOrderMapper.selectList(any())).thenReturn(List.of());
         when(bizSalesDetailMapper.selectList(any()))
@@ -379,7 +398,7 @@ class SalesServiceTest {
         BizSales entity = pendingSales();
         entity.setCustomerName("华东一店");
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizApprovalOrderMapper.selectList(any())).thenReturn(List.of());
         when(bizSalesDetailMapper.selectList(any()))
@@ -400,7 +419,7 @@ class SalesServiceTest {
     @Test
     void confirm_alreadyShipped_rejectedAndNotNotifies() {
         when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
 
         org.example.back.common.exception.BusinessException ex =
                 org.junit.jupiter.api.Assertions.assertThrows(
@@ -421,7 +440,7 @@ class SalesServiceTest {
     @Test
     void voidDocument_shipped_restoresStockPerLine() {
         when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
         when(bizSalesDetailMapper.selectList(any()))
                 .thenReturn(List.of(detail(1L, 29L, "PTO153", 5), detail(2L, 30L, "轴承", 3)));
@@ -444,7 +463,7 @@ class SalesServiceTest {
     void delete_withUnfinishedLinkedOrder_notifiesWithAggregatedGoodsDesc() {
         BizSales entity = pendingSales();
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizSalesDetailMapper.selectList(any()))
                 .thenReturn(List.of(detail(1L, 29L, "PTO153", 5), detail(2L, 30L, "轴承", 3)));
         BizProductionOrder order = new BizProductionOrder();
@@ -466,7 +485,7 @@ class SalesServiceTest {
     @Test
     void delete_withFinishedLinkedOrder_doesNotNotify() {
         when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         // SQL 层 in 过滤，已完工/已作废/已报废/已终止的关联单不会返回
         when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
 
@@ -482,7 +501,7 @@ class SalesServiceTest {
     void batchDelete_voidedRowFails_pendingRowDeleted() {
         when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
         when(bizProductionOrderMapper.selectList(any())).thenReturn(List.of());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
 
         BizSales voided = pendingSales();
         voided.setId(502L);
@@ -561,7 +580,7 @@ class SalesServiceTest {
         BizSales entity = pendingSales();
         entity.setOperatorId(7L);
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         // 第一次取行做校验（两行都活跃），第二次取行做表头重算（行 1 已终止）——用连续打桩模拟落库结果
         when(bizSalesDetailMapper.selectList(any())).thenReturn(
@@ -596,7 +615,7 @@ class SalesServiceTest {
         BizSales entity = pendingSales();
         entity.setOperatorId(7L);
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizSalesDetailMapper.selectList(any())).thenReturn(
                 List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00")),
@@ -617,7 +636,7 @@ class SalesServiceTest {
         BizSales entity = pendingSales();
         entity.setOperatorId(7L);
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L); // 作废审批守卫（价格偏离审批不拦终止）
         // 两行只终止一行 → 部分终止：整单数量/金额已变，价格偏离审批若继续走会按过时金额放行
         when(bizSalesDetailMapper.selectList(any())).thenReturn(
@@ -647,8 +666,8 @@ class SalesServiceTest {
         BizSales entity = pendingSales();
         entity.setOperatorId(7L); // 本人所建
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
-        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(true);
+        // D141：销售员工与管理员完全同权，可终止本部门所有单（不再限本人）
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizSalesDetailMapper.selectList(any())).thenReturn(
                 List.of(detailWithTotal(1L, 29L, "PTO153", 5, "500.00")),
@@ -664,24 +683,23 @@ class SalesServiceTest {
     }
 
     @Test
-    void terminate_employeeOtherOrder_forbidden() {
+    void terminate_nonSalesMember_forbidden() {
         BizSales entity = pendingSales();
         entity.setOperatorId(8L); // 他人所建
         when(bizSalesMapper.selectById(501L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
-        when(authzService.isDeptMember(AuthzService.DEPT_SALES)).thenReturn(true);
-        when(authService.getUserInfo()).thenReturn(operator()); // id=7 ≠ 8
+        // D141：非销售部门（守卫不通过）不可终止；销售员工已同权，不再有本人单限制
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(false);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.terminate(501L, terminateDto(terminateLine(1L, "越权终止"))));
-        assertTrue(ex.getMessage().contains("仅可终止本人所建"), "实际: " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("仅销售部门可终止销售单"), "实际: " + ex.getMessage());
         verify(bizSalesDetailMapper, never()).update(isNull(), any());
     }
 
     @Test
     void terminate_shippedOrder_rejected() {
         when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> service.terminate(501L, terminateDto(terminateLine(1L, "太迟了"))));
@@ -691,7 +709,7 @@ class SalesServiceTest {
     @Test
     void terminate_pendingVoidApproval_rejected() {
         when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(1L);
 
         BusinessException ex = assertThrows(BusinessException.class,
@@ -702,7 +720,7 @@ class SalesServiceTest {
     @Test
     void terminate_alreadyTerminatedLine_rejected() {
         when(bizSalesMapper.selectById(501L)).thenReturn(pendingSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_SALES)).thenReturn(true);
         when(bizApprovalOrderMapper.selectCount(any())).thenReturn(0L);
         when(bizSalesDetailMapper.selectList(any()))
                 .thenReturn(List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00")));
@@ -716,7 +734,7 @@ class SalesServiceTest {
     @Test
     void voidDocument_shipped_skipsTerminatedLines() {
         when(bizSalesMapper.selectById(501L)).thenReturn(shippedSales());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizSalesMapper.update(isNull(), any())).thenReturn(1);
         when(bizSalesDetailMapper.selectList(any()))
                 .thenReturn(List.of(terminatedDetail(1L, 29L, "PTO153", 5, "500.00"),

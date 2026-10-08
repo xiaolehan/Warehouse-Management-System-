@@ -1,6 +1,7 @@
 package org.example.back.controller;
 
 import jakarta.validation.Valid;
+import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.result.Result;
@@ -50,6 +51,8 @@ public class BomController {
     }
 
     @PostMapping
+    @AuditLog(module = "BOM管理", action = "新增", targetType = "BOM",
+            detail = "'新增BOM「' + #dto.goodsName + '」'")
     @PreventDuplicateSubmit(message = "请勿重复提交 BOM 新增请求")
     public Result<Void> create(@Valid @RequestBody BomSaveDTO dto) {
         bomService.create(dto);
@@ -57,6 +60,8 @@ public class BomController {
     }
 
     @PutMapping("/{id}")
+    @AuditLog(module = "BOM管理", action = "编辑", targetType = "BOM",
+            detail = "'编辑BOM #' + #id + '「' + #dto.goodsName + '」'")
     @PreventDuplicateSubmit(message = "请勿重复提交 BOM 编辑请求")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody BomSaveDTO dto) {
         bomService.update(id, dto);
@@ -74,6 +79,8 @@ public class BomController {
      * 删除成功返回级联结果说明（成品主档已清理 / 保留原因）。
      */
     @DeleteMapping("/{id}")
+    @AuditLog(module = "BOM管理", action = "删除", targetType = "BOM",
+            detail = "'删除BOM #' + #id + (#force ? '，强制删除' : '')")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
     public Result<String> delete(@PathVariable Long id,
                                  @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
@@ -82,6 +89,8 @@ public class BomController {
 
     /** 手测问题 1：批量删除（非强制——有未完结任务单的行进失败明细） */
     @PostMapping("/batch-delete")
+    @AuditLog(module = "BOM管理", action = "批量删除", targetType = "BOM",
+            detail = "'批量删除BOM，共 ' + #ids.size() + ' 个'")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
     public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
         return Result.success(bomService.batchDelete(ids));
@@ -123,6 +132,8 @@ public class BomController {
 
     /** 上传 xlsx 导入 BOM 明细（按成品名称匹配，覆盖该成品已有 BOM） */
     @PostMapping("/import")
+    @AuditLog(module = "BOM管理", action = "导入", targetType = "BOM",
+            detail = "'导入BOM：成品「' + #goodsName + '」，共 ' + #result.data?.imported + ' 行明细'")
     @PreventDuplicateSubmit(message = "请勿重复提交 BOM 导入请求")
     public Result<Map<String, Integer>> importBom(
             @RequestParam("file") MultipartFile file,

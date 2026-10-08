@@ -38,7 +38,7 @@
       </div>
 
       <div style="margin-bottom: 12px;">
-        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin'], deptCodes: ['sales'] }">
+        <el-button type="danger" :disabled="batchSelectedRows.length === 0" @click="handleBatchDelete" v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }">
           批量删除{{ batchSelectedRows.length > 0 ? `（${batchSelectedRows.length}）` : '' }}
         </el-button>
       </div>
@@ -71,12 +71,12 @@
         <el-table-column label="操作" width="200" fixed="right">
           <template #default="scope">
             <div class="action-group">
-              <el-button size="small" type="primary" link @click="handleView(scope.row)">查看</el-button>
+              <el-button size="small" type="primary" link @click="handleView(scope.row)">详情</el-button>
               <!-- D98：作废审批中冻结主流程（禁用+提示）；已作废/冲抵单据不再出现确认按钮 -->
               <el-tooltip v-if="scope.row.confirmStatus === 1 && scope.row.bizStatus === 1 && !isBizDocumentDeleted(scope.row)" :disabled="!voidPendingIds.has(scope.row.id)" content="作废审批中，待仓储管理员处理" placement="top">
                 <span>
                   <el-button
-                    v-permission="{ roles: ['admin'], deptCodes: ['warehouse'] }"
+                    v-permission="{ roles: ['admin', 'employee'], deptCodes: ['warehouse'] }"
                     size="small"
                     type="success"
                     link
@@ -89,7 +89,7 @@
               </el-tooltip>
               <el-tooltip v-if="showDeleteAction(scope.row)" content="当天未生效错单可删除（不留痕）；已生效或历史错单请用作废（留痕+仓储审批）" placement="top">
                 <el-button
-                  v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
+                  v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }"
                   size="small"
                   type="danger"
                   link
@@ -102,7 +102,7 @@
                 <el-tooltip :content="voidPendingIds.has(scope.row.id) ? '作废审批中，待仓储管理员处理' : '已生效或历史错单作废留痕，仓储审批通过后生效'" placement="top">
                   <span>
                     <el-button
-                      v-permission="{ roles: ['admin'], deptCodes: ['sales'] }"
+                      v-permission="{ roles: ['admin', 'employee'], deptCodes: ['sales'] }"
                       size="small"
                       type="warning"
                       link
@@ -475,7 +475,7 @@ const loadList = async () => {
 
 const loadVoidPendingIds = async () => {
   // D98：仓储 admin 也拉取——「确认入库」主操作者，作废审批中需禁用+提示（端点 @RequireAdmin 仓储可过）
-  if (!isSalesAdmin && !isWarehouseAdmin) {
+  if (!((userRole === 'admin' || userRole === 'employee') && (userDept === 'sales' || userDept === 'warehouse'))) {
     voidPendingIds.value = new Set()
     return
   }
@@ -706,10 +706,7 @@ onMounted(async () => {
   color: #909399;
 }
 
-.action-disabled {
-  color: #999;
-  font-size: 12px;
-}
+/* action-disabled / action-group 全局化至 assets/main.css（会话 67） */
 
 .state-success {
   color: #16a34a;
@@ -721,11 +718,6 @@ onMounted(async () => {
 
 .state-warning {
   color: #d97706;
-}
-
-.action-group {
-  display: flex;
-  align-items: center;
 }
 
 .void-help-icon {

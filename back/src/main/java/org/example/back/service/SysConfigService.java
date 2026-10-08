@@ -31,7 +31,7 @@ public class SysConfigService {
 
     private static final String CONFIG_NAME_PRICE_DEVIATION = "销售价格偏离阈值";
     private static final String CONFIG_REMARK_PRICE_DEVIATION =
-            "销售单价偏离标准售价超过此比例需超管审批(0.05=5%)";
+            "销售单价偏离标准售价超过此比例需销售管理员审批(0.05=5%)";
 
     @Autowired
     private SysConfigMapper sysConfigMapper;
@@ -51,7 +51,7 @@ public class SysConfigService {
     }
 
     /**
-     * D108：价格偏离阈值是超管可配置的系统功能，参数行是该功能的载体——清库/误删物理行后
+     * D108：价格偏离阈值是销售管理员可配置的系统功能（D120 前为超管），参数行是该功能的载体——清库/误删物理行后
      * 「系统参数」页会变空、修改接口报「参数不存在」。服务启动时自检：缺行补默认行（0.05），
      * 撞唯一键说明行处于逻辑删除态则复活；任何异常只记日志不阻断启动（内存兜底仍为 5%）。
      */
@@ -97,20 +97,20 @@ public class SysConfigService {
     }
 
     /**
-     * 系统参数列表（仅超管）。
+     * 系统参数列表（D120：仅销售部管理员，超管已失权）。
      */
     public List<SysConfig> listAll() {
-        authzService.requireSuperAdmin("仅超级管理员可查看系统参数");
+        authzService.requireDeptAdmin(AuthzService.DEPT_SALES, "仅销售管理员可查看系统参数");
         LambdaQueryWrapper<SysConfig> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByAsc(SysConfig::getId);
         return sysConfigMapper.selectList(wrapper);
     }
 
     /**
-     * 更新价格偏离阈值（仅超管）。value 为比例小数，0 < value < 1。
+     * 更新价格偏离阈值（D120：仅销售部管理员，超管已失权）。value 为比例小数，0 < value < 1。
      */
     public BigDecimal updatePriceDeviationThreshold(BigDecimal value) {
-        authzService.requireSuperAdmin("仅超级管理员可配置价格偏离阈值");
+        authzService.requireDeptAdmin(AuthzService.DEPT_SALES, "仅销售管理员可配置价格偏离阈值");
         if (value == null || value.compareTo(BigDecimal.ZERO) <= 0 || value.compareTo(BigDecimal.ONE) >= 0) {
             throw BusinessException.validateFail("价格偏离阈值需为 0~1 之间的小数（如 0.05 表示 5%）");
         }

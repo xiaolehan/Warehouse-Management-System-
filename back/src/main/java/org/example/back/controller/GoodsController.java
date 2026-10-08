@@ -58,6 +58,8 @@ public class GoodsController {
     }
 
     @PostMapping
+    @AuditLog(module = "物料管理", action = "新增", targetType = "商品",
+            detail = "'新增商品「' + #dto.name + '」'")
     @PreventDuplicateSubmit(message = "请勿重复提交商品新增请求")
     public Result<Void> create(@Valid @RequestBody GoodsSaveDTO dto) {
         goodsService.create(dto);
@@ -72,6 +74,8 @@ public class GoodsController {
     }
 
     @PutMapping("/{id}")
+    @AuditLog(module = "物料管理", action = "编辑", targetType = "商品",
+            detail = "'编辑商品 #' + #id + '「' + #dto.name + '」'")
     @PreventDuplicateSubmit(message = "请勿重复提交商品编辑请求")
     public Result<Void> update(@PathVariable Long id, @Valid @RequestBody GoodsSaveDTO dto) {
         goodsService.update(id, dto);
@@ -90,6 +94,8 @@ public class GoodsController {
     }
 
     @DeleteMapping("/{id}")
+    @AuditLog(module = "物料管理", action = "删除", targetType = "商品",
+            detail = "'删除商品 #' + #id")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
     public Result<Void> delete(@PathVariable Long id) {
         goodsService.delete(id);
@@ -97,6 +103,8 @@ public class GoodsController {
     }
 
     @PostMapping("/batch-delete")
+    @AuditLog(module = "物料管理", action = "批量删除", targetType = "商品",
+            detail = "'批量删除商品，共 ' + #ids.size() + ' 个'")
     @PreventDuplicateSubmit(intervalMs = 1000, message = "删除请求过于频繁，请稍后再试")
     public Result<BatchDeleteResultVO> batchDelete(@RequestBody List<Long> ids) {
         return Result.success(goodsService.batchDelete(ids));

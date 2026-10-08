@@ -285,7 +285,7 @@ class PurchaseReturnServiceTest {
         BizPurchaseReturn entity = pendingReturn(700L);
         entity.setConfirmStatus(PurchaseReturnService.CONFIRM_AWAITING);
         when(bizPurchaseReturnMapper.selectById(700L)).thenReturn(entity);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizPurchaseReturnMapper.update(any(), any())).thenReturn(1);
         when(bizPurchaseReturnDetailMapper.selectList(any())).thenReturn(List.of(
                 returnDetail(1L, 700L, 1L, 5),
@@ -306,7 +306,7 @@ class PurchaseReturnServiceTest {
     @Test
     void voidDocument_pending_doesNotTouchStock() {
         when(bizPurchaseReturnMapper.selectById(701L)).thenReturn(pendingReturn(701L));
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizPurchaseReturnMapper.update(any(), any())).thenReturn(1);
 
         service.voidDocument(701L, null);

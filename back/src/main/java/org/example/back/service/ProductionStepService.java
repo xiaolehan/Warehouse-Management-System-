@@ -136,9 +136,10 @@ public class ProductionStepService {
         LoginResponse.UserInfoVO user = authService.getUserInfo();
         boolean self = user.getId() != null && user.getId().equals(step.getOperatorId());
         if (!self) {
-            authzService.requireDeptAdminOrSuperAdmin(
+            // D141：生产同权开放——本人或生产部门（admin+员工）可撤销打卡
+            authzService.requireDeptMemberOrSuperAdmin(
                     AuthzService.DEPT_PRODUCTION,
-                    "仅打卡本人或生产研发部管理员可撤销打卡"
+                    "仅打卡本人或生产部门可撤销打卡"
             );
         }
         // D125 撤销保护：撤销不得使已发生的质检门禁失效（守卫在任何写库动作之前）

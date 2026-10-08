@@ -54,6 +54,8 @@ public class PurchaseRequestService {
     public static final int STATUS_RECEIVED = 3;    // 已入库
     public static final int STATUS_REJECTED = 4;    // 已驳回
     public static final int STATUS_AWAITING_CONFIRM = 5;  // 待入库确认
+    /** 会话 67（决策 1a）：撤销=置终态 status=6（对齐销售/进货「作废=终态可见」口径 D97），行保留在列表打「已撤销」 */
+    public static final int STATUS_REVOKED = 6;    // 已撤销
 
     /**
      * D86：补料幂等守卫的在途状态集合——仅在途单（待采购/采购中/待入库确认）阻止再补料；
@@ -415,8 +417,9 @@ public class PurchaseRequestService {
 
     /**
      * 会话 58 一键撤销：终止弹窗勾选「一并撤销在途补料采购申请」或采购页直接调用。
-     * 撤销 status in (1,2) 的生产来源在途申请：撤消息 + 逻辑删单据与明细，返回被撤销单号。
-     * 权限：生产管理员或超管可撤该任务单下全部；非管理员仅能撤本人申请（不符的跳过）。
+     * 撤销 status in (1,2) 的生产来源在途申请：撤消息 + 置终态「已撤销」（会话 67：不再逻辑删），
+     * 返回被撤销单号。权限：生产管理员或超管可撤该任务单下全部；非管理员仅能撤本人申请（不符的跳过）。
+     * 有入库进度的申请跳过不撤（决策 3a：已生成进货单/加过库存的单必须人工收尾，避免孤儿进货单）。
      * 前置：任务单必须已被销售取消冻结（freezeInfo.frozen），未冻结时拒绝——防止误撤销正常需求。
      */
     @Transactional(rollbackFor = Exception.class)
@@ -430,7 +433,7 @@ public class PurchaseRequestService {
         if (!info.isFrozen()) {
             throw BusinessException.validateFail("该任务单未处于销售取消冻结状态，无需一键撤销；请直接在采购申请列表自行撤销本人申请");
         }
-        boolean productionAdmin = authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_PRODUCTION);
+        boolean productionAdmin = authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_PRODUCTION);
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         LambdaQueryWrapper<BizPurchaseRequest> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizPurchaseRequest::getSourceType, SOURCE_PRODUCTION)
@@ -443,10 +446,11 @@ public class PurchaseRequestService {
             if (!productionAdmin && !own) {
                 continue;
             }
+            if (hasReceiveProgress(request.getId())) {
+                continue;
+            }
             messageService.revokeUnreadByBiz("purchase_request", request.getId());
-            bizPurchaseRequestMapper.deleteById(request.getId());
-            bizPurchaseRequestDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseRequestDetail>()
-                    .eq(BizPurchaseRequestDetail::getRequestId, request.getId()));
+            markRevoked(request, request.getStatus(), loginUser, "关联销售已取消，生产侧一键撤销");
             revokedNos.add(request.getRequestNo());
         }
         if (!revokedNos.isEmpty()) {
@@ -459,7 +463,9 @@ public class PurchaseRequestService {
     /**
      * D114 内部撤销主体（信任调用方已完成权限与意图校验，不校验冻结前置——
      * 终止弹窗勾选时单据尚未被标记冻结，勾选本身即生产管理员明确意图）：
-     * 撤 status in (1,2) 的生产来源在途申请（不按申请人过滤），撤消息 + 逻辑删单据与明细。
+     * 撤 status in (1,2) 的生产来源在途申请（不按申请人过滤），撤消息 + 置终态「已撤销」。
+     * 有入库进度的申请跳过不撤不报错（决策 3a：本方法运行在生产终止事务内，
+     * 抛异常会连坐回滚终止本身；有进度的单由采购侧人工收尾）。
      * @return 被撤销单号列表
      */
     @Transactional(rollbackFor = Exception.class)
@@ -473,12 +479,14 @@ public class PurchaseRequestService {
                 .eq(BizPurchaseRequest::getProductionOrderId, productionOrderId)
                 .in(BizPurchaseRequest::getStatus, List.of(STATUS_PENDING, STATUS_PURCHASING));
         List<BizPurchaseRequest> requests = bizPurchaseRequestMapper.selectList(wrapper);
+        LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
         List<String> revokedNos = new ArrayList<>();
         for (BizPurchaseRequest request : requests) {
+            if (hasReceiveProgress(request.getId())) {
+                continue;
+            }
             messageService.revokeUnreadByBiz("purchase_request", request.getId());
-            bizPurchaseRequestMapper.deleteById(request.getId());
-            bizPurchaseRequestDetailMapper.delete(new LambdaQueryWrapper<BizPurchaseRequestDetail>()
-                    .eq(BizPurchaseRequestDetail::getRequestId, request.getId()));
+            markRevoked(request, request.getStatus(), loginUser, "关联销售已取消，生产侧一键撤销");
             revokedNos.add(request.getRequestNo());
         }
         if (!revokedNos.isEmpty() && notifyPurchaseAdmins) {
@@ -930,6 +938,36 @@ public class PurchaseRequestService {
 
     // ============================== 撤销申请 ==============================
 
+    /**
+     * 会话 67（决策 1a/2a）：撤销从逻辑删改为置终态 status=6「已撤销」+ 撤销人/时间/原因留痕——
+     * 全库「撤销=置终态可见」统一口径（对齐销售/进货作废 D97），单据与明细保留可查，库存/财务零影响。
+     * 条件更新兜底并发（仅原状态行可置），失败即单据已被处理。
+     */
+    private void markRevoked(BizPurchaseRequest request, int fromStatus, LoginResponse.UserInfoVO revoker, String reason) {
+        LambdaUpdateWrapper<BizPurchaseRequest> update = new LambdaUpdateWrapper<>();
+        update.eq(BizPurchaseRequest::getId, request.getId())
+                .eq(BizPurchaseRequest::getStatus, fromStatus)
+                .set(BizPurchaseRequest::getStatus, STATUS_REVOKED)
+                .set(BizPurchaseRequest::getRevokeReason, reason)
+                .set(BizPurchaseRequest::getRevokerId, revoker.getId())
+                .set(BizPurchaseRequest::getRevokerName, revoker.getRealName())
+                .set(BizPurchaseRequest::getRevokeTime, LocalDateTime.now());
+        if (bizPurchaseRequestMapper.update(null, update) != 1) {
+            throw BusinessException.validateFail("采购申请单已被处理，禁止重复撤销");
+        }
+    }
+
+    /**
+     * 决策 3a：申请是否已有入库进度（任一明细行已生成进货单并加过库存）。
+     * 有进度的单不参与一键撤销——跳过由采购侧人工收尾，避免孤儿进货单/重复加库存。
+     */
+    private boolean hasReceiveProgress(Long requestId) {
+        List<BizPurchaseRequestDetail> details = bizPurchaseRequestDetailMapper.selectList(
+                new LambdaQueryWrapper<BizPurchaseRequestDetail>()
+                        .eq(BizPurchaseRequestDetail::getRequestId, requestId));
+        return details.stream().anyMatch(d -> receiveStatusIs(d, RECEIVE_DONE));
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
@@ -944,10 +982,7 @@ public class PurchaseRequestService {
             throw BusinessException.validateFail("仅待采购状态可撤销");
         }
         messageService.revokeUnreadByBiz("purchase_request", id);
-        bizPurchaseRequestMapper.deleteById(id);
-        LambdaQueryWrapper<BizPurchaseRequestDetail> detailWrapper = new LambdaQueryWrapper<>();
-        detailWrapper.eq(BizPurchaseRequestDetail::getRequestId, id);
-        bizPurchaseRequestDetailMapper.delete(detailWrapper);
+        markRevoked(entity, STATUS_PENDING, loginUser, "申请人自行撤销");
     }
 
     /** 手测问题 1（2026-09-23）：批量删除——请求级守卫先行，逐行调用单删（守卫幂等），尽力而为聚合明细 */
@@ -1012,30 +1047,30 @@ public class PurchaseRequestService {
      * 读权限：仓储 + 采购 + 生产 均可查看采购申请单（D130：生产创建普通申请，仓储只读+确认入库）。
      */
     private void requireModuleReadAccess() {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅仓储/采购/生产管理员可访问采购申请模块",
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储/采购/生产部门可访问采购申请模块",
                 AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE, AuthzService.DEPT_PRODUCTION);
     }
 
-    /** D130：普通采购申请创建权归生产管理员（仓储回归只管出入库）——建单与缺货识别同口径 */
+    /** D130/D141：普通采购申请创建权归生产部门（admin+员工同权）——建单与缺货识别同口径 */
     private void requireProductionAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_PRODUCTION, "仅生产管理员可识别缺货并创建采购申请单");
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_PRODUCTION, "仅生产部门可识别缺货并创建采购申请单");
     }
 
     private void requirePurchaseAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_PURCHASE, "仅采购管理员可处理/入库/驳回采购申请单");
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_PURCHASE, "仅采购部门可处理/入库/驳回采购申请单");
     }
 
     private void requireWarehouseConfirmAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可确认采购入库");
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_WAREHOUSE, "仅仓储部门可确认采购入库");
     }
 
     private void requireProductionDraftAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
-                AuthzService.DEPT_PRODUCTION, "仅生产研发部管理员可生成/管理补料草稿");
+        authzService.requireDeptMemberOrSuperAdmin(
+                AuthzService.DEPT_PRODUCTION, "仅生产部门可生成/管理补料草稿");
     }
 
     private BizPurchaseRequest requireEntity(Long id) {
@@ -1086,6 +1121,10 @@ public class PurchaseRequestService {
         vo.setConfirmerName(entity.getConfirmerName());
         vo.setConfirmTime(entity.getConfirmTime());
         vo.setRejectReason(entity.getRejectReason());
+        vo.setRevokeReason(entity.getRevokeReason());
+        vo.setRevokerId(entity.getRevokerId());
+        vo.setRevokerName(entity.getRevokerName());
+        vo.setRevokeTime(entity.getRevokeTime());
         vo.setRemark(entity.getRemark());
         vo.setCreateTime(entity.getCreateTime());
         vo.setIsDeleted(entity.getIsDeleted());
@@ -1140,6 +1179,7 @@ public class PurchaseRequestService {
             case STATUS_RECEIVED -> "已入库";
             case STATUS_REJECTED -> "已驳回";
             case STATUS_AWAITING_CONFIRM -> "待入库确认";
+            case STATUS_REVOKED -> "已撤销";
             default -> String.valueOf(status);
         };
     }

@@ -67,6 +67,26 @@ public class BizPurchaseRequest {
 
     private String rejectReason;
 
+    /**
+     * 会话 67（决策 1a）：撤销原因——一键撤销自动生成（关联销售已取消）/申请人自行撤销
+     */
+    private String revokeReason;
+
+    /**
+     * 撤销人ID（申请人本人或生产管理员）
+     */
+    private Long revokerId;
+
+    /**
+     * 撤销人姓名
+     */
+    private String revokerName;
+
+    /**
+     * 撤销时间
+     */
+    private LocalDateTime revokeTime;
+
     private String remark;
 
     private LocalDateTime createTime;

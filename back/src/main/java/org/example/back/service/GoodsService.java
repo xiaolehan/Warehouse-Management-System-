@@ -354,10 +354,10 @@ public class GoodsService {
                 }).toList();
     }
 
-    // 建物料/成品仅仓储 admin；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）
+    // D141：建物料/成品开放给仓储部门（admin+员工）；仓储建时不含进价/售价（物料价格由采购补录；成品无价格概念）
     public void create(GoodsSaveDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可创建物料/成品");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可创建物料/成品");
         boolean isProduct = GOODS_TYPE_PRODUCT.equals(normalizeType(dto.getType()));
         if (isProduct) {
             // D65：成品允许手工建档（修订 D46），名称唯一口径不变（全库唯一）
@@ -466,14 +466,14 @@ public class GoodsService {
 
     public void delete(Long id) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可删除物料/成品");
         deleteInternal(id);
     }
 
     /** 手测问题 1（2026-09-23）：批量删除——守卫一次，逐行跑单删同款校验，尽力而为聚合明细 */
     public BatchDeleteResultVO batchDelete(List<Long> ids) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门管理员可删除物料/成品");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可删除物料/成品");
         BatchDeleteResultVO result = new BatchDeleteResultVO();
         if (ids == null || ids.isEmpty()) {
             return result;
@@ -625,7 +625,7 @@ public class GoodsService {
     }
 
     /**
-     * D109：未知物料「匹配供应商」——仓储管理员人工触发（无后台扫描）。
+     * D109：未知物料「匹配供应商」——仓储部门（admin+员工，D141 开放）人工触发（无后台扫描）。
      * 读取该物料最新一张采购申请（建单时间倒序）明细上的到货备注
      * （"供应商名字/其他信息"，只取首个斜杠前），按全名精确匹配采购已建档的供应商，
      * 回写 base_goods.supplier_id。任何失败都不改写，采购补备注/建档后可重新触发；
@@ -634,8 +634,8 @@ public class GoodsService {
      */
     @Transactional
     public SupplierMatchVO matchSupplier(Long goodsId) {
-        if (!authzService.isDeptAdmin(AuthzService.DEPT_WAREHOUSE)) {
-            throw BusinessException.forbidden("仅仓储管理员可匹配供应商");
+        if (!authzService.isDeptMember(AuthzService.DEPT_WAREHOUSE)) {
+            throw BusinessException.forbidden("仅仓储部门可匹配供应商");
         }
         BaseGoods goods = requireGoods(goodsId);
         if (!GOODS_TYPE_MATERIAL.equals(goods.getType())) {

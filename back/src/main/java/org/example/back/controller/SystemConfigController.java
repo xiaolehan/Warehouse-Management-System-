@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 系统参数（仅超管可写，阈值读取放开供建单前端提示）。
+ * 系统参数（D120：仅销售管理员可写，阈值读取放开供建单前端提示）。
  */
 @RestController
 @RequestMapping("/system/configs")
@@ -21,7 +21,7 @@ public class SystemConfigController {
     @Autowired
     private SysConfigService sysConfigService;
 
-    /** 系统参数列表（仅超管）。 */
+    /** 系统参数列表（仅销售管理员，D120）。 */
     @GetMapping
     public Result<List<SysConfig>> list() {
         return Result.success(sysConfigService.listAll());
@@ -33,7 +33,7 @@ public class SystemConfigController {
         return Result.success(sysConfigService.getPriceDeviationThreshold());
     }
 
-    /** 更新价格偏离阈值（仅超管）。请求体 {"value": 0.05}，value 为比例小数。 */
+    /** 更新价格偏离阈值（仅销售管理员，D120）。请求体 {"value": 0.05}，value 为比例小数。 */
     @PutMapping("/price-deviation-threshold")
     @PreventDuplicateSubmit(message = "请勿重复提交阈值修改请求")
     public Result<BigDecimal> updatePriceDeviationThreshold(@RequestBody Map<String, Object> body) {

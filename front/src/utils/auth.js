@@ -121,6 +121,11 @@ export const canAccessRoles = (currentRole, allowRoles = []) => hasRole(currentR
 export const checkRouteAccess = (meta = {}, currentRole = getRole(), currentDeptCode = getDeptCode()) => {
   if (meta.roles && !canAccessRoles(currentRole, meta.roles)) return { ok: false, reason: 'role' }
   if (Array.isArray(meta.deptCodes) && meta.deptCodes.length > 0 && !hasDeptAccess(currentDeptCode, meta.deptCodes, currentRole)) return { ok: false, reason: 'dept' }
+  // D141：按部门排除角色（如审批页对销售员工不开放，作废审批限仓储、价格偏离审批限销售管理员）
+  const forbidden = meta.forbiddenRolesForDept
+  if (forbidden && forbidden[currentRole] && forbidden[currentRole].includes(normalizeDeptCode(currentDeptCode))) {
+    return { ok: false, reason: 'role' }
+  }
   return { ok: true, reason: null }
 }
 

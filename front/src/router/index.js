@@ -12,7 +12,6 @@ const SUPERADMIN_ALLOWED_PATHS = new Set([
   '/system/super-admin',
   '/system/dept-approval',
   '/system/void-approval',
-  '/system/config',
   '/system/user',
   '/system/security-ip-policy',
   '/system/login-log',
@@ -174,8 +173,8 @@ const router = createRouter({
           path: "business/purchase-request",
           name: "BusinessPurchaseRequest",
           component: () => import("../views/business/PurchaseRequestView.vue"),
-          // D130：生产=创建/撤销；采购=认领到货；仓储=只读+确认入库
-          meta: { roles: ['admin'], deptCodes: ['production', 'purchase', 'warehouse'] }
+          // D130：生产=创建/撤销；采购=认领到货；仓储=只读+确认入库（D141：员工与同部门管理员同权）
+          meta: { roles: ['admin', 'employee'], deptCodes: ['production', 'purchase', 'warehouse'] }
         },
         {
           path: "business/production",
@@ -217,13 +216,20 @@ const router = createRouter({
           path: "system/void-approval",
           name: "SystemVoidApproval",
           component: () => import("../views/system/VoidApprovalView.vue"),
-          meta: { roles: ['admin', 'superadmin'], deptCodes: ['warehouse'] }
+          // D120：单页共管——仓储管理员/超管看作废类行，销售管理员看价格偏离行（行级由后端过滤）
+          // D141：仓储员工同权进页（作废审批处理）；销售员工不开放（后端 requireApprovalModuleAccess 兜底 403）
+          meta: {
+            roles: ['admin', 'employee', 'superadmin'],
+            deptCodes: ['warehouse', 'sales'],
+            forbiddenRolesForDept: { employee: ['sales'] }
+          }
         },
         {
           path: "system/config",
           name: "SystemConfig",
           component: () => import("../views/system/SystemConfigView.vue"),
-          meta: { roles: ['superadmin'] }
+          // D120：价格偏离阈值设置权归销售管理员（原超管）
+          meta: { roles: ['admin'], deptCodes: ['sales'] }
         },
         {
           path: "system/super-admin",

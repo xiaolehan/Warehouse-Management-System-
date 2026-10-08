@@ -124,9 +124,10 @@ public class ProductionOrderService {
     }
 
     private void requireOrderWriteAccess() {
-        authzService.requireDeptAdminOrSuperAdmin(
+        // D141：生产同权开放——生产部门（admin+员工）均可下达/作废生产任务单
+        authzService.requireDeptMemberOrSuperAdmin(
                 AuthzService.DEPT_PRODUCTION,
-                "仅生产研发部管理员可下达/作废生产任务单"
+                "仅生产部门可下达/作废生产任务单"
         );
     }
 

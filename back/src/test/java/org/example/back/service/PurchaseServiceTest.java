@@ -385,7 +385,7 @@ class PurchaseServiceTest {
     @Test
     void voidDocument_received_decreasesStockPerLine_andRefreshesPrice() {
         when(bizPurchaseMapper.selectById(501L)).thenReturn(receivedPurchase());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizPurchaseMapper.update(any(), any())).thenReturn(1);
         when(bizPurchaseDetailMapper.selectList(any()))
                 .thenReturn(List.of(detail(1L, 29L, "钢板", 10, "52.00"),
@@ -410,7 +410,7 @@ class PurchaseServiceTest {
     @Test
     void voidDocument_withActiveReturn_blockedBeforeAnyMutation() {
         when(bizPurchaseMapper.selectById(501L)).thenReturn(receivedPurchase());
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         doThrow(BusinessException.validateFail(
                 "该进货单关联有未终结的退货单（RET202609001），请先删除或作废退货单后再作废进货单"))
                 .when(purchaseReturnService).ensureNoActiveReturn(501L);
@@ -432,7 +432,7 @@ class PurchaseServiceTest {
         pending.setBizStatus(1);
         pending.setConfirmStatus(PurchaseService.CONFIRM_PENDING);
         when(bizPurchaseMapper.selectById(503L)).thenReturn(pending);
-        when(authzService.hasDeptAdminOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
+        when(authzService.hasDeptMemberOrSuperAdminAccess(AuthzService.DEPT_WAREHOUSE)).thenReturn(true);
         when(bizPurchaseMapper.update(any(), any())).thenReturn(1);
 
         service.voidDocument(503L, null);

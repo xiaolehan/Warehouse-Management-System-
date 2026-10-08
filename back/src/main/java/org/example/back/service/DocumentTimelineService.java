@@ -80,8 +80,8 @@ public class DocumentTimelineService {
     // ============================== 采购申请单：提交申请 → 采购认领 → 到货 → 入库确认；驳回为旁支终态 ==============================
 
     public DocumentTimelineVO getPurchaseRequestTimeline(Long id) {
-        authzService.requireAnyDeptAdminOrSuperAdmin(
-                "仅仓储/采购/生产管理员可查看采购申请时间线",
+        authzService.requireAnyDeptMemberOrSuperAdmin(
+                "仅仓储/采购/生产部门可查看采购申请时间线",
                 AuthzService.DEPT_WAREHOUSE, AuthzService.DEPT_PURCHASE, AuthzService.DEPT_PRODUCTION);
         BizPurchaseRequest r = bizPurchaseRequestMapper.selectById(id);
         if (r == null) {

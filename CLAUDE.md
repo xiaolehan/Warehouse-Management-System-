@@ -71,6 +71,10 @@ mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 - **前端**：`npm run build`（捕获编译错误）→ Vite 代理 E2E（或 dev HMR 手测）。
 - **跨 commit git 操作后**：重启 dev 服务器 + 浏览器硬刷新（Ctrl+Shift+R）+ 重新登录（后端重启会使旧 session token 失效）。
 - **权限改写后 E2E 必须覆盖目标角色实际进页面场景**：不仅测该角色直调操作 API（如 confirm-receive），必须测其加载列表（page）、查看详情（getById）等读接口。读权限（`requireXxxReadAccess`）与写权限（`requireXxxModuleAccess`）常分开，改一处易漏另一处——曾因 `page()` 仍用仅采购权限，导致仓储进"进货入库确认"页 403。
+- **长内容生成易损坏，大段写入一律小 chunk Edit**（会话 62/63 两次踩坑）：Write/Edit 长内容（尤其含中文的长块）会出现中途 token 损坏（乱码占位符、语法截断、错路径文件、吞掉文件尾部闭合括号）。规则：新建/重建大文件改用 15–25 行小 chunk 逐段 Edit（锚点唯一）+ 每段后 grep/诊断核对；Write 只用于短文件；写完必查 IDE 诊断清零。
+- **单测断言 wrapper SQL 片段注意列名渲染**：测试里 `TableInfoHelper.initTableInfo` 用的裸 `new Configuration()` 未开驼峰转下划线，`getSqlSegment()` 里列名是 `requestAction` 而非 `request_action`（运行时 MP 配置才是下划线）——断言按测试环境实际渲染写。
+- **curl E2E 里 python heredoc 传响应体**：`python3 - "$R" <<'EOF'` 会把 stdin（脚本）与 argv 混淆导致 JSON 解析失败；用 `RESP="$R" python3 <<'EOF'` + `os.environ['RESP']` 读入。业务错误经全局异常包装 HTTP 仍 200，负测判定用 body 的 `code`（403/400）而非 HTTP 状态码。
+- **E2E 脚本改用 Edit 直改，sed 追加修补高危**（会话 69）：`$()` 命令替换内 URL 的 `&` 既是 sed 替换串的「整个匹配」又是 bash 命令分隔符，双重转义极易错（`5\&warningOnly` 写法仍会踩）；直接用 Edit 工具改脚本 + URL 整体加引号最稳。**E2E 取数/清理前先核对查询字段名与后端 QueryDTO 一致**：goods page 的过滤字段是 `goodsName` 而非 `keywords`——参数名错时过滤被静默忽略、返回列表第一条，后续按该 id 删除会误删无关数据（本例删到被引用的旧物料报 400 反向暴露，险些破坏业务数据）。
 
 ## 关键约束
 

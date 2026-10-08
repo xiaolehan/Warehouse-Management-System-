@@ -65,6 +65,9 @@ public class StocktakeService {
     private static final int STATUS_COMPLETED = 3;
     private static final int STATUS_CANCELED = 4;
 
+    /** 消息业务绑定类型（会话 64：盘点指派/送审提醒，D21 生命周期绑定） */
+    private static final String BIZ_TYPE_STOCKTAKE = "stocktake";
+
     @Autowired
     private BizStocktakeMapper bizStocktakeMapper;
     @Autowired
@@ -79,11 +82,15 @@ public class StocktakeService {
     private SysUserMapper sysUserMapper;
     @Autowired
     private SysDeptMapper sysDeptMapper;
+    @Autowired
+    private MessageService messageService;
 
     // ---------- 读 ----------
 
     public PageResult<StocktakeVO> page(StocktakeQueryDTO queryDTO) {
         requireReadAccess();
+        // D119 员工盲盘：列表汇总中的盈亏统计对员工隐藏（不泄漏差异结果）
+        boolean blind = isBlindViewer();
         LambdaQueryWrapper<BizStocktake> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(queryDTO.getStatus() != null, BizStocktake::getStatus, queryDTO.getStatus())
                 .like(StringUtils.hasText(queryDTO.getStocktakeNo()),
@@ -94,6 +101,11 @@ public class StocktakeService {
         List<StocktakeVO> vos = page.getRecords().stream().map(o -> {
             StocktakeVO vo = toVO(o);
             fillSummary(vo, listDetails(o.getId()));
+            if (blind) {
+                vo.setOverRows(null);
+                vo.setShortRows(null);
+                vo.setMatchRows(null);
+            }
             return vo;
         }).collect(Collectors.toList());
         Page<StocktakeVO> voPage = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
@@ -105,9 +117,16 @@ public class StocktakeService {
         requireReadAccess();
         BizStocktake order = requireEntity(id);
         StocktakeVO vo = toVO(order);
+        // D119 员工盲盘：仓储员工视角不返回账面快照/生效账面/差异（后端按角色裁字段，防照抄）
+        boolean blind = isBlindViewer();
         List<BizStocktakeDetail> details = listDetails(id);
-        vo.setDetailList(details.stream().map(this::toDetailVO).collect(Collectors.toList()));
+        vo.setDetailList(details.stream().map(d -> toDetailVO(d, blind)).collect(Collectors.toList()));
         fillSummary(vo, details);
+        if (blind) {
+            vo.setOverRows(null);
+            vo.setShortRows(null);
+            vo.setMatchRows(null);
+        }
         return vo;
     }
 
@@ -134,6 +153,7 @@ public class StocktakeService {
 
         Set<Long> openGoodsIds = findOpenStocktakeGoodsIds();
 
+        boolean blind = isBlindViewer();
         return goodsList.stream().map(g -> {
             StocktakeGoodsOptionVO vo = new StocktakeGoodsOptionVO();
             vo.setGoodsId(g.getId());
@@ -143,7 +163,8 @@ public class StocktakeService {
             vo.setSpec(g.getSpec());
             vo.setMaterial(g.getMaterial());
             vo.setUnit(g.getUnit());
-            vo.setStock(g.getStock());
+            // D119 员工盲盘：建单勾选列表不向员工暴露实时库存
+            vo.setStock(blind ? null : g.getStock());
             vo.setLastStocktakeTime(lastTimeMap.get(g.getId()));
             vo.setInOpenStocktake(openGoodsIds.contains(g.getId()));
             return vo;
@@ -155,7 +176,7 @@ public class StocktakeService {
     @Transactional(rollbackFor = Exception.class)
     public Long create(StocktakeCreateDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可创建盘点单");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可创建盘点单");
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
         List<Long> goodsIds = new ArrayList<>();
@@ -203,6 +224,7 @@ public class StocktakeService {
         order.setOperationTime(LocalDateTime.now());
         bizStocktakeMapper.insert(order);
 
+        Map<Long, List<BizStocktakeDetail>> rowsByAssignee = new HashMap<>();
         for (BaseGoods g : goodsList) {
             SysUser assignee = assigneeByGoods.get(g.getId());
             BizStocktakeDetail d = new BizStocktakeDetail();
@@ -218,6 +240,13 @@ public class StocktakeService {
             d.setAssigneeId(assignee.getId());
             d.setAssigneeName(assignee.getRealName());
             bizStocktakeDetailMapper.insert(d);
+            rowsByAssignee.computeIfAbsent(assignee.getId(), k -> new ArrayList<>()).add(d);
+        }
+
+        // 会话 64（决策 1a）：指派消息按负责人分组每人一条，只列本人名下的行（不含账面数，D119 盲盘口径）
+        for (Map.Entry<Long, List<BizStocktakeDetail>> e : rowsByAssignee.entrySet()) {
+            messageService.sendStocktakeAssignedToUser(
+                    e.getKey(), order.getStocktakeNo(), describeStocktakeRows(e.getValue()), order.getId());
         }
         return order.getId();
     }
@@ -242,7 +271,7 @@ public class StocktakeService {
     @Transactional(rollbackFor = Exception.class)
     public void assign(Long id, org.example.back.dto.StocktakeAssignDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可改派负责人");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可改派负责人");
         BizStocktake order = requireEntity(id);
         requireStatus(order, STATUS_COUNTING, "仅盘点中的单据可改派负责人");
 
@@ -259,6 +288,17 @@ public class StocktakeService {
         update.setAssigneeId(assignee.getId());
         update.setAssigneeName(assignee.getRealName());
         bizStocktakeDetailMapper.updateById(update);
+
+        // 会话 64（决策 2a）：改派后撤该单全部未读指派消息，按最新指派分组给全部当前负责人重发——
+        // 内容永远与最新指派一致；已读者会再收到一条新未读（改派低频，可接受）。revokeUnreadByBiz 为按单全撤，顺序安全
+        messageService.revokeUnreadByBiz(BIZ_TYPE_STOCKTAKE, id);
+        Map<Long, List<BizStocktakeDetail>> rowsByAssignee = listDetails(id).stream()
+                .filter(d -> d.getAssigneeId() != null)
+                .collect(Collectors.groupingBy(BizStocktakeDetail::getAssigneeId));
+        for (Map.Entry<Long, List<BizStocktakeDetail>> e : rowsByAssignee.entrySet()) {
+            messageService.sendStocktakeAssignedToUser(
+                    e.getKey(), order.getStocktakeNo(), describeStocktakeRows(e.getValue()), id);
+        }
     }
 
     // ---------- entry / import ----------
@@ -390,6 +430,13 @@ public class StocktakeService {
         update.setSubmitterId(loginUser.getId());
         update.setSubmitterName(loginUser.getRealName());
         bizStocktakeMapper.updateById(update);
+
+        // 会话 64（决策 3b）：送审提醒仓储管理员。消息只含行数不含账面/差异数——D119 盲盘口径与消息不冲突：
+        // 收件人本就是仓储 admin（可看账面），员工提交人视角也只暴露自己录入的行数
+        List<BizStocktakeDetail> submittedDetails = listDetails(id);
+        int countedRows = (int) submittedDetails.stream().filter(d -> d.getActualQty() != null).count();
+        messageService.sendStocktakeSubmittedToWarehouseAdmins(
+                order.getStocktakeNo(), loginUser.getRealName(), countedRows, submittedDetails.size(), id);
     }
 
     /**
@@ -441,6 +488,9 @@ public class StocktakeService {
         masterUpdate.setReviewerName(loginUser.getRealName());
         masterUpdate.setReviewTime(LocalDateTime.now());
         bizStocktakeMapper.updateById(masterUpdate);
+
+        // 会话 64：审核生效为终态，撤该单全部未读消息（指派 + 待审核）
+        messageService.revokeUnreadByBiz(BIZ_TYPE_STOCKTAKE, id);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -454,12 +504,16 @@ public class StocktakeService {
         update.setStatus(STATUS_COUNTING);
         update.setRejectReason(dto.getReason());
         bizStocktakeMapper.updateById(update);
+
+        // 会话 64：驳回回盘点中，只撤「盘点单待审核」；指派提醒保留（负责人与内容仍准确），员工继续录入
+        messageService.revokeUnreadByBizAndTitles(
+                BIZ_TYPE_STOCKTAKE, id, List.of(MessageService.TITLE_STOCKTAKE_PENDING_REVIEW));
     }
 
     @Transactional(rollbackFor = Exception.class)
     public void cancel(Long id, StocktakeCancelDTO dto) {
         authzService.requireNotSuperAdminForBusinessWrite();
-        authzService.requireDeptAdminOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储管理员可取消盘点单");
+        authzService.requireDeptMemberOrSuperAdmin(AuthzService.DEPT_WAREHOUSE, "仅仓储部门可取消盘点单");
         BizStocktake order = requireEntity(id);
         if (order.getStatus() != STATUS_COUNTING && order.getStatus() != STATUS_PENDING_REVIEW) {
             throw BusinessException.validateFail("当前状态不可取消（已完成/已取消为终态）");
@@ -473,6 +527,9 @@ public class StocktakeService {
         update.setCancelerId(loginUser.getId());
         update.setCancelerName(loginUser.getRealName());
         bizStocktakeMapper.updateById(update);
+
+        // 会话 64：取消为终态，撤该单全部未读消息（指派 + 待审核）
+        messageService.revokeUnreadByBiz(BIZ_TYPE_STOCKTAKE, id);
     }
 
     // ---------- export ----------
@@ -483,6 +540,10 @@ public class StocktakeService {
     public byte[] export(Long id, boolean blind) throws IOException {
         requireReadAccess();
         requireEntity(id);
+        // D119 员工盲盘：仓储员工导出一律不含账面数列（服务端强制，忽略入参）
+        if (isBlindViewer()) {
+            blind = true;
+        }
         List<BizStocktakeDetail> details = listDetails(id);
 
         List<String> headers = new ArrayList<>(List.of("商品编码", "商品名称", "规格", "材质", "单位"));
@@ -606,6 +667,14 @@ public class StocktakeService {
     }
 
     /**
+     * D119 员工盲盘视角判定：仓储员工（role=employee）在 requireReadAccess 已保证 dept=warehouse 的前提下，
+     * 一律盲盘——不返回账面快照/生效账面/差异及盈亏汇总（防照抄账面数）。
+     */
+    private boolean isBlindViewer() {
+        return authzService.isEmployee();
+    }
+
+    /**
      * D85 行级归属校验：员工限录本人负责行，admin 兜底可录任意行
      */
     private void requireRowOwnership(BizStocktakeDetail detail, LoginResponse.UserInfoVO loginUser, boolean isAdmin) {
@@ -626,6 +695,17 @@ public class StocktakeService {
         update.setCounterId(loginUser.getId());
         update.setCounterName(loginUser.getRealName());
         update.setCountTime(LocalDateTime.now());
+    }
+
+    /**
+     * 指派消息的行描述（会话 64）：「商品名（规格）」顿号拼接；不含账面数/差异（D119 盲盘口径，消息对员工可见）
+     */
+    private String describeStocktakeRows(List<BizStocktakeDetail> rows) {
+        return rows.stream()
+                .map(d -> StringUtils.hasText(d.getSpec())
+                        ? d.getGoodsName() + "（" + d.getSpec() + "）"
+                        : d.getGoodsName())
+                .collect(Collectors.joining("、"));
     }
 
     private StocktakeVO toVO(BizStocktake o) {
@@ -649,7 +729,7 @@ public class StocktakeService {
         return vo;
     }
 
-    private StocktakeDetailVO toDetailVO(BizStocktakeDetail d) {
+    private StocktakeDetailVO toDetailVO(BizStocktakeDetail d, boolean blind) {
         StocktakeDetailVO vo = new StocktakeDetailVO();
         vo.setId(d.getId());
         vo.setGoodsId(d.getGoodsId());
@@ -659,14 +739,14 @@ public class StocktakeService {
         vo.setMaterial(d.getMaterial());
         vo.setUnit(d.getUnit());
         vo.setGoodsType(d.getGoodsType());
-        vo.setBookQty(d.getBookQty());
+        vo.setBookQty(blind ? null : d.getBookQty());
         vo.setAssigneeId(d.getAssigneeId());
         vo.setAssigneeName(d.getAssigneeName());
         vo.setActualQty(d.getActualQty());
         vo.setCounterName(d.getCounterName());
         vo.setCountTime(d.getCountTime());
-        vo.setFinalBookQty(d.getFinalBookQty());
-        vo.setDiffQty(d.getDiffQty());
+        vo.setFinalBookQty(blind ? null : d.getFinalBookQty());
+        vo.setDiffQty(blind ? null : d.getDiffQty());
         vo.setUnscanned(d.getActualQty() == null);
         return vo;
     }
