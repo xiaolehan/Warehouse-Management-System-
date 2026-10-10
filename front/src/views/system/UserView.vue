@@ -109,10 +109,32 @@
         <el-form-item label="邮箱">
           <el-input v-model="form.email" />
         </el-form-item>
+        <el-form-item v-if="!form.id" label="初始密码" prop="password">
+          <el-input v-model="form.password" type="password" show-password placeholder="选填，不填则使用默认密码" autocomplete="new-password" />
+          <div class="field-tip">不填则使用默认密码 123456；填写须为8–20位，含字母和数字</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button :icon="Close" @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :icon="Check" @click="handleSave">确认</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog title="设置密码" v-model="resetDialogVisible" width="440px" @closed="resetPasswordForm">
+      <el-form :model="resetFormData" :rules="resetRules" ref="resetFormRef" label-width="84px" @submit.prevent>
+        <el-form-item label="登录账号">
+          <el-input :model-value="resetTarget.username" disabled />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input v-model="resetFormData.newPassword" type="password" show-password placeholder="8–20位，含字母和数字" autocomplete="new-password" />
+        </el-form-item>
+        <el-form-item label="确认密码" prop="confirmPassword">
+          <el-input v-model="resetFormData.confirmPassword" type="password" show-password placeholder="请再次输入新密码" autocomplete="new-password" @keyup.enter="submitResetPassword" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resetDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="resetSubmitting" @click="submitResetPassword">确认设置</el-button>
       </template>
     </el-dialog>
   </el-card>
@@ -124,6 +146,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Refresh, Plus, Close, Check } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import { isSuperAdmin } from '@/utils/auth'
+import { validateOptionalPassword, validatePassword, createConfirmPasswordValidator } from '@/utils/password'
 import {
   createUserAPI,
   deleteUserAPI,
@@ -172,13 +195,14 @@ const total = ref(0)
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增用户')
 const formRef = ref(null)
-const form = reactive({ id: null, username: '', realName: '', role: 'employee', deptId: null, status: true, phone: '', email: '' })
+const form = reactive({ id: null, username: '', realName: '', role: 'employee', deptId: null, status: true, phone: '', email: '', password: '' })
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   realName: [{ required: true, message: '请输入真实姓名', trigger: 'blur' }],
   role: [{ required: true, message: '请选择角色', trigger: 'change' }],
-  deptId: [{ required: true, message: '请选择所属部门', trigger: 'change' }]
+  deptId: [{ required: true, message: '请选择所属部门', trigger: 'change' }],
+  password: [{ validator: validateOptionalPassword, trigger: 'blur' }]
 }
 
 const roleLabel = (role) => {
@@ -196,6 +220,7 @@ const resetForm = () => {
   form.status = true
   form.phone = ''
   form.email = ''
+  form.password = ''
 }
 
 const loadDeptOptions = async () => {
@@ -349,26 +374,48 @@ const handleStatusChange = async (row, val) => {
   }
 }
 
-const handleResetPassword = async (row) => {
+const resetDialogVisible = ref(false)
+const resetSubmitting = ref(false)
+const resetFormRef = ref(null)
+const resetTarget = reactive({ id: null, username: '' })
+const resetFormData = reactive({ newPassword: '', confirmPassword: '' })
+
+const resetRules = {
+  newPassword: [{ validator: validatePassword, trigger: 'blur' }],
+  confirmPassword: [{ validator: createConfirmPasswordValidator(() => resetFormData.newPassword), trigger: 'blur' }]
+}
+
+const resetPasswordForm = () => {
+  resetFormData.newPassword = ''
+  resetFormData.confirmPassword = ''
+  resetFormRef.value?.clearValidate()
+}
+
+const handleResetPassword = (row) => {
   if (!canResetPassword(row)) {
     ElMessage.warning('当前账号无权为该用户设置密码')
     return
   }
-  try {
-    const { value } = await ElMessageBox.prompt(`请输入 ${row.username} 的新密码（至少6位）`, '设置密码', {
-      confirmButtonText: '确认',
-      cancelButtonText: '取消',
-      inputType: 'password',
-      inputValidator: (inputVal) => {
-        if (!inputVal || inputVal.length < 6) return '密码至少 6 位'
-        return true
-      }
-    })
-    await resetUserPasswordAPI(row.id, { newPassword: value })
-    ElMessage.success('密码设置成功')
-  } catch {
-    // 取消或业务错误已统一提示
-  }
+  resetTarget.id = row.id
+  resetTarget.username = row.username
+  resetPasswordForm()
+  resetDialogVisible.value = true
+}
+
+const submitResetPassword = () => {
+  resetFormRef.value?.validate(async (valid) => {
+    if (!valid || resetSubmitting.value) return
+    resetSubmitting.value = true
+    try {
+      await resetUserPasswordAPI(resetTarget.id, { newPassword: resetFormData.newPassword })
+      ElMessage.success('密码设置成功')
+      resetDialogVisible.value = false
+    } catch {
+      // 业务错误已由拦截器统一提示
+    } finally {
+      resetSubmitting.value = false
+    }
+  })
 }
 
 const handleSave = () => {
@@ -387,9 +434,13 @@ const handleSave = () => {
       if (form.id) {
         await updateUserAPI(form.id, payload)
       } else {
+        if (form.password) {
+          payload.password = form.password
+        }
         await createUserAPI(payload)
       }
-      ElMessage.success(form.id ? '修改成功' : '新增成功，初始密码为 123456')
+      const createdTip = form.password ? '新增成功，初始密码已按填写内容设置' : '新增成功，初始密码为 123456'
+      ElMessage.success(form.id ? '修改成功' : createdTip)
       dialogVisible.value = false
       await loadList()
     } catch {
@@ -408,3 +459,12 @@ onMounted(async () => {
   }
 })
 </script>
+
+<style scoped>
+.field-tip {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+</style>

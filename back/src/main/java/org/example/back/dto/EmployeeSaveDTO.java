@@ -23,4 +23,9 @@ public class EmployeeSaveDTO {
     private String email;
 
     private Integer status;
+
+    /**
+     * 初始密码（可选）：填写时须符合密码规则，不填使用默认密码
+     */
+    private String password;
 }

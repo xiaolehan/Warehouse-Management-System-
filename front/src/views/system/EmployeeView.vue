@@ -87,8 +87,9 @@
             <el-radio :value="0">离职</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="!form.id" label="初始密码">
-          <span class="form-tip">默认密码为 123456，创建后可在用户管理中重置。</span>
+        <el-form-item v-if="!form.id" label="初始密码" prop="password">
+          <el-input v-model="form.password" type="password" show-password placeholder="选填，不填则使用默认密码" autocomplete="new-password" />
+          <div class="form-tip">不填则使用默认密码 123456；填写须为8–20位，含字母和数字</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -112,6 +113,7 @@ import {
   updateEmployeeAPI
 } from '@/api/system'
 import { batchDeleteEmployeesAPI } from '@/api/system.js'
+import { validateOptionalPassword } from '@/utils/password'
 
 const SYSTEM_MANAGEMENT_DEPT_NAME = '系统管理部'
 
@@ -128,12 +130,13 @@ const total = ref(0)
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增员工')
 const formRef = ref(null)
-const form = reactive({ id: null, username: '', empName: '', deptId: null, position: '', phone: '', email: '', status: 1 })
+const form = reactive({ id: null, username: '', empName: '', deptId: null, position: '', phone: '', email: '', status: 1, password: '' })
 
 const rules = {
   username: [{ required: true, message: '请输入登录账号', trigger: 'blur' }],
   empName: [{ required: true, message: '请输入员工姓名', trigger: 'blur' }],
-  deptId: [{ required: true, message: '请选择所属部门', trigger: 'change' }]
+  deptId: [{ required: true, message: '请选择所属部门', trigger: 'change' }],
+  password: [{ validator: validateOptionalPassword, trigger: 'blur' }]
 }
 
 const isReadOnlyRow = (row) => row?.readOnly === true
@@ -196,6 +199,7 @@ const handleAdd = () => {
   form.phone = ''
   form.email = ''
   form.status = 1
+  form.password = ''
   formRef.value?.clearValidate()
   dialogVisible.value = true
 }
@@ -271,9 +275,13 @@ const handleSave = () => {
       if (form.id) {
         await updateEmployeeAPI(form.id, payload)
       } else {
+        if (form.password) {
+          payload.password = form.password
+        }
         await createEmployeeAPI(payload)
       }
-      ElMessage.success(form.id ? '修改成功' : '新增成功，初始密码为 123456')
+      const createdTip = form.password ? '新增成功，初始密码已按填写内容设置' : '新增成功，初始密码为 123456'
+      ElMessage.success(form.id ? '修改成功' : createdTip)
       dialogVisible.value = false
       await loadList()
     } catch {

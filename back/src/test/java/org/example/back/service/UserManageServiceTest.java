@@ -1,5 +1,7 @@
 package org.example.back.service;
 
+import cn.dev33.satoken.stp.StpUtil;
+import cn.hutool.crypto.digest.BCrypt;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.UserSaveDTO;
@@ -15,13 +17,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -91,6 +98,12 @@ class UserManageServiceTest {
         assertEquals("用户页员工", savedEmployee.getEmpName());
         assertEquals(4L, savedEmployee.getDeptId());
         assertEquals("普通员工", savedEmployee.getPosition());
+
+        // 不填初始密码时落库为默认密码 123456（BCrypt 可验）
+        ArgumentCaptor<SysUser> userCaptor = ArgumentCaptor.forClass(SysUser.class);
+        verify(sysUserMapper, times(1)).insert(userCaptor.capture());
+        assertTrue(BCrypt.checkpw("123456", userCaptor.getValue().getPassword()),
+                "不填初始密码时默认密码 123456 应可登录");
 
         verify(messageService, times(1)).sendNewEmployeePasswordReminder("用户页员工", 4L, "超级管理员");
     }
@@ -193,7 +206,117 @@ class UserManageServiceTest {
         BusinessException ex = assertThrows(BusinessException.class, () -> userManageService.resetPassword(77L, "12345678"));
 
         assertEquals(400, ex.getCode());
-        assertEquals("新密码至少8位，且需同时包含字母和数字", ex.getMsg());
+        assertEquals("新密码长度为8–20位，须同时包含字母和数字", ex.getMsg());
         verify(sysUserMapper, never()).updateById(any(SysUser.class));
+    }
+
+    // ---------- 会话 72（ADR-0024）：初始密码语义 + 重置密码会话失效 ----------
+
+    private SysUser targetUser() {
+        SysUser user = new SysUser();
+        user.setId(77L);
+        user.setRealName("被重置员工");
+        user.setRole("employee");
+        user.setDeptId(4L);
+        return user;
+    }
+
+    @Test
+    void create_shouldHashCustomInitialPassword() {
+        UserSaveDTO dto = new UserSaveDTO();
+        dto.setUsername("custom_pwd_user");
+        dto.setRealName("自定义密码员工");
+        dto.setRole("employee");
+        dto.setDeptId(4L);
+        dto.setStatus(1);
+        dto.setPassword("abc11122");
+
+        LoginResponse.UserInfoVO operator = new LoginResponse.UserInfoVO();
+        operator.setRole("superadmin");
+
+        SysDept dept = new SysDept();
+        dept.setId(4L);
+        dept.setDeptCode("sales");
+
+        when(authzService.currentUser()).thenReturn(operator);
+        when(authzService.isAdmin()).thenReturn(false);
+        when(authzService.isSuperAdmin()).thenReturn(true);
+        when(authzService.currentOperatorLabel()).thenReturn("超级管理员");
+        when(authzService.requireDept(4L)).thenReturn(dept);
+        when(authzService.normalizeRole(any())).thenAnswer(invocation -> {
+            Object value = invocation.getArgument(0);
+            return value == null ? "" : String.valueOf(value).trim().toLowerCase();
+        });
+        when(sysUserMapper.selectCount(any())).thenReturn(0L);
+        doAnswer(invocation -> {
+            SysUser user = invocation.getArgument(0);
+            user.setId(77L);
+            return 1;
+        }).when(sysUserMapper).insert(any(SysUser.class));
+
+        userManageService.create(dto);
+
+        ArgumentCaptor<SysUser> userCaptor = ArgumentCaptor.forClass(SysUser.class);
+        verify(sysUserMapper, times(1)).insert(userCaptor.capture());
+        assertTrue(BCrypt.checkpw("abc11122", userCaptor.getValue().getPassword()),
+                "填写初始密码时应按规则校验并哈希落库");
+    }
+
+    @Test
+    void resetPassword_shouldUpdateHashAndInvalidateTargetSessions() {
+        SysUser operator = new SysUser();
+        operator.setId(11L);
+        operator.setRole("superadmin");
+
+        try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
+            stp.when(StpUtil::getLoginIdDefaultNull).thenReturn("11");
+            when(sysUserMapper.selectById(11L)).thenReturn(operator);
+            when(sysUserMapper.selectById(77L)).thenReturn(targetUser());
+            when(authzService.isSuperAdmin()).thenReturn(true);
+            when(authzService.currentOperatorLabel()).thenReturn("超级管理员");
+            when(authzService.normalizeRole(any())).thenAnswer(invocation -> {
+                Object value = invocation.getArgument(0);
+                return value == null ? "" : String.valueOf(value).trim().toLowerCase();
+            });
+
+            userManageService.resetPassword(77L, "abc11122");
+
+            ArgumentCaptor<SysUser> captor = ArgumentCaptor.forClass(SysUser.class);
+            verify(sysUserMapper, times(1)).updateById(captor.capture());
+            SysUser saved = captor.getValue();
+            assertTrue(BCrypt.checkpw("abc11122", saved.getPassword()));
+            stp.verify(() -> StpUtil.logout(77L));
+            verify(messageService, times(1)).sendEmployeePasswordChangedReminder("被重置员工", 4L, "超级管理员");
+        }
+    }
+
+    @Test
+    void resetPassword_shouldRejectAdminCrossDeptTarget() {
+        SysUser operator = new SysUser();
+        operator.setId(11L);
+        operator.setRole("admin");
+
+        SysUser target = targetUser();
+        target.setDeptId(5L);
+
+        try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
+            stp.when(StpUtil::getLoginIdDefaultNull).thenReturn("11");
+            when(sysUserMapper.selectById(11L)).thenReturn(operator);
+            when(sysUserMapper.selectById(77L)).thenReturn(target);
+            when(authzService.isSuperAdmin()).thenReturn(false);
+            when(authzService.normalizeRole(any())).thenAnswer(invocation -> {
+                Object value = invocation.getArgument(0);
+                return value == null ? "" : String.valueOf(value).trim().toLowerCase();
+            });
+
+            doThrow(BusinessException.forbidden("部门管理员仅可操作本部门员工账号"))
+                    .when(authzService).requireCurrentDept(eq(5L), anyString());
+
+            BusinessException ex = assertThrows(BusinessException.class,
+                    () -> userManageService.resetPassword(77L, "abc11122"));
+
+            assertEquals(403, ex.getCode());
+            verify(sysUserMapper, never()).updateById(any(SysUser.class));
+        }
     }
 }

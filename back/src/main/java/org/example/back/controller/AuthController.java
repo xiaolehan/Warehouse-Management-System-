@@ -1,9 +1,11 @@
 package org.example.back.controller;
 
 import jakarta.validation.Valid;
+import org.example.back.common.annotation.AuditLog;
 import org.example.back.common.annotation.PreventDuplicateSubmit;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.util.ClientIpUtil;
+import org.example.back.dto.ChangePasswordDTO;
 import org.example.back.dto.LoginRequest;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.RegisterRequest;
@@ -98,6 +100,18 @@ public class AuthController {
     @PreventDuplicateSubmit(intervalMs = 800, message = "请勿重复提交退出请求")
     public Result<Void> logout() {
         authService.logout();
+        return Result.success();
+    }
+
+    /**
+     * 本人修改密码接口
+     * 修改成功后注销该用户全部会话，前端跳转登录页
+     */
+    @PostMapping("/change-password")
+    @PreventDuplicateSubmit(intervalMs = 1500, message = "请勿重复提交修改密码请求")
+    @AuditLog(module = "账号安全", action = "修改密码", targetType = "用户")
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordDTO dto) {
+        authService.changePassword(dto);
         return Result.success();
     }
 

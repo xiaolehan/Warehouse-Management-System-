@@ -97,6 +97,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getRegisterDeptOptionsAPI, registerAPI } from '@/api/user'
+import { validatePassword, createConfirmPasswordValidator } from '@/utils/password'
 
 const router = useRouter()
 const formRef = ref(null)
@@ -104,30 +105,24 @@ const submitting = ref(false)
 const deptOptions = ref([])
 
 const form = reactive({ username: '', realName: '', password: '', confirmPassword: '', deptId: null })
+// 复用统一密码规则校验器；密码改写后若确认框已填，联动重校验
 const validatePasswordStrength = (rule, value, callback) => {
-  if (value === '') {
-    callback(new Error('密码不可为空'))
-    return
-  }
-  if (value.length < 8 || !/[A-Za-z]/.test(value) || !/\d/.test(value)) {
-    callback(new Error('密码至少8位，且需同时包含字母和数字'))
-    return
-  }
-  if (form.confirmPassword) {
-    formRef.value?.validateField('confirmPassword')
-  }
-  callback()
-}
-const validatePass = (rule, value, callback) => {
-  if (value === '') { callback(new Error('请再次输入密码')) }
-  else if (value !== form.password) { callback(new Error('两次输入密码不一致!')) }
-  else { callback() }
+  validatePassword(rule, value, (error) => {
+    if (error) {
+      callback(error)
+      return
+    }
+    if (form.confirmPassword) {
+      formRef.value?.validateField('confirmPassword')
+    }
+    callback()
+  })
 }
 const rules = {
   username: [{ required: true, message: '账号不可为空', trigger: 'blur' }],
   realName: [{ required: true, message: '真实姓名不可为空', trigger: 'blur' }],
   password: [{ validator: validatePasswordStrength, trigger: 'blur' }],
-  confirmPassword: [{ validator: validatePass, trigger: 'blur' }],
+  confirmPassword: [{ validator: createConfirmPasswordValidator(() => form.password, '密码'), trigger: 'blur' }],
   deptId: [{ required: true, message: '请选择所属部门', trigger: 'change' }]
 }
 

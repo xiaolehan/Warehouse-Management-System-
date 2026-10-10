@@ -37,7 +37,6 @@ public class UserManageService {
 
     private static final String ROLE_FILTER_MANAGEMENT = "management";
     private static final String ROLE_FILTER_ALL = "all";
-    private static final String DEFAULT_PASSWORD = "123456";
     private static final String DEFAULT_EMPLOYEE_POSITION = "普通员工";
     private static final String ROLE_SUPERADMIN = "superadmin";
     private static final String ROLE_ADMIN = "admin";
@@ -103,7 +102,7 @@ public class UserManageService {
         BeanUtils.copyProperties(dto, user);
         user.setDeptId(dept == null ? null : dept.getId());
         user.setStatus(dto.getStatus() == null ? 1 : dto.getStatus());
-        user.setPassword(BCrypt.hashpw(DEFAULT_PASSWORD));
+        user.setPassword(PasswordPolicyUtil.resolveInitialPassword(dto.getPassword()));
         sysUserMapper.insert(user);
         syncEmployeeProfileForManagedUser(user, null);
         if (shouldNotifyManagedEmployee(user)) {
@@ -217,6 +216,8 @@ public class UserManageService {
 
         targetUser.setPassword(BCrypt.hashpw(newPassword));
         sysUserMapper.updateById(targetUser);
+        // 重置他人密码后注销目标用户全部会话，旧 token 立即失效
+        StpUtil.logout(targetUser.getId());
         if (shouldNotifyManagedEmployee(targetUser)) {
             messageService.sendEmployeePasswordChangedReminder(targetUser.getRealName(), targetUser.getDeptId(), authzService.currentOperatorLabel());
         }

@@ -5,6 +5,49 @@
 
 ---
 
+## 会话 72 — 2026-10-09
+
+### 密码规则统一 + 三种密码语义分离（/grill-with-docs 三轮十二问全按推荐，ADR-0024）：498 单测全绿 + curl E2E 32/32 + 前端 build 过（含 /code-review 7 项评审修复），待手测
+
+- **起因**：超管给部门管理员、部门管理员给员工设置密码时，前端弹窗校验「至少6位」，后端却要求「至少8位且字母+数字」，前后端规则打架导致用户输 6 位被后端打回。
+- **grilling 三轮收敛**：①统一规则=**8–20 位、须同时含字母和数字**；「看到自己密码」=本人改密页（BCrypt 不可逆，不可能回显明文），入口=顶栏用户下拉（含「修改密码/退出登录」两项），超管也由此入口改自己的密码；②存量老密码（123456）继续有效、不追溯、登录不强制改密，改密成功后注销会话跳登录页；③新建账号初始密码=选填，不填默认 123456；新密码必须与旧密码不同。
+- **领域产物**：CONTEXT.md「账号 / 密码」词条 4 个（密码规则/初始密码/重置密码/修改密码）；ADR-0024 四项决策（统一规则、三语义分离、不追溯不加字段、保持不可逆哈希+眼睛图标满足「看到」诉求；驳回：可逆加密、登录强制改密、初始密码强制自定义）。**无 DDL**。
+- **后端**：`PasswordPolicyUtil` 统一为 8–20 位字母+数字（错误文案「X长度为8–20位，须同时包含字母和数字」）；新增 `ChangePasswordDTO` + `AuthService.changePassword`（校验旧密码→新密码≠旧密码→规则校验→BCrypt 哈希→`StpUtil.logout`）+ `POST /auth/change-password`（带 1.5s 防重复提交）；`UserSaveDTO`/`EmployeeSaveDTO` 新增选填 `password`，`UserManageService`/`EmployeeService` 新增 `resolveInitialPassword`（填则校验后哈希、不填默认 123456）；管理员重置密码流程保持不变。
+- **前端**：新增 `utils/password.js`（isPasswordValid + 必填/选填两套校验器，与后端同规则）；新增 `components/ChangePasswordDialog.vue`（旧/新/确认三栏全部 show-password 眼睛切换、新≠旧、两次一致，成功后父组件清登录态跳登录页）；layout 顶栏独立退出按钮改为用户下拉（姓名+图标，「修改密码/退出登录」）；UserView「设置密码」由 ElMessageBox.prompt（6 位旧校验）换成专用弹窗（新+确认、眼睛图标、统一规则），新增弹窗加选填初始密码；EmployeeView 静态「默认密码123456」提示换成选填初始密码输入；新增成功 toast 按是否填密码动态显示；user.js 加 changePasswordAPI。
+- **验证**：`./mvnw test` 489/489 全绿；curl E2E（/tmp/e2e_password.sh，**25/25 全通过**）——自定义初始密码可登录/默认密码对该号失效、不填时 123456 可登录、旧密码错误 400、新旧相同 400、6 位/纯数字/纯字母/超 20 位 400、失败尝试不影响会话、改密正测（旧密码登录失败/新密码成功/旧会话失效）、超管入口可达、超管重置正测+弱密码拒绝；`npm run build` 成功、五个改动文件 IDE 诊断清零；Vite 代理冒烟通过。种子账号密码全程未改，warehouse_admin/123456 登录复验成功。
+- **踩坑**：①Sa-Token 头名是 `Authorization: Bearer <token>`（非 satoken）；②登录/改密接口 1.5s 防重复提交，E2E 登录调用须 sleep 间隔；③`sys_user` 逻辑删除（@TableLogic）而 `uk_username` 不含 is_deleted——接口删号后同名无法重建，E2E 清理必须物理删除（sys_message/sys_employee/sys_user 三表，员工清理按 user_id+emp_name 双兜底）；④用户分页路径是 `/system/users/page`（GET /system/users 405）；⑤glm/bash 分类器多次短时不可用，期间改做只读调研与文件编辑、不连发被拦命令。
+- **评审修复（/code-review 7 项全修，2026-10-10）**：①改密成功由只注销当前会话改为 `StpUtil.logout(userId)` 注销该用户**全部**会话（含其他设备）；②管理员重置他人密码后同步注销目标用户全部会话（旧 token 立即失效，E2E 验证「当前会话仍有效→二轮重置→旧会话 401→新密码可登录」）；③注册页迁移统一密码规则（utils/password.js）；④`/auth/change-password` 补 `@AuditLog(module=账号安全)`——旧代码改密零留痕；⑤`resolveInitialPassword`+默认密码常量从两 Service 下沉 `PasswordPolicyUtil` 消重；⑥确认密码校验器抽 `createConfirmPasswordValidator` 公共工厂（ChangePasswordDialog/UserView/RegisterView 三副本合一）；⑦新增「首尾不能包含空格」规则（前后端同文案）。新增 9 单测（全会话失效 verify/旧密码错/新旧相同/纯数字/边界空格/未登录 401/自定义初始密码哈希/跨部门重置 403），**498 单测全绿 + E2E 32/32**（新增改密尾空格拒绝、重置踢会话链路、重置尾空格拒绝）。
+- **运维插曲**：E2E 复跑时 superadmin/123456 登录失败——登录日志定位到密码在 18:31–20:14 间被改，操作日志无记录（旧改密 API 无审计注解，正是评审项④的实锤）；其余种子账号正常。经用户确认后用 warehouse_admin 同规则哈希（同为 123456）DB 重置恢复，登录复验通过。
+- **待办**：用户浏览器手测（验证点：①顶栏用户下拉「修改密码」对话框眼睛切换/规则提示/新旧相同拦截；②超管经下拉成功改密后被踢到登录页；③用户管理/员工管理新增时初始密码选填与成功提示；④「设置密码」弹窗规则与后端一致）；提交需 VS Code 面板/集成终端（shell 无凭证）。
+
+## 会话 71 — 2026-10-08（已完成）
+
+
+### 阶段 26：完整版 PPT + Word 系统使用手册双交付（S1–S7 全部闭环，60 页 PDF 全文目检通过）
+
+- **grilling 全收敛**（两轮问答 + 用户「a」确认）：深度汇报版 23 页（版式 A 按业务流拆页）；沿用简版 2.1 设计基因；无头浏览器自动截图 PPT/手册共用、失败回落占位框；需求同步文档 v0 取消；手册 Word 单册按业务域分章 + 角色快速索引、45–65 页全模块深度分级、边缘模块（财务/人事/超管治理/协作）全收录；AI 助手=短节 + 前提说明，不上亮点页；需求映射页=痛点级。执行序 S1–S7：截图基建 → PPT 成稿 → PDF 目检 → PPT 交付 → 手册范式调研 → docx skill → Word 手册成稿。决策全文见 task_plan.md 阶段 26。
+- **S1 截图完成**：`document/manual-tools/shoot.js`（accounts.json 角色映射；密码仅经 WMS_PWD 环境变量注入、不写入任何文件）；playwright headless chromium @2x，**8 角色 63 张截图全部拍成**：warehouse_admin 15 / production_admin 11 / purchase_admin 8 / sales_admin 8 / finance_admin 3 / hr_admin 6 / superadmin 10 / warehouse_user 2。
+- **S2–S4 完整版 PPT 已交付**：`document/WMS汇报完整版2.0-2026-10-08.pptx`，23 页（封面/目录/痛点/方案主线/技术架构/业务全景/销售/采购/生产×3/仓储×2/盘点预警/主数据/审批/消息时间线/权限安全/痛点映射/质量保障/团队工作量/实施培训/结尾），真截图回填、soffice PDF 目检通过。
+- **S5 手册范式调研（WebSearch）**：市面成熟用户手册通用范式——按业务域/任务流分章（非按菜单堆砌）、角色快速入口、每功能=场景+前提+步骤+字段+状态+异常、截图配题注、术语表与状态速查附录、服务支持页。手册据此设计。
+- **S6 docx skill 安装**：npm `docx`（document/manual-build/node_modules），按 skill 规范处理表格双宽度（columnWidths+cell DXA）、ShadingType.CLEAR、numbering、PageBreak、TOC headingStyleRange。
+- **S7 Word 手册成稿**：`document/manual-build/gen-manual.js`（13 助手：txt/para/h1–h3/bullet/numbered/noteBox/table/shot 缺图占位/spacer），生成 **`document/WMS系统使用手册-2026-10-08.docx`（14,592,276 字节，39 张内嵌截图）**。结构：封面 + 文档说明（可更新目录）+ 15 章 + 3 附录——①系统概述 ②快速上手 ③角色与权限总表（七部门/三角色/快速索引/权限矩阵）④销售业务（销售单+客退、两道闸门、行终止）⑤采购业务（进货/采退/采购申请全状态）⑥生产管理（任务单齐套、十道工序、领补退、质检、成品入库、拆分、终止，最大章）⑦仓储管理（四种确认、库存台账、预警、盘点+盲盘）⑧主数据（商品唯一性/BOM/供应商/删除保护）⑨审批中心（作废审批、价格偏离、冻结规则）⑩协同沟通（站内消息 biz 绑定、时间线、公告、工作要求）⑪财务统计（销售图表、利润分析、年度统计）⑫人事（部门/档案/图表）⑬系统治理（IP 策略/双日志/账号保护/权责分离）⑭AI 助手 ⑮常见问题；附录 A 术语表 / B 12 类单据状态速查 / C 服务与支持。
+- **口径执行**：全文无任何默认账号/密码；业务数据均为脱敏示例；【甲方名称】【项目名称】【团队名称】【联系方式】占位符；团队名义署名、不列个人提交统计；口径 b「在成熟系统基础上深度定制开发」，不提开源；AI 前提说明逐字「该功能需由管理员配置大模型服务后方可使用，未配置时将返回知识库兜底应答」。
+- **QA 已完成项**：逐章冒烟生成（606KB→14.6MB）；IDE 诊断清零；zip 完整性 testzip=None、65 entries；word/document.xml 等全部 XML well-formed；rels/content-types/numbering 交叉核对无悬挂引用；38 处 shot() 调用与 8 个角色截图目录逐一对应。
+- **docx→PDF 全文目检（60 页 A4 全过）**：封面/文档说明/5 页目录/15 章/3 附录逐页核对——标题层级、表格（跨页拆分+表头重复）、38 张截图（清晰、均登录后内页、无密码、示例脱敏）、四色提示框、页眉页脚均正常；无表格超宽/文字溢出；AI 前提说明逐字正确；自动扫描无近空白页。
+- **目检发现并修复 3 项**（修后重生成 docx→PDF 复核）：①p10 空白页——ch1 末尾 noteBox 表格后的空段落溢页 + ch2 pageBreakBefore 叠加；noteBox 增 `opts.noGap`（ch1 末启用，表格后不追加空段落），61→60 页；②步骤编号——原稿 59 个步骤全文连续 1–57；改为**流程级重启**：h1 与每个操作流程各占独立 numbering 引用（L1..L60，17 处 `newList()` 调用，如 ch4 销售单 1–4、客退 1–3；ch14 1–2）；③p48 统计口径框残留「红冲」→「冲抵」（D99 口径；术语表「红冲」词条保留——标准会计术语且注明本系统不启用）。
+- **踩坑：本机 LibreOffice 26.2.6.3 缺 writer 组件**——只装了 common/core/draw/impress，所有 docx `--convert-to pdf` 报「source file could not be loaded」；PPTX 转 PDF 正常。sudo 需交互密码 → **无 root 组装可运行 Writer 成功**：`apt-get download` writer + 6 依赖（版本与已装 core 一致）`dpkg-deb -x` 解压至 `~/lo-writer`；复制已装 LO 树到 `~/lo-app` 再用 writer 覆盖；sed 修正 fundamentalrc/java-set-classpath/unopkg/mailmerge.py 4 个配置文件绝对路径；`LD_LIBRARY_PATH=~/lo-writer/usr/lib/x86_64-linux-gnu ~/lo-app/program/soffice --headless ...` 运行，docx 转换正常。
+- **最终交付**：`document/WMS系统使用手册-2026-10-08.docx`（testzip=None、XML 全 well-formed）+ Windows Temp 副本（/mnt/c/Users/42980/AppData/Local/Temp/）；task_plan.md 阶段 26 已收尾。待用户在 Word 打开后按 Ctrl+A、F9 更新目录页码。
+
+## 会话 70 — 2026-10-08
+
+### 汇报 PPT 2.0→2.1 手术：用户改版基础上放大字号 + 5 张截图等比修正，QA 全绿
+
+- **背景**：用户在 PowerPoint 手改 13 页简版为 9 页（封面/结尾改深蓝居中、删 4 页、删占位符、加 5 张真截图）存为 `WMS汇报简版2.0-2026-10-08.pptx`，要求在此基础放大字体、调整图片到合适大小。
+- **方法**：不动 gen.js（源版式已不匹配），**直接 XML 手术**用户文件——python zipfile 解包 → 正则改 slide XML → 重打包（`/tmp/deck20/fix.py`）。用户 2.0 原件未覆盖，留作备份。
+- **改动**：①字号整体 +2pt（正文 11→13、小注 9.5→11、卡片题 14.5→16.5、h2 27→30、封面/结尾大字同步；`sz="N"` 与 `<a:spcPts val>` 两套映射）；②5 张截图全部等比 contain 适配（原来 5 张全被拉伸变形）+ 1pt 浅灰边框 + 分区居中（P5 双图 y=4.92 h=2.06、P6 右图 3.61×3.93、P7 方图 2.97×2.93、P8 长条 4.87×1.46 页面居中）；③角标编号 03–09→02–08（删页后失配）；④两处失效页码引用（「见第 12 页」已删页、「见第 09 页」→08）。
+- **QA 两轮**：soffice→PDF→逐页目检。第一轮发现放大后两处折行——P4「主数据与基础层」标签孤字「则」压芯片行（加宽文本框 4→6in）、P8 时间线三标签孤字折行（1.5→1.9in + 按节点重居中）；第二轮复检全绿。
+- **产出**：`document/WMS汇报简版2.1-2026-10-08.pptx` + Windows 临时目录同步副本。待用户在 PowerPoint 打开复验（重点看中文字体渲染与图片清晰度）。
+
 ## 会话 69 — 2026-10-08
 
 ### D141–D143 四部门同权开放（/grill-with-docs 九问全按推荐，ADR-0023）：489 单测全绿 + 前端 build 过 + curl E2E 27/27 全通过，待手测

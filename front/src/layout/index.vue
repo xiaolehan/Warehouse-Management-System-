@@ -240,7 +240,24 @@
         <div class="header-actions">
           <!-- 超管也收站内消息（价格偏离审批），邮箱入口对全角色开放；组件内部按 token 自门控 -->
           <MessageCenter />
-          <el-button type="danger" text @click="handleLogout"><el-icon><SwitchButton /></el-icon>退出登录</el-button>
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <span class="user-dropdown-trigger">
+              <el-icon><UserFilled /></el-icon>
+              <span class="user-dropdown-name">{{ displayName }}</span>
+              <el-icon><CaretBottom /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="changePassword">
+                  <el-icon><Key /></el-icon>修改密码
+                </el-dropdown-item>
+                <el-dropdown-item command="logout" divided>
+                  <el-icon><SwitchButton /></el-icon>退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <ChangePasswordDialog v-model="changePasswordVisible" @success="handleChangePasswordSuccess" />
         </div>
       </el-header>
       <el-main>
@@ -256,6 +273,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { computed, ref } from 'vue'
 import MessageCenter from '@/components/MessageCenter.vue'
 import AssistantLauncher from '@/components/assistant/AssistantLauncher.vue'
+import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import { useUserStore } from '@/stores/user'
 import { ElMessage } from 'element-plus'
 import { isAdminRole, isEmployeeRole, isSuperAdmin, normalizeDeptCode } from '@/utils/auth'
@@ -264,7 +282,7 @@ import {
   HomeFilled, OfficeBuilding, User, PieChart, Promotion, Tickets, Bell, UserFilled,
   ShoppingCart, RefreshLeft, Sell, RefreshRight, WarningFilled, Van, GoodsFilled, Goods,
   DocumentChecked, DataAnalysis, Monitor, Lock, Notebook, Document, Stamp, SwitchButton,
-  Fold, Expand, Box, List, Download, Setting, Histogram
+  Fold, Expand, Box, List, Download, Setting, Histogram, Key, CaretBottom
 } from '@element-plus/icons-vue'
 
 const SIDEBAR_COLLAPSE_STORAGE_KEY = 'layout-sidebar-collapsed'
@@ -273,6 +291,8 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const isSidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === '1')
+const changePasswordVisible = ref(false)
+const displayName = computed(() => userStore.realName || userStore.username || '当前用户')
 
 const currentDeptCode = computed(() => normalizeDeptCode(userStore.deptCode))
 const isDeptAdminRole = computed(() => isAdminRole(userStore.role))
@@ -343,6 +363,20 @@ const handleLogout = async () => {
   }
   userStore.clearToken()
   ElMessage.success('已安全退出')
+  router.push('/login')
+}
+
+const handleUserCommand = (command) => {
+  if (command === 'changePassword') {
+    changePasswordVisible.value = true
+  } else if (command === 'logout') {
+    handleLogout()
+  }
+}
+
+// 修改密码成功后后端已注销会话：清理本地登录态并跳转登录页
+const handleChangePasswordSuccess = () => {
+  userStore.clearToken()
   router.push('/login')
 }
 </script>
@@ -456,6 +490,21 @@ const handleLogout = async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.user-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  color: #1f2937;
+  cursor: pointer;
+  outline: none;
+}
+
+.user-dropdown-name {
+  font-size: 14px;
+  white-space: nowrap;
 }
 
 .el-menu {

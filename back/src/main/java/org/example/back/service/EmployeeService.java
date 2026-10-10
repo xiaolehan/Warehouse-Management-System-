@@ -1,10 +1,10 @@
 package org.example.back.service;
 
-import cn.hutool.crypto.digest.BCrypt;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.result.PageResult;
 import org.example.back.common.util.CodeGenerator;
+import org.example.back.common.util.PasswordPolicyUtil;
 import org.example.back.dto.EmployeeQueryDTO;
 import org.example.back.dto.EmployeeSaveDTO;
 import org.example.back.entity.SysDept;
@@ -33,7 +33,6 @@ import java.util.stream.Collectors;
 @Service
 public class EmployeeService {
 
-    private static final String DEFAULT_PASSWORD = "123456";
     private static final int DEPT_STATUS_APPROVED = 2;
     private static final String ROLE_ADMIN = "admin";
     private static final String ROLE_EMPLOYEE = "employee";
@@ -385,7 +384,7 @@ public class EmployeeService {
         SysUser user = new SysUser();
         copySharedFieldsToUser(user, dto, dept, status == null ? 1 : status);
         user.setRole(ROLE_EMPLOYEE);
-        user.setPassword(BCrypt.hashpw(DEFAULT_PASSWORD));
+        user.setPassword(PasswordPolicyUtil.resolveInitialPassword(dto.getPassword()));
         return user;
     }
 

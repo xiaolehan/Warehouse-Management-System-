@@ -53,3 +53,12 @@ yarn-error.log*
 # ===== 本地工具与汇报生成工作区（不入库） =====
 .claude/skills/
 document/pptx-build/
+
+# ===== 汇报交付物构建依赖（npm install 可重装）=====
+document/manual-build/node_modules/
+document/manual-tools/node_modules/
+document/manual-tools/shots/
+
+# ===== Windows/Office 拷贝元数据与锁文件 =====
+*:Zone.Identifier
+~$*

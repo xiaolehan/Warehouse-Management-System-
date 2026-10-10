@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.example.back.common.exception.BusinessException;
 import org.example.back.common.util.CodeGenerator;
 import org.example.back.common.util.PasswordPolicyUtil;
+import org.example.back.dto.ChangePasswordDTO;
 import org.example.back.dto.LoginRequest;
 import org.example.back.dto.LoginResponse;
 import org.example.back.dto.RegisterRequest;
@@ -149,6 +150,38 @@ public class AuthService {
     public void logout() {
         StpUtil.checkLogin();
         StpUtil.logout();
+    }
+
+    /**
+     * 本人修改密码：校验旧密码，新密码符合密码规则且不得与旧密码相同；
+     * 修改成功后注销该用户全部会话（含其他设备），前端跳转登录页。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void changePassword(ChangePasswordDTO dto) {
+        Object loginId = StpUtil.getLoginIdDefaultNull();
+        if (loginId == null) {
+            throw BusinessException.unauthorized("用户未登录");
+        }
+
+        Long userId = Long.valueOf(String.valueOf(loginId));
+        SysUser user = sysUserMapper.selectById(userId);
+        if (user == null) {
+            throw BusinessException.notFound("用户不存在");
+        }
+
+        if (!BCrypt.checkpw(dto.getOldPassword(), user.getPassword())) {
+            throw BusinessException.validateFail("旧密码不正确");
+        }
+        if (dto.getNewPassword().equals(dto.getOldPassword())) {
+            throw BusinessException.validateFail("新密码不能与旧密码相同");
+        }
+        PasswordPolicyUtil.validateUserPassword(dto.getNewPassword(), "新密码");
+
+        user.setPassword(BCrypt.hashpw(dto.getNewPassword()));
+        sysUserMapper.updateById(user);
+
+        // 注销该用户全部会话（含其他设备），防止其他已登录会话凭旧 token 继续访问
+        StpUtil.logout(userId);
     }
 
     /**
