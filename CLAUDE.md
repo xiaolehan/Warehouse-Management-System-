@@ -12,23 +12,29 @@
 
 ## 本地启动
 
-```bash
-# 后端（后台，日志 /tmp/wms-backend.log）
-cd back && nohup ./mvnw spring-boot:run > /tmp/wms-backend.log 2>&1 &
+**2026-10-01 起前后端已服务化为 systemd 单元（脱离终端 + 开机自启 + 崩溃自动重启），不要再手动 nohup 拉起（会与 systemd 抢端口）：**
 
-# 前端（后台，日志 /tmp/wms-frontend.log）
-cd front && nohup npm run dev > /tmp/wms-frontend.log 2>&1 &
+```bash
+# 后端 = wms-backend，前端 = wms-frontend（单元文件在 /etc/systemd/system/，源稿备份在 ~/）
+sudo systemctl status wms-backend wms-frontend     # 看状态
+sudo systemctl restart wms-backend wms-frontend    # 重启（改代码/跨 commit git 操作后）
+sudo journalctl -u wms-backend -n 200 --no-pager   # 后端日志（原 /tmp/wms-backend.log 已弃用）
+sudo journalctl -u wms-frontend -n 100 --no-pager  # 前端日志
 
 # 数据库变更：db.sql 追加 DDL 后，本地执行
 mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 ```
+
+- 前端以 `npm run dev -- --host` 启动，**5173 绑 0.0.0.0 对外暴露**（外网 `http://<公网IP>:5173`，需云安全组放行 TCP 5173；ufw 关闭）。后端 8080 本就绑 `*`，外网一般只放行 5173（Vite 代理 `/api`）。
+- MySQL / Redis 为 apt 安装，已 enable 开机自启；Redis 必须在跑（防重复提交切面用到 RedisTemplate）。
+- 环境为全新 VM 装配：OpenJDK 17 / MySQL 8.0.46 / Redis 7 / Node 18.19（apt），库由 `db-dump.sql` 恢复。
 
 ## 运维教训（本轮踩坑，禁止再犯）
 
 ### 1. 切换分支 / merge 前必须先停 dev 服务器
 - **现象**：`git checkout`/`merge`/`reset` 会让工作树文件先变成目标内容（可能临时删除新增文件）再恢复。运行中的 **Vite 模块图会变陈旧**（页面"功能消失"，因为 Vite 服务的是 checkout 中途的旧 bundle）；**Spring devtools 会出现 `ClassCastException: X cannot be cast to X`**（两个 `RestartClassLoader` 实例并存）。
 - **规则**：任何跨 commit 的 `git checkout`/`merge`/`reset` 操作前，先停后端 + 前端；操作完再重启，并用 `curl` 验证。若已发生，重启两端即可恢复。
-- **停服务**：后端 `fuser -k 8080/tcp`，前端 `fuser -k 5173/tcp`（按端口杀，避免下面的 pkill 陷阱）。
+- **停服务**：`sudo systemctl stop wms-backend wms-frontend`（**勿用 fuser -k 停服务化进程**——前端 npm 被 SIGTERM 后非零退出，`Restart=on-failure` 会立刻拉起，等于杀了个寂寞还制造重启抖动；fuser -k 只留给排查游离的 nohup 残留进程，按端口杀避免下面的 pkill 陷阱）。
 
 ### 2. `pkill -f "<pattern>"` 自杀陷阱
 - **现象**：`pkill -f "spring-boot:run"` 会匹配到**包含该字符串的当前 shell 命令本身**（如同条命令里的 nohup 行），把执行中的 shell 杀掉（exit 144 = SIGTERM），命令中途夭折。
