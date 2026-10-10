@@ -1,0 +1,10 @@
+{
+  "warehouse_admin": "warehouse_admin",
+  "production_admin": "production_admin",
+  "purchase_admin": "purchase_admin",
+  "sales_admin": "sales_admin",
+  "finance_admin": "finance_admin",
+  "hr_admin": "hr_admin",
+  "superadmin": "superadmin",
+  "warehouse_user": "warehouse_employee"
+}
