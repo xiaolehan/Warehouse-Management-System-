@@ -41,6 +41,7 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -111,13 +112,13 @@ public class SplitOrderService {
                 .orderByDesc(BizSplitOrder::getId);
         Page<BizSplitOrder> page = splitOrderMapper.selectPage(
                 new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
-        List<SplitOrderVO> records = page.getRecords().stream().map(this::toVO).toList();
+        List<SplitOrderVO> records = toVOs(page.getRecords());
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
 
     public SplitOrderVO getById(Long id) {
         requireReadAccess();
-        return toVO(requireEntity(id));
+        return toVOs(List.of(requireEntity(id))).get(0);
     }
 
     // ============================== 仓储发起拆分 ==============================
@@ -290,6 +291,11 @@ public class SplitOrderService {
         LocalDateTime now = LocalDateTime.now();
         if (status == BizSplitOrder.STATUS_PENDING_RECEIPT
                 || status == BizSplitOrder.STATUS_SPLITTING) {
+            // code-review P0：已有待确认退料单时禁止放弃拆分——若放行，仓储确认回库会恢复成品库存，
+            // 而在途 RETURN 领料单仍可被确认（onSplitReturnCompleted 对 7 态空操作），造成双重回库虚增库存
+            if (split.getReturnPickListId() != null) {
+                throw BusinessException.validateFail("该拆分单已有待确认的退料单，请等待仓储确认或驳回后再放弃拆分");
+            }
             // 成品已出库在生产端：转 7 待仓储确认回库
             LambdaUpdateWrapper<BizSplitOrder> wrapper = new LambdaUpdateWrapper<>();
             wrapper.eq(BizSplitOrder::getId, id)
@@ -345,9 +351,35 @@ public class SplitOrderService {
         if (snapshotGoodsIds.isEmpty()) {
             throw BusinessException.validateFail("该成品 BOM 无可退物料，无法提交退料");
         }
+        // D138：应退量快照映射（goodsId → BOM 需求量；提交守卫校验明细 ⊆ BOM 快照）
+        Map<Long, Integer> expectedMap = snapshot.stream().collect(Collectors.toMap(
+                BizSplitOrderDetail::getGoodsId, BizSplitOrderDetail::getRequiredQuantity, (a, b) -> a));
+        Map<Long, BaseGoods> goodsMap = loadGoodsMap(
+                dto.getItems().stream().map(SplitReturnSubmitDTO.SplitReturnItemDTO::getGoodsId).toList());
         for (SplitReturnSubmitDTO.SplitReturnItemDTO item : dto.getItems()) {
             if (item.getGoodsId() == null || !snapshotGoodsIds.contains(item.getGoodsId())) {
                 throw BusinessException.validateFail("退料明细含不属于该拆分单 BOM 快照的物料");
+            }
+            // code-review P0：退料量上限守卫——退料量不得超过 BOM 应退量，防任意数量经收料虚增库存；
+            // 差异行（少于应退量）差异备注必填（与生产退料 Q15/Q7 同口径）
+            BaseGoods goods = goodsMap.get(item.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail(
+                        String.format(java.util.Locale.ROOT, "物料不存在: id=%d", item.getGoodsId()));
+            }
+            if (item.getQuantity() == null || item.getQuantity() <= 0) {
+                throw BusinessException.validateFail(
+                        "物料[" + goods.getGoodsName() + "]退料数量必须大于0");
+            }
+            Integer expected = expectedMap.get(item.getGoodsId());
+            if (item.getQuantity() > expected) {
+                throw BusinessException.validateFail(
+                        "物料[" + goods.getGoodsName() + "]退料数量超过应退量（应退 " + expected + "）");
+            }
+            if (item.getQuantity() < expected
+                    && (item.getDiffReason() == null || item.getDiffReason().isBlank())) {
+                throw BusinessException.validateFail(
+                        "物料[" + goods.getGoodsName() + "]退料数量小于应退量，请填写差异备注说明原因（损耗/丢失等）");
             }
         }
 
@@ -363,11 +395,6 @@ public class SplitOrderService {
         pick.setRemark("成品拆分单 " + split.getSplitNo() + " 拆分退料");
         bizPickListMapper.insert(pick);
 
-        Map<Long, BaseGoods> goodsMap = loadGoodsMap(
-                dto.getItems().stream().map(SplitReturnSubmitDTO.SplitReturnItemDTO::getGoodsId).toList());
-        // D138：应退量快照映射（goodsId → BOM 需求量；提交守卫已校验明细 ⊆ BOM 快照）
-        Map<Long, Integer> expectedMap = snapshot.stream().collect(Collectors.toMap(
-                BizSplitOrderDetail::getGoodsId, BizSplitOrderDetail::getRequiredQuantity, (a, b) -> a));
         int sortNo = 0;
         for (SplitReturnSubmitDTO.SplitReturnItemDTO item : dto.getItems()) {
             BaseGoods goods = goodsMap.get(item.getGoodsId());
@@ -751,7 +778,47 @@ public class SplitOrderService {
 
     // ============================== VO ==============================
 
-    private SplitOrderVO toVO(BizSplitOrder entity) {
+    /**
+     * code-review P3：列表 N+1 修复——详情/退料单/退料行三类数据各一次 in 查询批量取回，
+     * 按单分组后逐单转 VO（原先每行 2-3 次点查，页 20 行即 40-60 次 SQL）。
+     */
+    private List<SplitOrderVO> toVOs(List<BizSplitOrder> entities) {
+        if (entities.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = entities.stream().map(BizSplitOrder::getId).toList();
+        Map<Long, List<BizSplitOrderDetail>> detailsMap = splitOrderDetailMapper.selectList(
+                        new LambdaQueryWrapper<BizSplitOrderDetail>()
+                                .in(BizSplitOrderDetail::getSplitOrderId, ids)
+                                .orderByAsc(BizSplitOrderDetail::getSortNo)
+                                .orderByAsc(BizSplitOrderDetail::getId))
+                .stream()
+                .filter(d -> d.getSplitOrderId() != null)
+                .collect(Collectors.groupingBy(BizSplitOrderDetail::getSplitOrderId));
+        List<Long> returnPickIds = entities.stream().map(BizSplitOrder::getReturnPickListId)
+                .filter(Objects::nonNull).toList();
+        Map<Long, BizPickList> pickMap = returnPickIds.isEmpty() ? Map.of()
+                : bizPickListMapper.selectBatchIds(returnPickIds).stream()
+                        .collect(Collectors.toMap(BizPickList::getId, p -> p));
+        Map<Long, List<BizPickListDetail>> rowsMap = returnPickIds.isEmpty() ? Map.of()
+                : bizPickListDetailMapper.selectList(new LambdaQueryWrapper<BizPickListDetail>()
+                        .in(BizPickListDetail::getPickListId, returnPickIds)
+                        .orderByAsc(BizPickListDetail::getSortNo))
+                        .stream()
+                        .filter(r -> r.getPickListId() != null)
+                        .collect(Collectors.groupingBy(BizPickListDetail::getPickListId));
+        List<SplitOrderVO> result = new ArrayList<>();
+        for (BizSplitOrder entity : entities) {
+            BizPickList pick = entity.getReturnPickListId() == null ? null : pickMap.get(entity.getReturnPickListId());
+            result.add(toVO(entity,
+                    detailsMap.getOrDefault(entity.getId(), List.of()),
+                    pick,
+                    pick == null ? List.of() : rowsMap.getOrDefault(pick.getId(), List.of())));
+        }
+        return result;
+    }
+
+    private SplitOrderVO toVO(BizSplitOrder entity, List<BizSplitOrderDetail> details, BizPickList returnPick, List<BizPickListDetail> returnRows) {
         SplitOrderVO vo = new SplitOrderVO();
         vo.setId(entity.getId());
         vo.setSplitNo(entity.getSplitNo());
@@ -785,7 +852,7 @@ public class SplitOrderService {
         vo.setFinishTypeText(finishTypeText(entity.getFinishType()));
         vo.setCreateTime(entity.getCreateTime());
         vo.setUpdateTime(entity.getUpdateTime());
-        vo.setDetails(listDetails(entity.getId()).stream().map(d -> {
+        vo.setDetails(details.stream().map(d -> {
             SplitOrderDetailVO dv = new SplitOrderDetailVO();
             dv.setId(d.getId());
             dv.setSplitOrderId(d.getSplitOrderId());
@@ -799,23 +866,16 @@ public class SplitOrderService {
             return dv;
         }).toList());
         // 附 RETURN 退料单号（列表标注「拆分退料」用）；D140：按物料对齐回填已退量/差异备注（退料单已撤销被逻辑删时不回填，前端显示「—」）
-        if (entity.getReturnPickListId() != null) {
-            BizPickList pick = bizPickListMapper.selectById(entity.getReturnPickListId());
-            if (pick != null) {
-                vo.setReturnPickNo(pick.getPickNo());
-                // D140：拆分单详情回显退料明细——按 goodsId 对齐（前端预填一行/物料，防重键取首行）
-                Map<Long, BizPickListDetail> returnRows = bizPickListDetailMapper.selectList(
-                        new LambdaQueryWrapper<BizPickListDetail>()
-                                .eq(BizPickListDetail::getPickListId, pick.getId())
-                                .orderByAsc(BizPickListDetail::getSortNo))
-                        .stream()
-                        .collect(Collectors.toMap(BizPickListDetail::getGoodsId, d -> d, (a, b) -> a));
-                for (SplitOrderDetailVO dv : vo.getDetails()) {
-                    BizPickListDetail row = returnRows.get(dv.getGoodsId());
-                    if (row != null) {
-                        dv.setReturnedQuantity(row.getQuantity());
-                        dv.setReturnDiffReason(row.getDiffReason());
-                    }
+        if (returnPick != null) {
+            vo.setReturnPickNo(returnPick.getPickNo());
+            // D140：拆分单详情回显退料明细——按 goodsId 对齐（前端预填一行/物料，防重键取首行）
+            Map<Long, BizPickListDetail> rowsByGoods = returnRows.stream().collect(Collectors.toMap(
+                    BizPickListDetail::getGoodsId, d -> d, (a, b) -> a));
+            for (SplitOrderDetailVO dv : vo.getDetails()) {
+                BizPickListDetail row = rowsByGoods.get(dv.getGoodsId());
+                if (row != null) {
+                    dv.setReturnedQuantity(row.getQuantity());
+                    dv.setReturnDiffReason(row.getDiffReason());
                 }
             }
         }

@@ -5,6 +5,50 @@
 
 ---
 
+## 会话 76 — 2026-10-11
+
+### code-review 全部 8 项修复落地：499 单测全绿 + 全量 E2E 验证 + 测试数据清理
+
+- **起因**：用户 `/code-review` 全项目审视出 8 项问题，AskUserQuestion 选「全部 8 项（推荐）」，按 P0→P1→P2→P3 分批修复。
+- **P0×3（守卫缺失）**：①生产退料 `ProductionPickService.createReturn` 加 `ensureWithinReturnable`——拒绝清单外物料/超已领未退净额/少退无差异备注（computeNetReturnableItems 按 ISSUED/DONE 领料单 ± RETURN 明细算净额）；②拆分退料 `SplitOrderService.submitReturn` 加快照校验——BOM 快照外物料拒绝、超应退（D138 requiredQuantity 快照）拒绝、少退必填差异备注（Q15/Q7 口径）；③`abandon` 3/4→7 分支加守卫——已有待确认退料单（returnPickListId≠null）禁止放弃拆分。
+- **P1×2**：④`UserManageService` update（角色/部门/状态变更）/updateStatus/delete 后 `StpUtil.logout(id)` 注销目标用户全部会话；⑤`AuditLogAspect` @AfterReturning 改 @Around——操作者快照在 `pjp.proceed()` 前定格（本人改密方法体内注销自身会话后不再落 anonymous），新增单测 `operator_capturedBeforeProceed`（MockedStatic StpUtil 首读 9 后读 null）。
+- **P2×1**：⑥`SalesService.page` 仓储视角价差驳回单隐藏改为 SQL 侧 `wrapper.notIn` 预过滤（原来内存 post-filter 致分页 total 与实际可见数不符）。
+- **P3×2**：⑦`PurchaseService` create/createInternal 去重为 validateOneLinePerGoods / buildPurchaseDetails / insertPurchaseDoc 三个私有助手；⑧三处列表页 N+1 批量化——PickListService.page（4 参 toVO + loadDetailsByPickList/fallbackGoodsMap 一次点查）、SplitOrderService.toVOs（明细/退料单/退料行三次 in 批查 + groupingBy）、StocktakeService.page（detailsByOrder 批查 + fillSummary）。
+- **单测适配（499 全绿）**：AuditLogAspectTest 全面改 ProceedingJoinPoint（mockProceedJoinPoint/stubProceed/captureInsert 助手，proceed() 声明 Throwable 需 try/catch 包裹）；ProductionPickServiceTest 4 个 createReturn 用例补守卫路径打桩（selectList 净额）+ diffReason；SplitOrderServiceTest.getById 用例适配批量实现（selectBatchIds 打桩 + snap/row 补 splitOrderId/pickListId）；四处 groupingBy 全部加 `.filter(x -> x.getYyyId() != null)` 判空兜底（mock 行漏设外键即 NPE "element cannot be mapped to a null key"）。
+- **E2E（nohup 重启后端 + curl 实测）**：①生产退料三负测 400 命中（超已领未退「可退 2」/清单外 id=125/少退缺备注，41 号生产单=生产中真实数据，不落库）；②拆分退料三负测 400 命中（快照外/超应退「应退 2」/少退缺备注）+ 真实足额退料建单（split 1→退料单 36）→ 放弃拆分被守卫拦截 → 仓储驳回 36 清理（onSplitReturnRejected 清 returnPickListId，split 1 复原拆分中）；③用户停用/删除后旧 token 立即 401（e2e_sess_test id=26，软删+员工档案软删已清理）；④改密审计日志 id=466 操作者=e2e_audit_test 非 anonymous（id=27 已清理）；⑤采购 D111 同物料两行 400 命中 + 建单（id=23，total 自动算 56.00）+ 待到货删除清理；⑥销售仓储/销售双视角分页 total 一致（27/41）；⑦拣料/拆分/盘点三列表页明细、returnPickNo、盘点汇总批渲染齐全。库存零变动（未执行任何入库/出库/回库确认）。
+- **E2E 踩坑**：token 头是 `Authorization: Bearer`（application.properties sa-token.token-name），不是 satoken；业务路由都在 `/api/business/**`（猜 pick-lists/xxx 会落到静态资源 NoResourceFoundException 500）；部门管理员只能管本部门账号（hr_admin 建测试用户须 deptId=5）。
+- **未提交**：改动在工作树（9 个后端源文件 + 2 个测试文件），待用户确认后走 VS Code 源代码管理面板提交。
+
+## 会话 75 — 2026-10-11
+
+### 视频教程 v2：四项新需求落地（署名/教程库隔离/消息邮箱入场/点击推镜）+ 新成片 250.1s 交付
+
+- **起因**：用户看片评价「视频很好」，同条消息提出四项新需求：①片头/片尾署名占位符替换（项目名称=WMS仓储管理系统，团队名称=理想三寻）；②隔离教程录制专用库（只留登录人员+物料/成品/BOM 等主数据，业务数据清空）；③片中提醒观众「可点击右上角消息提醒跳转待处理事项」；④点击时放大镜头突出重点。
+- **①署名**：gen-cards.js `FOOT = 'WMS 仓储管理系统 · 理想三寻'`——片头/四幕过场卡/片尾全部底部署名，重出 6 张 PNG。
+- **②教程库隔离**：`document/manual-tools/video/reset-tutorial-db.sh`（新建，可重复跑）——`CREATE DATABASE warehouse_management_tutorial` → mysqldump --routines --triggers 全量克隆主库 → `SET FOREIGN_KEY_CHECKS=0` TRUNCATE 全部业务/日志/消息/AI/用工表（biz_* 13 组 + sys_error/login/message/notice/operation_log + ai_* 3 表 + work_requirement* 3 表）→ 核对输出 TUTORIAL_DB_OK；保留 sys_user/sys_dept/sys_employee（登录）、base_goods/base_supplier*/biz_bom+biz_bom_detail（主数据）、sys_config/sys_ip_policy。后端经 `SPRING_DATASOURCE_URL` 环境变量切库（`nohup ./mvnw spring-boot:run` 前注入，不改代码），重启后 /proc/<pid>/environ 与 login_log 写入教程库双重验证。免 root 发现：wms_user 全局 ALL PRIVILEGES WITH GRANT OPTION（sudo mysql 非交互无 tty 不可用，wms_user 直接建库）。**录制后收尾**：杀 8080 无环境变量重启切回主库（curl 登录 200 + 主库 biz_sales=44 完好）。
+- **③消息邮箱入场**：act2 重排 9 拍——开场白 → 红点角标特写 → 点右上角 `.message-button`（信封+红点，15s 轮询）开「站内邮箱」弹窗 → 点 `.message-card.unread` 待审批卡片（自动已读 + D75 深链 `/system/void-approval?approvalId=N` **自动打开审批详情弹窗**，比原「点菜单→点详情」少一次点击更顺滑）→ 详情快照特写（阈值12%/标准价12999/成交价16000/偏离23%）→ 关详情 → 「通过」→ 填备注 → message-box 再点「通过」+ toast；outro 新增收尾语「日常使用中，请留意右上角消息邮箱的红点提醒，点击即可直达待处理事项」。
+- **④点击推镜（zoompan）**：录制端 clickDemo 增 `zoom=true` 参数，记 `{t, x, y}` 入 clicks.json（act1 菜单/新建销售单/确定新增、act2 消息按钮/消息卡片/通过、act3 确认出库、act4 查询，共 8 个）；合成端 build.js `zoomExprs(wins)` 生成 ffmpeg zoompan if 链——**点击前 0.5s 开始 0.35s 推近到 1.5×（点击点居中）→ 保持至点击后 0.85s → 1.2s 内拉回**，推镜先于点击保证「按钮语境→点击→后果」全程在镜内；z/x/y 从最后窗口向前折叠成线性 else=acc 链防指数展开；**zoompan 时间变量是 `it` 无 `t`**，zoompan 前必须 fps=30 保证 it 均匀；字幕在 zoompan 后叠加全程不缩放。素材与参数解耦：改 zoom 参数只需重跑 mux 不用重录。
+- **v2 录制踩坑（已修）**：①教程库空列表致 act1 等 `.el-table__row` 超时——改等 `.el-table__empty-block, .el-table__row`（空态也有占位块）；②act2 详情点击被遮挡（overlay intercepts pointer events）——D75 深链跳转后详情弹窗自动打开，改为直接看快照省一次点击；③**打开过的 el-dialog DOM 常驻**：关闭的邮箱弹窗 DOM 仍在（hidden），`.el-dialog` first() 匹配到隐藏元素 20s 超时——全部 dialog 定位改 `.el-dialog:visible`（act2 邮箱/审批详情、act3 出库详情同步加固）；④**TTS/字幕/节拍三方错位（重录一次）**：act2 解说 11 行改 9 行后未重跑 TTS 就录制，timeline/音频是旧文案字幕是新文案——教训：**改解说词必须 rm 对应 act_*.mp3 重跑 tts 再录**。
+- **v2 成片与 QC**：重置教程库 → 重录 REC_ALL_OK（act2 全新 9 拍 + 8 个 zoom 点击）→ mux 成片 **250.1s（4'10"）**；抽帧目检：87.1s 确定新增推镜帧（SMC105/库存4/标准价12999/单价16000/偏离23%警告/按钮高亮全在镜）、111.4s 信封红点放大居中、119.5s 站内邮箱未读卡片放大、148.9s 审批列表仅 1 条+「通过」高亮、229s 定格帧（搜索 SMC105 后库存 3/Total 1/字幕收尾同步）——QC 全过定稿。
+- **交付**：`document/WMS视频教程-销售流程-2026-10-11.mp4` + Windows Temp 同名覆盖（14,228,633 字节，H.264+AAC 1080p30）；后端已切回主库。
+- **下一步**：用户看片确认 v2 后批量录制其他模块（采购/生产/盘点等各一集，管线复用只换 narration.json + 录制脚本；每集录制前 reset-tutorial-db.sh 重置教程库）。
+
+## 会话 74 — 2026-10-11
+
+### 视频教程管线落地：冒烟全绿 + 环境真相核清 + 种子数据定案（样片待录）
+
+- **起因**：用户经 grill-with-docs 收敛视频教程方案（11 问两轮全按推荐/指定选项），先做 1 集销售全流程样片（四幕：开单触发价格偏离审批→审批通过→仓储确认出库→库存收尾），看片确认风格后再批量。
+- **环境重启与真相核清**：WSL 重启后双端全掉（curl 000），`systemctl start` 失败——确认 wms 单元文件与 Redis 在本机根本不存在（/etc/systemd/system 无、dpkg 无 redis 包），CLAUDE.md「服务化 systemd 单元/Redis 必须在跑」段落是旧 VM 环境遗留对本机已失效；本机正解（progress.md 会话 56 已记录）= back/ 下 `nohup ./mvnw spring-boot:run`（日志 /tmp/wms-backend.log）+ front/ 下 `nohup npm run dev -- --host`（日志 /tmp/wms-frontend.log），Redis 非必需（application.properties 无 redis 配置，本机 20 余会话无 Redis 正常跑）。
+- **端到端冒烟全绿**：smoke-rec.js（Playwright recordVideo 1920×1080 + addInitScript 注入模拟光标 div#demo-cursor + CSS transition 平滑移动）录出 343KB webm → ffmpeg（apt 官方源 8.0.1）转码 H.264 1080p + Noto Sans CJK SC 中文字幕烧录 + edge-tts 音轨混流成功，抽帧 Read 目检通过（/tmp/vtest/frame.png 字幕清晰带描边、光标可见、页面渲染正常）——录屏/转码/字幕/配音四环全通，正式录制无未知风险。
+- **不拍登录方案事实齐备**：auth.js setUserInfo 写 8 个 localStorage 键（token/role/deptId/deptCode/deptName/username/realName/userId），录制 context 用 addInitScript 预注入后直接导航 /home 即已登录态；sales_admin curl 登录实测 userInfo：id=3/role=admin/deptId=2/deptCode=sales/deptName=销售管理员→销售部（token 正常）。
+- **种子数据定案**：SMC105（id=30, code GD260920214821719, 单位台, 标准售价 12999.00, 库存 4）为主角；单价填 16000 → 偏离 |16000−12999|/12999≈23.1% > 阈值 12%（sys_config price_deviation_threshold=0.1200，SalesService.isPriceDeviated 为绝对值公式）触发价格偏离审批；数量 1 出库后库存 4→3，收尾镜头在「成品管理」看「当前库存」列。
+- **菜单/页面结构核实**：layout/index.vue 平铺 el-menu-item（无嵌套 submenu），sales_admin 菜单含商品销售/成品管理/价格偏离审批，warehouse_admin 含销售出库确认/成品管理——菜单点击选择器可直接用文本。
+- **管线四脚本落成并跑通**：document/manual-tools/video/ 下 narration.json（37 行解说词+过场卡文案，逐字口径对齐 VoidApprovalView「审批备注」）、gen-cards.js（Playwright HTML→PNG 过场卡 6 张）、record-sales.js（245 行，API 登录+localStorage 预注入不拍登录+模拟光标/点击高亮+「动作→驻留」节拍制：每动作后驻留 = 解说时长+0.45−动作耗时估计，音画漂移有界）、build.js（tts 逐行 edge-tts+timeline.json / mux 分段合成+字幕烧录+concat 重编码）。
+- **样片三次录制踩坑（已修）**：①build.js probe 的 execFileSync 第三参须 {encoding:'utf8'} 不能传 'utf8' 字符串；②**toast 时序**：ElMessage 3s 自动消失，clickDemo wait+beat hold 累计 >4s 后才 waitFor 必超时——「等 toast」必须并入点击同一拍，下一拍改纯驻留（act1#9/#10、act3#5/#6 均如此修）；③**Element Plus 未配中文 locale**：未显式传 confirmButtonText 的 MessageBox 确认按钮是英文 "OK" 而非「确定」（act2 能过因 VoidApprovalView 显式传「通过」）——选择器改 `.el-message-box__btns .el-button--primary` 与 locale 解耦，解说词同步改「点击确认按钮」防说反。
+- **样片成片与交付**：mysqldump 七表快照→录制（第二次因②失败、第三次全过 REC_ALL_OK）→恢复快照（44 单/库存 4 零残留）→mux 成片 **228.9s（3'49"）1920×1080 H.264+AAC**，QC 七帧目检全过（字幕节拍对齐：单价 12999 时字幕「数量保持 1 台」、库存 3 台时字幕「4→3」；88s 帧捕到「销售单已创建」toast+待审批行；密码零入镜、演示客户字样、光标+高亮入镜）。交付 document/WMS视频教程-销售流程-2026-10-11.mp4 + Windows Temp（13,017,311 字节）。
+- **下一步**：用户看片确认风格后批量（采购/生产/盘点等各一集，管线复用只换 narration+录制脚本）。
+- **遗留提醒**：CLAUDE.md 本机环境段落过时（systemd/Redis 为旧 VM 遗留），会话收尾时经用户知情后更新；系统本身 Element Plus locale 缺中文配置（MessageBox 显示 OK/Cancel），可另立小任务修 main.js。
+
 ## 会话 73 — 2026-10-10
 
 ### ADR-0024 密码功能上线后交付物刷新：完整版 PPT + Word 使用手册重截图重生成（手册 61 页 / PPT 23 页 PDF 目检通过）

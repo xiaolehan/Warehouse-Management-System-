@@ -193,6 +193,12 @@ class ProductionPickServiceTest {
         ProductionReturnItemDTO item = new ProductionReturnItemDTO();
         item.setGoodsId(50L);
         item.setQuantity(3);
+        // code-review P0 退料守卫路径：已领未退净额 {50: 3}（与提交量一致）
+        when(pickListMapper.selectList(any())).thenReturn(
+                List.of(pickListOf(1L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(1L, 50L, "螺丝", 3)));
+
         ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
         dto.setRemark("多领退回");
         dto.setItems(List.of(item));
@@ -245,6 +251,7 @@ class ProductionPickServiceTest {
         ProductionReturnItemDTO item = new ProductionReturnItemDTO();
         item.setGoodsId(50L);
         item.setQuantity(2);
+        item.setDiffReason("损耗"); // code-review P0 守卫：差异行（退量<净额）备注必填
         ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
         dto.setItems(List.of(item));
 
@@ -309,6 +316,12 @@ class ProductionPickServiceTest {
         ProductionReturnItemDTO good = new ProductionReturnItemDTO();
         good.setGoodsId(50L);
         good.setQuantity(3);
+        // code-review P0 退料守卫路径：已领未退净额 {50: 3}（与提交量一致）
+        when(pickListMapper.selectList(any())).thenReturn(
+                List.of(pickListOf(1L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(1L, 50L, "螺丝", 3)));
+
         ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
         dto.setItems(List.of(bad, good));
 
@@ -408,6 +421,12 @@ class ProductionPickServiceTest {
         ProductionReturnItemDTO item = new ProductionReturnItemDTO();
         item.setGoodsId(50L);
         item.setQuantity(3);
+        // code-review P0 退料守卫路径：已领未退净额 {50: 3}（与提交量一致）
+        when(pickListMapper.selectList(any())).thenReturn(
+                List.of(pickListOf(1L, PickListService.TYPE_PICK, PickListService.STATUS_ISSUED)));
+        when(pickListDetailMapper.selectList(any())).thenReturn(
+                List.of(detailOf(1L, 50L, "螺丝", 3)));
+
         ProductionReturnCreateDTO dto = new ProductionReturnCreateDTO();
         dto.setItems(List.of(item));
 

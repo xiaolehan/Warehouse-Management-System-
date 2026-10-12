@@ -140,13 +140,17 @@ public class SalesService {
                         "EXISTS (SELECT 1 FROM biz_sales_detail d WHERE d.sales_id = biz_sales.id AND d.is_deleted = 0"
                                 + " AND d.goods_id = {0})", queryDTO.getGoodsId());
 
+        // D 价格偏离审批 + code-review P2：仓储视角隐藏「价格偏离被驳回」单，改 SQL notIn 预过滤——
+        // 原先分页后内存过滤会导致 total 与实际可见行数不一致（翻页跳行/空页）
+        if (isWarehouseView()) {
+            Set<Long> hidden = warehouseHiddenRejectedDeviationIds();
+            wrapper.notIn(!hidden.isEmpty(), BizSales::getId, hidden);
+        }
+
         Page<BizSales> page = bizSalesMapper.selectPage(new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
         Map<Long, BizApprovalOrder> approvalMap = buildLatestApprovalMap(page.getRecords().stream().map(BizSales::getId).toList());
-        // D 价格偏离审批：销售管理员驳回后单子退回销售人员，仓储视角列表不再展示被驳回的偏离单
-        boolean warehouseView = isWarehouseView();
         List<SalesVO> records = page.getRecords().stream()
                 .map(item -> toVO(item, approvalMap.get(item.getId())))
-                .filter(vo -> !warehouseView || !isPriceDeviationRejected(vo))
                 .toList();
         fillDetails(records); // D110：明细行 + 行级库存快照/缺货标识（仓储出库确认页标红缺货行的数据来源）
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
@@ -261,6 +265,40 @@ public class SalesService {
         return vo.getApprovalStatus() != null
                 && Integer.valueOf(3).equals(vo.getApprovalStatus())
                 && PRICE_DEVIATION_APPROVAL_ACTION.equals(vo.getApprovalRequestAction());
+    }
+
+    /**
+     * code-review P2：仓储视角列表隐藏「价格偏离被驳回」销售单的 id 集合（SQL notIn 预过滤，
+     * 分页前剔除，total 与可见行数一致）。口径与 isPriceDeviationRejected 对齐：以「最近一笔审批」为准，
+     * 驳回后重新提交并获批准的单不再隐藏——故先取驳回候选，再校验其最新一笔审批仍是本次驳回。
+     */
+    private Set<Long> warehouseHiddenRejectedDeviationIds() {
+        LambdaQueryWrapper<BizApprovalOrder> rejected = new LambdaQueryWrapper<>();
+        rejected.eq(BizApprovalOrder::getBizType, "sales")
+                .eq(BizApprovalOrder::getRequestAction, PRICE_DEVIATION_APPROVAL_ACTION)
+                .eq(BizApprovalOrder::getStatus, 3);
+        List<BizApprovalOrder> candidates = bizApprovalOrderMapper.selectList(rejected);
+        if (candidates.isEmpty()) {
+            return Set.of();
+        }
+        Set<Long> candidateBizIds = candidates.stream().map(BizApprovalOrder::getBizId).collect(Collectors.toSet());
+        // 与 buildLatestApprovalMap 同口径：id 倒序 + putIfAbsent 取每单最近一笔审批
+        LambdaQueryWrapper<BizApprovalOrder> latest = new LambdaQueryWrapper<>();
+        latest.eq(BizApprovalOrder::getBizType, "sales")
+                .in(BizApprovalOrder::getBizId, candidateBizIds)
+                .orderByDesc(BizApprovalOrder::getId);
+        Map<Long, BizApprovalOrder> latestMap = new LinkedHashMap<>();
+        for (BizApprovalOrder item : bizApprovalOrderMapper.selectList(latest)) {
+            latestMap.putIfAbsent(item.getBizId(), item);
+        }
+        Set<Long> hidden = new HashSet<>();
+        for (BizApprovalOrder item : latestMap.values()) {
+            if (Integer.valueOf(3).equals(item.getStatus())
+                    && PRICE_DEVIATION_APPROVAL_ACTION.equals(item.getRequestAction())) {
+                hidden.add(item.getBizId());
+            }
+        }
+        return hidden;
     }
 
     /**

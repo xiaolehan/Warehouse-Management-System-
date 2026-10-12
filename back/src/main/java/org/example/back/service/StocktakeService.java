@@ -98,9 +98,19 @@ public class StocktakeService {
                 .orderByDesc(BizStocktake::getCreateTime);
         Page<BizStocktake> page = bizStocktakeMapper.selectPage(
                 new Page<>(queryDTO.getPageNum(), queryDTO.getPageSize()), wrapper);
+        // code-review P3：汇总明细批量化——一次 in 查询按单分组（排序口径与 listDetails 一致），
+        // 原先每行一次点查，页 20 行即 20 次 SQL
+        Map<Long, List<BizStocktakeDetail>> detailsByOrder = page.getRecords().isEmpty() ? Map.of()
+                : bizStocktakeDetailMapper.selectList(new LambdaQueryWrapper<BizStocktakeDetail>()
+                        .in(BizStocktakeDetail::getStocktakeId,
+                                page.getRecords().stream().map(BizStocktake::getId).toList())
+                        .orderByAsc(BizStocktakeDetail::getId))
+                        .stream()
+                        .filter(d -> d.getStocktakeId() != null)
+                        .collect(Collectors.groupingBy(BizStocktakeDetail::getStocktakeId));
         List<StocktakeVO> vos = page.getRecords().stream().map(o -> {
             StocktakeVO vo = toVO(o);
-            fillSummary(vo, listDetails(o.getId()));
+            fillSummary(vo, detailsByOrder.getOrDefault(o.getId(), List.of()));
             if (blind) {
                 vo.setOverRows(null);
                 vo.setShortRows(null);

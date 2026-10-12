@@ -120,10 +120,14 @@ public class PickListService {
                 ? Map.of()
                 : bizProductionOrderMapper.selectBatchIds(orderIds).stream()
                         .collect(Collectors.toMap(BizProductionOrder::getId, o -> o));
+        // code-review P3：明细批量化——详情一次 in 查询按单分组，兜底物料主数据全页一次点查
+        Map<Long, List<BizPickListDetail>> detailsByPick = loadDetailsByPickList(rows.stream().map(BizPickList::getId).toList());
+        Map<Long, BaseGoods> fallbackGoods = fallbackGoodsMap(detailsByPick.values().stream().flatMap(List::stream).toList());
         List<PickListVO> records = rows.stream()
                 // 拆分单退料行 production_order_id 为 NULL（按 splitOrderId 关联，SplitOrderService 设计如此），
                 // 空不可变 Map 对 null key 调 get 会抛 NPE——判空兜底（会话 64 修复「生产领料页 500」）
-                .map(e -> toVO(e, e.getProductionOrderId() == null ? null : orderMap.get(e.getProductionOrderId())))
+                .map(e -> toVO(e, e.getProductionOrderId() == null ? null : orderMap.get(e.getProductionOrderId()),
+                        detailsByPick.getOrDefault(e.getId(), List.of()), fallbackGoods))
                 .toList();
         return new PageResult<>(records, page.getTotal(), page.getCurrent(), page.getSize(), page.getPages());
     }
@@ -371,6 +375,33 @@ public class PickListService {
         return bizPickListDetailMapper.selectList(wrapper);
     }
 
+    /** code-review P3：列表 N+1 修复——详情按单批量取（一次 in 查询，排序口径与 listDetails 一致）。 */
+    private Map<Long, List<BizPickListDetail>> loadDetailsByPickList(List<Long> pickListIds) {
+        if (pickListIds.isEmpty()) {
+            return Map.of();
+        }
+        return bizPickListDetailMapper.selectList(new LambdaQueryWrapper<BizPickListDetail>()
+                        .in(BizPickListDetail::getPickListId, pickListIds)
+                        .orderByAsc(BizPickListDetail::getSortNo)
+                        .orderByAsc(BizPickListDetail::getId))
+                .stream()
+                .filter(d -> d.getPickListId() != null)
+                .collect(Collectors.groupingBy(BizPickListDetail::getPickListId));
+    }
+
+    /** D63 兜底口径批量化：无 spec 快照行需要的物料主数据，一次点查全页复用。 */
+    private Map<Long, BaseGoods> fallbackGoodsMap(List<BizPickListDetail> allDetails) {
+        List<Long> fallbackGoodsIds = allDetails.stream()
+                .filter(d -> d.getSpec() == null && d.getGoodsId() != null)
+                .map(BizPickListDetail::getGoodsId)
+                .distinct()
+                .toList();
+        return fallbackGoodsIds.isEmpty()
+                ? Map.of()
+                : baseGoodsMapper.selectBatchIds(fallbackGoodsIds).stream()
+                        .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+    }
+
     private void increaseStock(Long goodsId, Integer quantity) {
         LambdaUpdateWrapper<BaseGoods> wrapper = new LambdaUpdateWrapper<>();
         wrapper.eq(BaseGoods::getId, goodsId)
@@ -397,6 +428,12 @@ public class PickListService {
     }
 
     private PickListVO toVO(BizPickList entity, BizProductionOrder productionOrder) {
+        List<BizPickListDetail> details = listDetails(entity.getId());
+        return toVO(entity, productionOrder, details, fallbackGoodsMap(details));
+    }
+
+    private PickListVO toVO(BizPickList entity, BizProductionOrder productionOrder,
+                            List<BizPickListDetail> details, Map<Long, BaseGoods> fallbackGoods) {
         PickListVO vo = new PickListVO();
         vo.setId(entity.getId());
         vo.setPickNo(entity.getPickNo());
@@ -420,7 +457,7 @@ public class PickListService {
         vo.setRemark(entity.getRemark());
         vo.setCreateTime(entity.getCreateTime());
         vo.setIsDeleted(entity.getIsDeleted());
-        vo.setDetails(toDetailVOs(listDetails(entity.getId())));
+        vo.setDetails(toDetailVOs(details, fallbackGoods));
         return vo;
     }
 
@@ -428,16 +465,7 @@ public class PickListService {
      * D63：明细转 VO。行上有快照（spec 非空）一律用快照（单据留档）；
      * 历史行无快照时兜底实时读物料主数据补显（软删/缺档保持 null，前端显示「-」）。
      */
-    private List<PickListDetailVO> toDetailVOs(List<BizPickListDetail> details) {
-        List<Long> fallbackGoodsIds = details.stream()
-                .filter(d -> d.getSpec() == null && d.getGoodsId() != null)
-                .map(BizPickListDetail::getGoodsId)
-                .distinct()
-                .toList();
-        Map<Long, BaseGoods> fallbackGoods = fallbackGoodsIds.isEmpty()
-                ? Map.of()
-                : baseGoodsMapper.selectBatchIds(fallbackGoodsIds).stream()
-                        .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+    private List<PickListDetailVO> toDetailVOs(List<BizPickListDetail> details, Map<Long, BaseGoods> fallbackGoods) {
         return details.stream()
                 .map(d -> toDetailVO(d, d.getSpec() == null ? fallbackGoods.get(d.getGoodsId()) : null))
                 .toList();

@@ -7,7 +7,8 @@ import jakarta.servlet.ServletResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.annotation.AfterReturning;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.example.back.common.annotation.AuditLog;
@@ -65,8 +66,24 @@ public class AuditLogAspect {
     @Autowired
     private ObjectMapper objectMapper;
 
-    @AfterReturning(pointcut = "@annotation(auditLog)", returning = "result")
-    public void recordOperationLog(JoinPoint joinPoint, AuditLog auditLog, Object result) {
+    @Around("@annotation(auditLog)")
+    public Object recordOperationLog(ProceedingJoinPoint pjp, AuditLog auditLog) throws Throwable {
+        // code-review P1：操作者快照在 proceed() 前定格——方法体内注销自身会话（如本人改密）时，
+        // AfterReturning 时点已读不到 loginId，日志会查到 anonymous；改为 @Around 前置捕获修复
+        Long userId = null;
+        String username = null;
+        try {
+            Object loginId = StpUtil.getLoginIdDefaultNull();
+            if (loginId != null) {
+                userId = Long.valueOf(String.valueOf(loginId));
+                username = resolveUsername(userId);
+            }
+        } catch (Exception ex) {
+            log.warn("审计日志操作者捕获失败, error={}", ex.getMessage());
+        }
+
+        Object result = pjp.proceed();
+
         try {
             HttpServletRequest request = currentRequest();
 
@@ -74,21 +91,27 @@ public class AuditLogAspect {
             logEntity.setModule(auditLog.module());
             logEntity.setAction(auditLog.action());
             logEntity.setTargetType(auditLog.targetType());
-            logEntity.setTargetId(resolveTargetId(joinPoint.getArgs()));
-            logEntity.setDetail(resolveDetail(auditLog, joinPoint, result));
-            logEntity.setBeforeData(toJsonSnapshot(filterArgs(joinPoint.getArgs())));
+            logEntity.setTargetId(resolveTargetId(pjp.getArgs()));
+            logEntity.setDetail(resolveDetail(auditLog, pjp, result));
+            logEntity.setBeforeData(toJsonSnapshot(filterArgs(pjp.getArgs())));
             logEntity.setAfterData(toJsonSnapshot(result));
             logEntity.setRequestUri(request == null ? "" : request.getRequestURI());
             logEntity.setIp(ClientIpUtil.getClientIp(request));
             logEntity.setCreateTime(LocalDateTime.now());
 
-            fillOperator(logEntity);
+            if (username != null && !username.isBlank()) {
+                logEntity.setUsername(username);
+            } else {
+                logEntity.setUsername(userId == null ? "anonymous" : "uid:" + userId);
+            }
+            logEntity.setUserId(userId);
             sysOperationLogMapper.insert(logEntity);
         } catch (Exception ex) {
-            MethodSignature signature = (MethodSignature) joinPoint.getSignature();
+            MethodSignature signature = (MethodSignature) pjp.getSignature();
             String methodName = signature.getDeclaringTypeName() + "#" + signature.getMethod().getName();
             log.warn("审计日志记录失败, method={}, error={}", methodName, ex.getMessage());
         }
+        return result;
     }
 
     /**
@@ -164,21 +187,16 @@ public class AuditLogAspect {
         return value.substring(0, maxLength);
     }
 
-    private void fillOperator(SysOperationLog logEntity) {
-        Object loginId = StpUtil.getLoginIdDefaultNull();
-        if (loginId == null) {
-            logEntity.setUsername("anonymous");
-            return;
+    /** 按 userId 解析用户名（查不到或无用户名返回 null，由调用方决定兜底文案）。 */
+    private String resolveUsername(Long userId) {
+        if (userId == null) {
+            return null;
         }
-        Long userId = Long.valueOf(String.valueOf(loginId));
-        logEntity.setUserId(userId);
-
         SysUser user = sysUserMapper.selectById(userId);
         if (user == null || user.getUsername() == null || user.getUsername().isBlank()) {
-            logEntity.setUsername("uid:" + userId);
-            return;
+            return null;
         }
-        logEntity.setUsername(user.getUsername());
+        return user.getUsername();
     }
 
     private HttpServletRequest currentRequest() {

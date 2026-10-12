@@ -149,6 +149,9 @@ public class ProductionPickService {
         if (items.isEmpty()) {
             throw BusinessException.validateFail("无有效退料明细行");
         }
+        // code-review P0：退料量上限守卫与 terminate 同口径——退料量不得超过「已领未退」净额，
+        // 清单外物料（含从未领过的）直接拒绝，防提交任意物料/数量经仓储收料虚增库存
+        ensureWithinReturnable(orderId, items);
 
         String remark = "生产任务单 " + order.getOrderNo() + " 退料";
         if (dto.getRemark() != null && !dto.getRemark().isEmpty()) {

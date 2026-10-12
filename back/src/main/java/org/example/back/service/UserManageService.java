@@ -138,6 +138,12 @@ public class UserManageService {
         if (authzService.isSuperAdmin() && ROLE_EMPLOYEE.equals(newRole) && !Integer.valueOf(0).equals(oldStatus) && Integer.valueOf(0).equals(user.getStatus())) {
             messageService.sendEmployeeDisabledReminder(user.getRealName(), user.getDeptId(), authzService.currentOperatorLabel());
         }
+
+        // code-review P1：角色/部门/状态变更后注销目标用户全部会话，旧 token 立即失效（权限即时生效）
+        if (!Objects.equals(newRole, oldRole) || !Objects.equals(user.getDeptId(), oldDeptId)
+                || !Objects.equals(user.getStatus(), oldStatus)) {
+            StpUtil.logout(id);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -158,6 +164,11 @@ public class UserManageService {
                 messageService.sendEmployeeDisabledReminder(user.getRealName(), user.getDeptId(), authzService.currentOperatorLabel());
             }
         }
+
+        // code-review P1：状态变更后注销目标用户全部会话，停用立即生效（不变更则不注销）
+        if (!Objects.equals(oldStatus, status)) {
+            StpUtil.logout(id);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -174,6 +185,8 @@ public class UserManageService {
         if (employeeUser && authzService.isSuperAdmin()) {
             messageService.sendEmployeeDeletedReminder(user.getRealName(), user.getDeptId(), authzService.currentOperatorLabel());
         }
+        // code-review P1：删除账号后注销其全部会话，防止已删账号凭旧 token 继续访问
+        StpUtil.logout(id);
     }
 
     /** 手测问题 1（2026-09-23）：批量删除——逐行调用单删（可管性/超管保护逐行生效），尽力而为聚合明细 */

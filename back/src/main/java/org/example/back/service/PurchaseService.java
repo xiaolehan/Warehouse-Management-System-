@@ -217,14 +217,8 @@ public class PurchaseService {
         authzService.requireNotSuperAdminForBusinessWrite();
         requirePurchaseModuleAccess();
         List<PurchaseSaveDTO.LineDTO> lines = requireLines(dto.getLines());
-
         // D111 决策：同一物料一单只允许一行
-        Set<Long> goodsIds = new HashSet<>();
-        for (PurchaseSaveDTO.LineDTO line : lines) {
-            if (line.getGoodsId() == null || !goodsIds.add(line.getGoodsId())) {
-                throw BusinessException.validateFail("同一物料在一张进货单中只能有一行，请合并数量");
-            }
-        }
+        validateOneLinePerGoods(lines);
 
         // D123：头级供应商必填且须为有效供应商（存在且未停用，与供应商下拉 options 口径一致）
         if (dto.getSupplierId() == null) {
@@ -242,44 +236,12 @@ public class PurchaseService {
         LoginResponse.UserInfoVO loginUser = authService.getUserInfo();
 
         // 先全量校验再落库，避免半张单
-        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
-                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
-        List<BizPurchaseDetail> detailEntities = new ArrayList<>();
-        int totalQuantity = 0;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        int sortNo = 0;
-        for (PurchaseSaveDTO.LineDTO line : lines) {
-            sortNo++;
-            BaseGoods goods = goodsMap.get(line.getGoodsId());
-            if (goods == null) {
-                throw BusinessException.validateFail("商品不存在");
-            }
-            ensureGoodsEnabled(goods);
-            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
-            BigDecimal unitPrice = resolveUnitPrice(line.getUnitPrice(), goods.getPurchasePrice(),
-                    "物料「" + goods.getGoodsName() + "」进价为空，请传入进货单价");
-            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(line.getQuantity()));
-
-            BizPurchaseDetail detail = new BizPurchaseDetail();
-            detail.setGoodsId(goods.getId());
-            detail.setGoodsName(goods.getGoodsName());
-            detail.setSpec(goods.getSpec());
-            detail.setMaterial(goods.getMaterial());
-            detail.setQuantity(line.getQuantity());
-            detail.setUnitPrice(unitPrice);
-            detail.setTotalPrice(lineTotal);
-            detail.setSortNo(sortNo);
-            detail.setSupplierId(dto.getSupplierId()); // D131 行级供应商=头级统一填入（手动单一供应商）
-            detailEntities.add(detail);
-
-            totalQuantity += line.getQuantity();
-            totalAmount = totalAmount.add(lineTotal);
-        }
+        List<BizPurchaseDetail> detailEntities = buildPurchaseDetails(lines, dto.getSupplierId(), false);
 
         BizPurchase purchase = new BizPurchase();
         purchase.setPurchaseNo(CodeGenerator.purchaseNo());
-        purchase.setTotalQuantity(totalQuantity);
-        purchase.setTotalAmount(totalAmount);
+        purchase.setTotalQuantity(detailEntities.stream().mapToInt(BizPurchaseDetail::getQuantity).sum());
+        purchase.setTotalAmount(detailEntities.stream().map(BizPurchaseDetail::getTotalPrice).reduce(BigDecimal.ZERO, BigDecimal::add));
         purchase.setOperatorId(loginUser.getId());
         purchase.setOperatorName(loginUser.getRealName());
         purchase.setOperationTime(operationTime);
@@ -288,11 +250,7 @@ public class PurchaseService {
         purchase.setBizStatus(1);
         purchase.setConfirmStatus(CONFIRM_PENDING);
 
-        bizPurchaseMapper.insert(purchase);
-        for (BizPurchaseDetail detail : detailEntities) {
-            detail.setPurchaseId(purchase.getId());
-            bizPurchaseDetailMapper.insert(detail);
-        }
+        insertPurchaseDoc(purchase, detailEntities);
         // 不加库存，待采购到货确认 + 仓储确认入库
     }
 
@@ -305,47 +263,13 @@ public class PurchaseService {
     @Transactional(rollbackFor = Exception.class)
     public void createInternal(PurchaseSaveDTO dto, Long operatorId, String operatorName) {
         List<PurchaseSaveDTO.LineDTO> lines = requireLines(dto.getLines());
-        Set<Long> goodsIds = new HashSet<>();
-        for (PurchaseSaveDTO.LineDTO line : lines) {
-            if (line.getGoodsId() == null || !goodsIds.add(line.getGoodsId())) {
-                throw BusinessException.validateFail("同一物料在一张进货单中只能有一行，请合并数量");
-            }
-        }
+        // D111 决策：同一物料一单只允许一行
+        validateOneLinePerGoods(lines);
 
         LocalDateTime operationTime = dto.getOperationTime() == null ? LocalDateTime.now() : dto.getOperationTime();
-        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
-                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
-        List<BizPurchaseDetail> detailEntities = new ArrayList<>();
-        int totalQuantity = 0;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        int sortNo = 0;
-        for (PurchaseSaveDTO.LineDTO line : lines) {
-            sortNo++;
-            BaseGoods goods = goodsMap.get(line.getGoodsId());
-            if (goods == null) {
-                throw BusinessException.validateFail("商品不存在");
-            }
-            ensureGoodsEnabled(goods);
-            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
-            BigDecimal unitPrice = resolveUnitPrice(line.getUnitPrice(), goods.getPurchasePrice(),
-                    "物料「" + goods.getGoodsName() + "」进价为空，请传入进货单价");
-            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(line.getQuantity()));
-
-            BizPurchaseDetail detail = new BizPurchaseDetail();
-            detail.setGoodsId(goods.getId());
-            detail.setGoodsName(goods.getGoodsName());
-            detail.setSpec(goods.getSpec());
-            detail.setMaterial(goods.getMaterial());
-            detail.setQuantity(line.getQuantity());
-            detail.setUnitPrice(unitPrice);
-            detail.setTotalPrice(lineTotal);
-            detail.setSortNo(sortNo);
-            detail.setSupplierId(line.getSupplierId()); // D131 行级供应商（到货提交选定）
-            detailEntities.add(detail);
-
-            totalQuantity += line.getQuantity();
-            totalAmount = totalAmount.add(lineTotal);
-        }
+        List<BizPurchaseDetail> detailEntities = buildPurchaseDetails(lines, null, true);
+        int totalQuantity = detailEntities.stream().mapToInt(BizPurchaseDetail::getQuantity).sum();
+        BigDecimal totalAmount = detailEntities.stream().map(BizPurchaseDetail::getTotalPrice).reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BizPurchase purchase = new BizPurchase();
         purchase.setPurchaseNo(CodeGenerator.purchaseNo());
@@ -362,13 +286,69 @@ public class PurchaseService {
         purchase.setConfirmerName(operatorName);
         purchase.setConfirmTime(operationTime);
 
-        bizPurchaseMapper.insert(purchase);
+        insertPurchaseDoc(purchase, detailEntities);
         for (BizPurchaseDetail detail : detailEntities) {
-            detail.setPurchaseId(purchase.getId());
-            bizPurchaseDetailMapper.insert(detail);
             increaseStock(detail.getGoodsId(), detail.getQuantity());
             // 采购单价回写为物料最新进价（仅更新 purchase_price 一列；increaseStock 已用 SQL 自增 stock）
             updatePurchasePrice(detail.getGoodsId(), detail.getUnitPrice());
+        }
+    }
+
+    /** D111：同一物料一单只允许一行（两个建单路径共用）。 */
+    private void validateOneLinePerGoods(List<PurchaseSaveDTO.LineDTO> lines) {
+        Set<Long> goodsIds = new HashSet<>();
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            if (line.getGoodsId() == null || !goodsIds.add(line.getGoodsId())) {
+                throw BusinessException.validateFail("同一物料在一张进货单中只能有一行，请合并数量");
+            }
+        }
+    }
+
+    /**
+     * 两个建单路径共用的明细构建：先全量校验再落库，避免半张单。
+     * useLineSupplier=false（手动建单）：行级供应商 = 头级统一填入（D131 手动单一供应商）；
+     * useLineSupplier=true（内部建单/到货提交）：行级供应商取各行 supplierId，头级保持 null。
+     */
+    private List<BizPurchaseDetail> buildPurchaseDetails(List<PurchaseSaveDTO.LineDTO> lines, Long headerSupplierId, boolean useLineSupplier) {
+        Set<Long> goodsIds = lines.stream().map(PurchaseSaveDTO.LineDTO::getGoodsId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, BaseGoods> goodsMap = baseGoodsMapper.selectBatchIds(goodsIds).stream()
+                .collect(Collectors.toMap(BaseGoods::getId, g -> g));
+        List<BizPurchaseDetail> detailEntities = new ArrayList<>();
+        int sortNo = 0;
+        for (PurchaseSaveDTO.LineDTO line : lines) {
+            sortNo++;
+            BaseGoods goods = goodsMap.get(line.getGoodsId());
+            if (goods == null) {
+                throw BusinessException.validateFail("商品不存在");
+            }
+            ensureGoodsEnabled(goods);
+            GoodsService.ensureGoodsType(goods, GoodsService.GOODS_TYPE_MATERIAL, "商品进货只可选择物料（type=material）"); // D67
+            BigDecimal unitPrice = resolveUnitPrice(line.getUnitPrice(), goods.getPurchasePrice(),
+                    "物料「" + goods.getGoodsName() + "」进价为空，请传入进货单价");
+            BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(line.getQuantity()));
+
+            BizPurchaseDetail detail = new BizPurchaseDetail();
+            detail.setGoodsId(goods.getId());
+            detail.setGoodsName(goods.getGoodsName());
+            detail.setSpec(goods.getSpec());
+            detail.setMaterial(goods.getMaterial());
+            detail.setQuantity(line.getQuantity());
+            detail.setUnitPrice(unitPrice);
+            detail.setTotalPrice(lineTotal);
+            detail.setSortNo(sortNo);
+            detail.setSupplierId(useLineSupplier ? line.getSupplierId() : headerSupplierId); // D131
+            detailEntities.add(detail);
+        }
+        return detailEntities;
+    }
+
+    /** 共用落库：插头单 + 回填 purchaseId 插明细行。 */
+    private void insertPurchaseDoc(BizPurchase purchase, List<BizPurchaseDetail> details) {
+        bizPurchaseMapper.insert(purchase);
+        for (BizPurchaseDetail detail : details) {
+            detail.setPurchaseId(purchase.getId());
+            bizPurchaseDetailMapper.insert(detail);
         }
     }
 

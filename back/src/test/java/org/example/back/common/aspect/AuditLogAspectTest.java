@@ -2,10 +2,11 @@ package org.example.back.common.aspect;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.aspectj.lang.JoinPoint;
+import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.example.back.common.annotation.AuditLog;
 import org.example.back.entity.SysOperationLog;
+import org.example.back.entity.SysUser;
 import org.example.back.mapper.SysOperationLogMapper;
 import org.example.back.mapper.SysUserMapper;
 import org.junit.jupiter.api.Test;
@@ -61,25 +62,40 @@ class AuditLogAspectTest {
 
     @InjectMocks private AuditLogAspect aspect;
 
-    private JoinPoint mockJoinPoint(Method method, Object[] args) {
-        JoinPoint joinPoint = mock(JoinPoint.class);
+    private ProceedingJoinPoint mockProceedJoinPoint(Method method, Object[] args) {
+        ProceedingJoinPoint pjp = mock(ProceedingJoinPoint.class);
         MethodSignature signature = mock(MethodSignature.class);
         // signature 仅在 detail 表达式非空时参与求值（空 detail 短路），故 lenient
         lenient().when(signature.getMethod()).thenReturn(method);
-        lenient().when(joinPoint.getSignature()).thenReturn(signature);
-        when(joinPoint.getArgs()).thenReturn(args);
-        return joinPoint;
+        lenient().when(pjp.getSignature()).thenReturn(signature);
+        when(pjp.getArgs()).thenReturn(args);
+        stubProceed(pjp, null);
+        return pjp;
+    }
+
+    /** proceed() 声明 Throwable，直接 when() 需方法声明 throws——测试助手内部吞掉保持无 checked 异常签名。 */
+    private void stubProceed(ProceedingJoinPoint pjp, Object result) {
+        try {
+            lenient().when(pjp.proceed()).thenReturn(result);
+        } catch (Throwable ignored) {
+            // 不会发生：mock 的 proceed 不会真的抛
+        }
     }
 
     private AuditLog auditOf(Method method) {
         return method.getAnnotation(AuditLog.class);
     }
 
-    private SysOperationLog captureInsert(JoinPoint joinPoint, AuditLog auditLog, Object result) {
-        // 单测无 SaTokenContext，静态打桩为未登录（fillOperator 落 "anonymous"）
+    private SysOperationLog captureInsert(ProceedingJoinPoint pjp, AuditLog auditLog, Object result) {
+        // 单测无 SaTokenContext，静态打桩为未登录（操作者落 "anonymous"）
         try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdDefaultNull).thenReturn(null);
-            aspect.recordOperationLog(joinPoint, auditLog, result);
+            stubProceed(pjp, result);
+            try {
+                aspect.recordOperationLog(pjp, auditLog);
+            } catch (Throwable e) {
+                throw new RuntimeException(e);
+            }
         }
         ArgumentCaptor<SysOperationLog> cap = ArgumentCaptor.forClass(SysOperationLog.class);
         verify(sysOperationLogMapper).insert(cap.capture());
@@ -90,7 +106,7 @@ class AuditLogAspectTest {
     @Test
     void detail_generatedFromSpelArgs() throws Exception {
         Method m = DummyOps.class.getMethod("update", Long.class, String.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{9L, "改价"});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{9L, "改价"});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -104,7 +120,7 @@ class AuditLogAspectTest {
     @Test
     void detail_blank_returnsNull() throws Exception {
         Method m = DummyOps.class.getMethod("resetPwd", Long.class, Map.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{7L, Map.of("k", "v")});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{7L, Map.of("k", "v")});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -115,7 +131,7 @@ class AuditLogAspectTest {
     @Test
     void detail_expressionFailure_fallsBackNull() throws Exception {
         Method m = DummyOps.class.getMethod("badExpr", String.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{"x"});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{"x"});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -128,7 +144,7 @@ class AuditLogAspectTest {
     void detailAndSnapshot_truncated() throws Exception {
         Method m = DummyOps.class.getMethod("echo", Long.class, String.class);
         String big = "a".repeat(5000);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{1L, big});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{1L, big});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -140,7 +156,7 @@ class AuditLogAspectTest {
     @Test
     void snapshot_redactsSensitiveKeys() throws Exception {
         Method m = DummyOps.class.getMethod("resetPwd", Long.class, Map.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{7L, Map.of("newPassword", "abc123", "username", "u1")});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{7L, Map.of("newPassword", "abc123", "username", "u1")});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -155,7 +171,7 @@ class AuditLogAspectTest {
     void snapshot_skipsNonSerializableArgs() throws Exception {
         Method m = DummyOps.class.getMethod("echo", Long.class, String.class);
         MultipartFile file = mock(MultipartFile.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{file, "仅业务参数"});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{file, "仅业务参数"});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), null);
 
@@ -166,10 +182,34 @@ class AuditLogAspectTest {
     @Test
     void afterData_fromResult() throws Exception {
         Method m = DummyOps.class.getMethod("update", Long.class, String.class);
-        JoinPoint jp = mockJoinPoint(m, new Object[]{9L, "改价"});
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{9L, "改价"});
 
         SysOperationLog log = captureInsert(jp, auditOf(m), Map.of("code", 200, "msg", "ok"));
 
         assertTrue(log.getAfterData().contains("\"code\":200"), "实际: " + log.getAfterData());
+    }
+
+    // ---------- code-review P1：操作者在 proceed() 前定格——方法体内注销自身会话（本人改密场景）不记 anonymous ----------
+    @Test
+    void operator_capturedBeforeProceed() throws Throwable {
+        Method m = DummyOps.class.getMethod("update", Long.class, String.class);
+        ProceedingJoinPoint jp = mockProceedJoinPoint(m, new Object[]{9L, "改价"});
+        SysUser op = new SysUser();
+        op.setId(9L);
+        op.setUsername("op9");
+        when(sysUserMapper.selectById(9L)).thenReturn(op);
+
+        try (MockedStatic<StpUtil> stp = mockStatic(StpUtil.class)) {
+            // 第一次读（proceed 前）= 9；proceed 内改密成功注销会话后（若 AfterReturning 再读）= null
+            stp.when(StpUtil::getLoginIdDefaultNull).thenReturn(9L, (Object) null);
+            stubProceed(jp, null);
+            aspect.recordOperationLog(jp, auditOf(m));
+        }
+
+        ArgumentCaptor<SysOperationLog> cap = ArgumentCaptor.forClass(SysOperationLog.class);
+        verify(sysOperationLogMapper).insert(cap.capture());
+        SysOperationLog log0 = cap.getValue();
+        assertEquals("op9", log0.getUsername(), "改密注销会话后操作者仍应定格为登录用户");
+        assertEquals(9L, log0.getUserId());
     }
 }

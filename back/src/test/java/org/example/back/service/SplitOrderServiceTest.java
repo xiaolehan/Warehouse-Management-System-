@@ -115,14 +115,17 @@ class SplitOrderServiceTest {
         split.setReturnPickListId(88L);
         when(splitOrderMapper.selectById(5L)).thenReturn(split);
         BizSplitOrderDetail snap = new BizSplitOrderDetail();
+        snap.setSplitOrderId(5L);
         snap.setGoodsId(50L);
         snap.setRequiredQuantity(4);
         when(splitOrderDetailMapper.selectList(any())).thenReturn(List.of(snap));
         BizPickList pick = new BizPickList();
         pick.setId(88L);
         pick.setPickNo("TL-0009");
-        when(bizPickListMapper.selectById(88L)).thenReturn(pick);
+        // P3 批量化后 pick 走 selectBatchIds 一次点查
+        when(bizPickListMapper.selectBatchIds(any())).thenReturn(List.of(pick));
         BizPickListDetail row = new BizPickListDetail();
+        row.setPickListId(88L);
         row.setGoodsId(50L);
         row.setQuantity(2);
         row.setDiffReason("搬运破损2个");
