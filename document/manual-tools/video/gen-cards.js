@@ -6,7 +6,9 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '.');
 const OUT = '/tmp/wms-video/cards';
-const narr = JSON.parse(fs.readFileSync(path.join(ROOT, 'narration.json'), 'utf8'));
+const NARR = process.argv[2] || 'narration.json'; // node gen-cards.js [narration-X.json]
+const narr = JSON.parse(fs.readFileSync(path.join(ROOT, NARR), 'utf8'));
+const TAG = narr.cards.tag || '销售全流程演示'; // 过场卡副标题随集走
 
 const HTML = (title, subtitle, foot) => `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
@@ -41,7 +43,7 @@ const FOOT = 'WMS 仓储管理系统 · 理想三寻';
 
   const shots = [
     ['intro', narr.cards.intro.title, narr.cards.intro.subtitle],
-    ...narr.cards.interludes.map((t, i) => [`inter${i + 1}`, t, '销售全流程演示']),
+    ...narr.cards.interludes.map((t, i) => [`inter${i + 1}`, t, TAG]),
     ['outro', narr.cards.outro.title, narr.cards.outro.subtitle],
   ];
   for (const [name, title, sub] of shots) {

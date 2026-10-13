@@ -81,6 +81,7 @@ mysql -u wms_user -pwms_pass warehouse_management < /tmp/xxx.sql
 - **单测断言 wrapper SQL 片段注意列名渲染**：测试里 `TableInfoHelper.initTableInfo` 用的裸 `new Configuration()` 未开驼峰转下划线，`getSqlSegment()` 里列名是 `requestAction` 而非 `request_action`（运行时 MP 配置才是下划线）——断言按测试环境实际渲染写。
 - **curl E2E 里 python heredoc 传响应体**：`python3 - "$R" <<'EOF'` 会把 stdin（脚本）与 argv 混淆导致 JSON 解析失败；用 `RESP="$R" python3 <<'EOF'` + `os.environ['RESP']` 读入。业务错误经全局异常包装 HTTP 仍 200，负测判定用 body 的 `code`（403/400）而非 HTTP 状态码。
 - **E2E 脚本改用 Edit 直改，sed 追加修补高危**（会话 69）：`$()` 命令替换内 URL 的 `&` 既是 sed 替换串的「整个匹配」又是 bash 命令分隔符，双重转义极易错（`5\&warningOnly` 写法仍会踩）；直接用 Edit 工具改脚本 + URL 整体加引号最稳。**E2E 取数/清理前先核对查询字段名与后端 QueryDTO 一致**：goods page 的过滤字段是 `goodsName` 而非 `keywords`——参数名错时过滤被静默忽略、返回列表第一条，后续按该 id 删除会误删无关数据（本例删到被引用的旧物料报 400 反向暴露，险些破坏业务数据）。
+- **多集视频 TTS 缓存必须按解说词分目录**（会话 77 采购集配音串成第 1 集销售音频，用户看片才发现）：各集场景 id 相同（act1_0.mp3…），平铺缓存 + exists-skip 会静默命中上一集旧音频——build.js 已用 `TTS_DIR=/tmp/wms-video/tts/<解说词文件名>/` 根治（写入与读取同源）。改解说词必须 rm 对应 mp3 重跑 tts；录制脚本开头清 clicks.json + raw/actN 防上集素材顶替；**QC 抽帧必须带字幕帧核对音画一致**（只看画面拦不住配音串集）。
 
 ## 关键约束
 

@@ -1,5 +1,5 @@
 // 视频合成管线：tts 生成逐行配音 + 时长表 → mux 合成分段 → concat 成片
-// 用法：node build.js tts   （生成 /tmp/wms-video/tts/*.mp3 + timeline.json，录制前必跑）
+// 用法：node build.js tts   （生成 /tmp/wms-video/tts/<解说词名>/*.mp3 + timeline.json，录制前必跑）
 //       node build.js mux   （录制完成后，合成 /tmp/wms-video/WMS视频教程-销售全流程.mp4）
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -10,7 +10,14 @@ const TTS = '/tmp/ttsvenv/bin/edge-tts';
 const TMP = '/tmp/wms-video';
 const GAP = 0.45;            // 行间静音秒数（与录制驻留公式的 0.45 一致）
 const VOICE = 'zh-CN-XiaoxiaoNeural';
-const narr = JSON.parse(fs.readFileSync(path.join(ROOT, 'narration.json'), 'utf8'));
+// 用法：node build.js tts [narration-X.json]   /   node build.js mux [narration-X.json] [输出名.mp4]
+// 第 3 参以 .json 结尾视为解说词文件（多集复用），否则视为输出文件名（兼容第 1 集旧用法）
+const arg3 = process.argv[3];
+const isNarr = !!arg3 && arg3.endsWith('.json');
+const narr = JSON.parse(fs.readFileSync(path.join(ROOT, isNarr ? arg3 : 'narration.json'), 'utf8'));
+const OUT_NAME = isNarr ? process.argv[4] : arg3;
+// TTS 缓存按解说词文件分目录——各集场景 id 相同（act1_0.mp3…），混用会串到上一集的配音
+const TTS_DIR = `${TMP}/tts/${isNarr ? arg3.replace(/\.json$/, '') : 'default'}`;
 
 const probe = f => parseFloat(execFileSync('ffprobe',
   ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f],
@@ -22,7 +29,7 @@ function run(cmd, args) {
 
 // ---------- tts：逐行 edge-tts → mp3 + ffprobe 时长 → timeline.json ----------
 function tts() {
-  const dir = `${TMP}/tts`;
+  const dir = TTS_DIR;
   fs.mkdirSync(dir, { recursive: true });
   const timeline = {};
   for (const sc of narr.scenes) {
@@ -44,14 +51,17 @@ function tts() {
   console.log('TTS_ALL_OK ->', `${TMP}/timeline.json`);
 }
 
-// ---------- 场景音频：逐行 mp3 + 行间 0.45s 静音 → wav；返回 [总时长, SRT 内容] ----------
+// ---------- 场景音频：逐行 mp3 → wav 拼接；返回 [总时长, SRT 内容] ----------
+// starts：可选，录制时逐行动作的起拍时刻（视频时间轴秒，beats.json）。
+// 每行解说锚定到该行动作的起拍点（音频插静音自适应视频）→ 音画同步、
+// 节拍误差不累积、字幕随音频走；缺省回退固定 GAP 拼接（片头/片尾卡）。
 const srtTime = t => {
   const ms = Math.round(t * 1000);
   const p = (n, w) => String(n).padStart(w, '0');
   return `${p(Math.floor(ms / 3600000), 2)}:${p(Math.floor(ms / 60000) % 60, 2)}:${p(Math.floor(ms / 1000) % 60, 2)},${p(ms % 1000, 3)}`;
 };
 
-function sceneAudio(sc) {
+function sceneAudio(sc, starts) {
   const dir = `${TMP}/wav`;
   fs.mkdirSync(`${TMP}/srt`, { recursive: true });
   fs.mkdirSync(dir, { recursive: true });
@@ -60,12 +70,20 @@ function sceneAudio(sc) {
   const list = [];
   let t = 0, srt = '', idx = 0;
   sc.lines.forEach((line, i) => {
-    const src = `${TMP}/tts/${sc.id}_${i}.mp3`;
+    const src = `${TTS_DIR}/${sc.id}_${i}.mp3`;
     const wav = `${dir}/${sc.id}_${i}.wav`;
     run('ffmpeg', ['-y', '-v', 'error', '-i', src, '-ar', '24000', '-ac', '1', wav]);
-    if (i > 0) { list.push(`file '${gap}'`); t += GAP; }
-    list.push(`file '${wav}'`);
     const d = probe(wav);
+    if (starts) {
+      const anchor = Math.max(+(starts[i] ?? 0), i === 0 ? 0 : +(t + 0.35).toFixed(3));
+      if (anchor > t + 0.01) {
+        const sil = `${dir}/${sc.id}_s${i}.wav`;
+        run('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', (anchor - t).toFixed(3), sil]);
+        list.push(`file '${sil}'`);
+        t = anchor;
+      }
+    } else if (i > 0) { list.push(`file '${gap}'`); t += GAP; }
+    list.push(`file '${wav}'`);
     srt += `${++idx}\n${srtTime(t)} --> ${srtTime(t + d + 0.3)}\n${line}\n\n`;
     t += d;
   });
@@ -130,7 +148,10 @@ function muxScene(sc) {
   }
   // UI 场景：webm → 1080p30（+点击推镜）+ 字幕烧录 + tpad 补帧 / -t 裁齐到解说时长
   const webm = findWebm(sc.id);
-  const { audio, dur } = sceneAudio(sc);
+  // 起拍锚点（beats.json，录制时逐行动作时刻）→ 该行解说从动作起拍时播报
+  const beats = fs.existsSync(`${TMP}/beats.json`)
+    ? JSON.parse(fs.readFileSync(`${TMP}/beats.json`, 'utf8'))[sc.id] : null;
+  const { audio, dur } = sceneAudio(sc, beats);
   const vDur = probe(webm);
   const pad = Math.max(0, dur + 1.2 - vDur); // +1.2s 收尾余量，防最后定格被裁
   const clicks = fs.existsSync(`${TMP}/clicks.json`)
@@ -143,8 +164,11 @@ function muxScene(sc) {
   const vf = head
     + (pad > 0.1 ? `,tpad=stop_mode=clone:stop_duration=${pad.toFixed(2)}` : '')
     + `,subtitles=${TMP}/srt/${sc.id}.srt:${SUB_STYLE}[v];[1:a]apad[a]`;
+  // zoompan 嵌套 if 链随点击数指数膨胀，超 MAX_ARG_STRLEN(128KB) 会 E2BIG——走脚本文件传参
+  const filterScript = `${TMP}/filter-${sc.id}.txt`;
+  fs.writeFileSync(filterScript, vf);
   run('ffmpeg', ['-y', '-v', 'error', '-i', webm, '-i', audio,
-    '-filter_complex', vf, '-map', '[v]', '-map', '[a]',
+    '-filter_complex_script', filterScript, '-map', '[v]', '-map', '[a]',
     '-t', (dur + 1.2).toFixed(2), ...VENC, ...AENC, seg]);
   return seg;
 }
@@ -165,7 +189,7 @@ function mux() {
   const segs = order.map(muxScene);
   fs.writeFileSync(`${TMP}/concat.txt`, segs.map(f => `file '${f}'`).join('\n'));
 
-  const outName = process.argv[3] || 'WMS视频教程-销售全流程.mp4';
+  const outName = OUT_NAME || narr.outputName || 'WMS视频教程-销售全流程.mp4';
   const out = `${TMP}/${outName}`;
   run('ffmpeg', ['-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', `${TMP}/concat.txt`,
     '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p',
@@ -177,5 +201,5 @@ if (require.main === module) {
   const cmd = process.argv[2];
   if (cmd === 'tts') tts();
   else if (cmd === 'mux') mux();
-  else { console.error('用法: node build.js tts|mux [输出文件名]'); process.exit(1); }
+  else { console.error('用法: node build.js tts [narration-X.json] | mux [narration-X.json] [输出名.mp4]'); process.exit(1); }
 }

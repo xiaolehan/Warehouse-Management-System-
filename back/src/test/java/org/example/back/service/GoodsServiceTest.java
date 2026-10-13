@@ -254,6 +254,35 @@ class GoodsServiceTest {
         verify(baseGoodsMapper).deleteById(9L);
     }
 
+    // ---------- 会话 80：物料删除引用守卫——被单据/BOM 引用时拒绝 ----------
+    @Test
+    void deleteMaterial_blockedWhenReferenced() {
+        BaseGoods goods = new BaseGoods();
+        goods.setId(8L);
+        goods.setType("material");
+        goods.setStock(0);
+        when(baseGoodsMapper.selectById(8L)).thenReturn(goods);
+        when(goodsReferenceService.hasAnyDocumentReference(8L)).thenReturn(true);
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> service.delete(8L));
+        assertTrue(ex.getMessage().contains("该物料已被单据或 BOM 引用"), "实际: " + ex.getMessage());
+        verify(baseGoodsMapper, never()).deleteById(8L);
+    }
+
+    @Test
+    void deleteMaterial_allowedWhenUnreferenced() {
+        BaseGoods goods = new BaseGoods();
+        goods.setId(8L);
+        goods.setType("material");
+        goods.setStock(0);
+        when(baseGoodsMapper.selectById(8L)).thenReturn(goods);
+        when(goodsReferenceService.hasAnyDocumentReference(8L)).thenReturn(false);
+
+        service.delete(8L);
+
+        verify(baseGoodsMapper).deleteById(8L);
+    }
+
     // ---------- 手测问题 1（2026-09-23）：批量删除（尽力而为聚合） ----------
 
     @Test
@@ -263,6 +292,7 @@ class GoodsServiceTest {
         material.setType("material");
         material.setGoodsName("物料A");
         when(baseGoodsMapper.selectById(1L)).thenReturn(material);
+        when(goodsReferenceService.hasAnyDocumentReference(1L)).thenReturn(false);
 
         BaseGoods blockedProduct = new BaseGoods();
         blockedProduct.setId(2L);

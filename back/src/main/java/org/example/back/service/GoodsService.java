@@ -496,6 +496,10 @@ public class GoodsService {
         if (GOODS_TYPE_PRODUCT.equals(goods.getType()) && !goodsReferenceService.isProductDeletable(id, goods.getStock())) {
             throw BusinessException.validateFail("该成品有库存、存在有效 BOM 或已被单据引用，不能删除");
         }
+        // 会话 80：物料与成品同一引用口径——被任何单据或 BOM 明细引用的物料禁止删除，防止误删已入业务流的主数据
+        if (GOODS_TYPE_MATERIAL.equals(goods.getType()) && goodsReferenceService.hasAnyDocumentReference(id)) {
+            throw BusinessException.validateFail("该物料已被单据或 BOM 引用，不能删除");
+        }
         baseGoodsMapper.deleteById(id);
     }
 

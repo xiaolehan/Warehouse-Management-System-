@@ -7,10 +7,6 @@
           <el-tooltip content="当天未生效单据可直接删除；已生效或历史单据的作废会提交给仓储管理员审批，通过后才执行。" placement="left">
             <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
-          <span class="help-label">冲抵:</span>
-          <el-tooltip content="冲抵单=作废时系统生成的负数留痕记录（数量/金额为负），用于抵消原单的库存与金额；该功能已停用，如出现即为历史数据，不可删除、不可再作废，无需操作。" placement="left">
-            <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
-          </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
           <el-form-item label="退回成品">

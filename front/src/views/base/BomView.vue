@@ -114,7 +114,7 @@
               </el-table-column>
               <el-table-column label="组件/物料名称" min-width="150">
                 <template #default="scope">
-                  <el-input v-model="scope.row.componentName" placeholder="第{{ scope.$index + 1 }}行组件名称" :disabled="isView" />
+                  <el-input v-model="scope.row.componentName" :placeholder="'第' + (scope.$index + 1) + '行组件名称'" :disabled="isView" />
                 </template>
               </el-table-column>
               <el-table-column label="规格" min-width="100">
@@ -329,7 +329,7 @@ const addDetail = () => {
 }
 
 const removeDetail = (index) => {
-  if (form.details.length <= 1) return
+  // 允许删到 0 行（与新建弹窗初始空明细一致），提交校验兜底
   form.details.splice(index, 1)
 }
 
@@ -448,7 +448,8 @@ const initForm = () => {
   form.unit = ''
   form.remark = ''
   form.leadDays = null
-  form.details = [newDetailRow()]
+  // 初始不带空行，点「添加行」再加——提交时「请至少填写一行组件/物料明细」校验兜底
+  form.details = []
 }
 
 const handleAdd = () => {

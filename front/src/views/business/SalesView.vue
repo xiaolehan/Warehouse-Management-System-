@@ -7,10 +7,6 @@
           <el-tooltip content="当天未生效单据可直接删除；已生效或历史单据的作废会提交给仓储管理员审批，通过后才执行。" placement="left">
             <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
           </el-tooltip>
-          <span class="help-label">冲抵:</span>
-          <el-tooltip content="冲抵单=作废时系统生成的负数留痕记录（数量/金额为负），用于抵消原单的库存与金额；该功能已停用，如出现即为历史数据，不可删除、不可再作废，无需操作。" placement="left">
-            <el-icon class="void-help-icon"><QuestionFilled /></el-icon>
-          </el-tooltip>
         </div>
         <el-form :inline="true" :model="searchForm">
           <el-form-item label="出库成品">
@@ -72,7 +68,7 @@
         </el-table-column>
         <el-table-column prop="salesDate" label="销售日期" width="180" />
         <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column label="确认状态" width="140">
+        <el-table-column label="确认状态" width="140" fixed="right">
           <template #default="scope">
             <!-- D97：已作废/已冲抵单据状态列直接展示终态，避免与确认状态歧义 -->
             <el-tag v-if="scope.row.bizStatus === 2" type="info" size="small">已作废</el-tag>

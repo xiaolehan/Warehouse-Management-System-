@@ -50,6 +50,7 @@
           <template #default="{ row }">
             <div v-for="d in row.details" :key="d.id" class="detail-line">
               {{ d.goodsName }} × {{ d.quantity }}
+              <div v-if="d.arrivalRemark" class="detail-arrival-remark">到货备注：{{ d.arrivalRemark }}</div>
             </div>
           </template>
         </el-table-column>
@@ -993,5 +994,6 @@ onMounted(loadList)
 .purchase-request-view { padding: 12px; }
 .search-form { margin-bottom: 8px; }
 .detail-line { line-height: 1.6; }
+.detail-arrival-remark { font-size: 12px; color: #909399; line-height: 1.5; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 </style>

@@ -436,7 +436,7 @@ public class MessageService {
                 ),
                 "stocktake",
                 stocktakeId,
-                ROUTE_STOCKTAKE);
+                ROUTE_STOCKTAKE + "?stocktakeId=" + stocktakeId);
     }
 
     /**
